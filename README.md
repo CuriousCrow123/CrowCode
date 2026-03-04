@@ -248,6 +248,8 @@ Each widget includes its own debug panel (gear icon in top-right corner) for adj
 
 Style params flow via scoped CSS custom properties (e.g. `--counter-font-size`). Behavioral params (e.g. `stepSize`) are used directly in JS logic. See [ADR 002](docs/decisions/002-per-widget-params.md) for rationale.
 
+**Separation rule**: Widgets never reference global spatial tokens (`--space-*`, `--radius-*`, layout widths). All numeric styling comes from the widget's own `paramDefs`. This ensures the global debug panel controls only page-level layout and widget debug panels control only widget internals — the two layers are fully independent. Non-spatial globals (colors, fonts, transitions) are shared since they aren't controlled by the global debug panel.
+
 Both panel types are gated behind `import.meta.env.DEV` and completely removed from production builds.
 
 ## Commands

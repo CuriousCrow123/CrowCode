@@ -23,6 +23,7 @@ Visual essay template built with Astro 5 + Svelte 5. All source lives in `site/`
 - `WidgetDebugPanel.svelte` renders sliders for any widget's params — never build custom debug UI per widget
 - Style params flow via scoped CSS custom properties (e.g. `--counter-font-size`), behavioral params are used directly in JS
 - Widget debug panels are gated behind `import.meta.env.DEV` internally — widgets include `<WidgetDebugPanel>` unconditionally
+- **Separation rule**: Widgets must NOT reference global spatial tokens (`--space-*`, `--radius-*`, layout widths) — all numeric styling comes from the widget's own `paramDefs` via scoped CSS custom properties. Non-spatial globals (`--color-*`, `--font-*`, `--transition-*`) are fine — they aren't controlled by the global debug panel
 
 ### Adding a new widget
 
