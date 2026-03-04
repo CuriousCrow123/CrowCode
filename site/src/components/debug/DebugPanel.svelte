@@ -76,12 +76,19 @@
     const lines = allTokens.map((t) => {
       const changed = t.current !== t.value;
       const v = changed ? t.current : t.value;
-      return `  { name: '${t.name}', value: ${v}, unit: '${t.unit}', category: '${t.category}', min: ${t.min}, max: ${t.max}, step: ${t.step} },`;
+      return `  { name: '${t.name}', value: ${v}, unit: '${t.unit}', category: '${t.category}', min: ${t.min}, max: ${t.max}, step: ${t.step}, description: '${t.description}' },`;
     });
     navigator.clipboard.writeText(lines.join('\n')).then(() => {
       copyFeedback = 'Copied!';
       setTimeout(() => (copyFeedback = ''), 1500);
     });
+  }
+
+  // Freeze token defaults on the panel wrapper so slider changes don't affect the panel itself
+  function freezeTokens(node: HTMLElement) {
+    for (const token of tokens) {
+      node.style.setProperty(token.name, `${token.value}${token.unit}`);
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -94,71 +101,80 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<button
-  class="debug-toggle"
-  onclick={() => (isOpen = !isOpen)}
-  aria-label={isOpen ? 'Close debug panel' : 'Open debug panel'}
-  aria-expanded={isOpen}
-  title="Debug tokens (Ctrl+.)"
->
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-    <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-    <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5" />
-  </svg>
-</button>
+<div class="debug-root" use:freezeTokens>
+  <button
+    class="debug-toggle"
+    onclick={() => (isOpen = !isOpen)}
+    aria-label={isOpen ? 'Close debug panel' : 'Open debug panel'}
+    aria-expanded={isOpen}
+    title="Debug tokens (Ctrl+.)"
+  >
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+      <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5" />
+    </svg>
+  </button>
 
-{#if isOpen}
-  <aside class="debug-panel" role="dialog" aria-label="Design token debug panel">
-    <div class="debug-header">
-      <span class="debug-title">Tokens</span>
-      <div class="debug-actions">
-        <button class="debug-btn" onclick={copyTokens}>
-          {copyFeedback || 'Copy'}
-        </button>
-        {#if hasOverrides}
-          <button class="debug-btn" onclick={resetAll}>Reset all</button>
-        {/if}
-        <button class="debug-btn" onclick={() => (isOpen = false)} aria-label="Close">&times;</button>
+  {#if isOpen}
+    <aside class="debug-panel" role="dialog" aria-label="Design token debug panel">
+      <div class="debug-header">
+        <span class="debug-title">Tokens</span>
+        <div class="debug-actions">
+          <button class="debug-btn" onclick={copyTokens}>
+            {copyFeedback || 'Copy'}
+          </button>
+          {#if hasOverrides}
+            <button class="debug-btn" onclick={resetAll}>Reset all</button>
+          {/if}
+          <button class="debug-btn" onclick={() => (isOpen = false)} aria-label="Close">&times;</button>
+        </div>
       </div>
-    </div>
 
-    <div class="debug-body">
-      {#each groups as group}
-        <details open>
-          <summary class="group-label">{group.category}</summary>
-          <div class="group-tokens">
-            {#each group.tokens as token}
-              <div class="token-row">
-                <label class="token-name" for={token.name}>{token.name}</label>
-                <div class="token-control">
-                  <input
-                    id={token.name}
-                    type="range"
-                    min={token.min}
-                    max={token.max}
-                    step={token.step}
-                    bind:value={token.current}
-                    oninput={() => apply(token)}
-                  />
-                  <span class="token-value" class:modified={token.current !== token.value}>
-                    {token.current}{token.unit}
-                  </span>
-                  {#if token.current !== token.value}
-                    <button class="token-reset" onclick={() => resetToken(token)} title="Reset to default">
-                      &circlearrowleft;
-                    </button>
-                  {/if}
+      <div class="debug-body">
+        {#each groups as group}
+          <details open>
+            <summary class="group-label">{group.category}</summary>
+            <div class="group-tokens">
+              {#each group.tokens as token}
+                <div class="token-row">
+                  <div class="token-label">
+                    <label class="token-name" for={token.name}>{token.name}</label>
+                    <span class="token-tooltip">{token.description}</span>
+                  </div>
+                  <div class="token-control">
+                    <input
+                      id={token.name}
+                      type="range"
+                      min={token.min}
+                      max={token.max}
+                      step={token.step}
+                      bind:value={token.current}
+                      oninput={() => apply(token)}
+                    />
+                    <span class="token-value" class:modified={token.current !== token.value}>
+                      {token.current}{token.unit}
+                    </span>
+                    {#if token.current !== token.value}
+                      <button class="token-reset" onclick={() => resetToken(token)} title="Reset to default">
+                        &circlearrowleft;
+                      </button>
+                    {/if}
+                  </div>
                 </div>
-              </div>
-            {/each}
-          </div>
-        </details>
-      {/each}
-    </div>
-  </aside>
-{/if}
+              {/each}
+            </div>
+          </details>
+        {/each}
+      </div>
+    </aside>
+  {/if}
+</div>
 
 <style>
+  .debug-root {
+    display: contents;
+  }
+
   .debug-toggle {
     position: fixed;
     bottom: var(--space-lg);
@@ -240,6 +256,25 @@
   .debug-body {
     overflow-y: auto;
     padding: var(--space-sm);
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+  }
+
+  .debug-body::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .debug-body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .debug-body::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 3px;
+  }
+
+  .debug-body::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-muted);
   }
 
   details {
@@ -270,10 +305,37 @@
     gap: 2px;
   }
 
+  .token-label {
+    position: relative;
+  }
+
   .token-name {
     font-family: var(--font-mono);
     font-size: 0.6875rem;
     color: var(--color-text-muted);
+    cursor: help;
+  }
+
+  .token-tooltip {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 10;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.6875rem;
+    font-family: var(--font-body);
+    color: var(--color-text);
+    background: var(--color-bg-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    white-space: normal;
+    max-width: 18rem;
+    pointer-events: none;
+  }
+
+  .token-label:hover .token-tooltip {
+    display: block;
   }
 
   .token-control {
