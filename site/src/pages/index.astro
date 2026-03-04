@@ -1,0 +1,10 @@
+---
+import EssayLayout from '../layouts/EssayLayout.astro';
+import Introduction from '../components/sections/example/Introduction.svelte';
+import InteractiveDemo from '../components/sections/example/InteractiveDemo.svelte';
+---
+
+<EssayLayout title="Example Visual Essay">
+  <Introduction client:visible />
+  <InteractiveDemo client:visible />
+</EssayLayout>

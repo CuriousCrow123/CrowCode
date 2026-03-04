@@ -1,0 +1,239 @@
+# Visual Essay Template
+
+A minimal template for building [ciechanow.ski](https://ciechanow.ski/)-style visual essays: single scrollable pages with prose interleaved with interactive figures, where text can drive widget state.
+
+## Tech Stack
+
+| Layer | Choice | Why |
+|-------|--------|-----|
+| Site generator | Astro 5 | Islands architecture — static HTML by default, Svelte components hydrate independently |
+| Interactive components | Svelte 5 | Tiny runtime, `$state`/`$derived` runes, `export function` for imperative APIs |
+| Styling | CSS custom properties | One token file controls the entire visual system |
+| Hosting | GitHub Pages | Static output via `astro build` |
+
+**3 dependencies total**: `astro`, `@astrojs/svelte`, `svelte`.
+
+## Directory Structure
+
+```
+site/
+├── src/
+│   ├── components/
+│   │   ├── essay/                      # Template primitives
+│   │   │   ├── Figure.svelte           # Wide breakout container for interactive figures
+│   │   │   └── TableOfContents.svelte  # Collapsible sidebar TOC
+│   │   ├── widgets/                    # Reusable interactive components
+│   │   │   └── Counter.svelte          # Example: imperative API via export function
+│   │   └── sections/                   # Self-contained essay sections
+│   │       └── example/
+│   │           ├── Introduction.svelte
+│   │           └── InteractiveDemo.svelte
+│   ├── layouts/
+│   │   ├── BaseLayout.astro            # HTML shell, fonts, global CSS
+│   │   └── EssayLayout.astro           # TOC sidebar + scrollable content area
+│   ├── pages/
+│   │   ├── index.astro                 # Assembled essay page
+│   │   └── sandbox/
+│   │       ├── index.astro             # Widget catalog
+│   │       └── counter.astro           # Isolated widget sandbox
+│   └── styles/
+│       └── global.css                  # Design tokens, reset, prose, .action class
+├── public/
+│   └── favicon.svg
+├── package.json
+├── astro.config.mjs
+├── svelte.config.js
+└── tsconfig.json
+```
+
+## Core Concepts
+
+### The three component types
+
+**Widgets** are reusable interactive building blocks. They know nothing about the essay — they just render, react, and expose an imperative API via `export function`. Developed and tested in the sandbox.
+
+```svelte
+<!-- widgets/Counter.svelte -->
+<script lang="ts">
+  let count = $state(0);
+  let doubled = $derived(count * 2);
+
+  export function reset() { count = 0; }
+  export function setCount(value: number) { count = value; }
+</script>
+```
+
+**Sections** are self-contained essay modules. Each section contains its own prose and widgets. Prose can interact with widgets through `bind:this` and `<button class="action">` inline elements.
+
+```svelte
+<!-- sections/example/InteractiveDemo.svelte -->
+<script lang="ts">
+  import Figure from '../../essay/Figure.svelte';
+  import Counter from '../../widgets/Counter.svelte';
+
+  let counter: ReturnType<typeof Counter>;
+</script>
+
+<section>
+  <div class="prose">
+    <h2 id="interactive-demo">Interactive Demo</h2>
+    <p>
+      Click <button class="action" onclick={() => counter.setCount(42)}>set to 42</button>
+      to see the widget update.
+    </p>
+  </div>
+
+  <Figure caption="A counter widget">
+    <Counter bind:this={counter} />
+  </Figure>
+</section>
+```
+
+**Essay primitives** are the layout building blocks provided by the template:
+
+- `Figure.svelte` — Wide breakout container. Prose is constrained to `--prose-width` (42rem), but figures break out to `--figure-width` (64rem) via a CSS `left: 50%; transform: translateX(-50%)` pattern. This creates the narrow-prose / wide-figure rhythm.
+- `TableOfContents.svelte` — Collapsible sidebar. Scans the DOM for `h2[id]` elements on mount, uses `IntersectionObserver` to highlight the active section. Toggle button in the top-left corner.
+
+### Prose-widget interaction
+
+The key architectural decision: sections are Svelte components (not Markdown), so prose and widget refs share the same scope. This enables inline text that triggers widget state changes, like ciechanow.ski.
+
+The pattern:
+1. Widget exports methods via `export function`
+2. Section binds the widget instance via `bind:this`
+3. Inline `<button class="action">` elements in prose call those methods
+
+The `.action` class (defined in `global.css`) styles buttons as inline text links — dotted underline, accent color, focus ring.
+
+### Page assembly
+
+An Astro page imports sections and renders them in order inside `EssayLayout`:
+
+```astro
+---
+import EssayLayout from '../layouts/EssayLayout.astro';
+import Introduction from '../components/sections/example/Introduction.svelte';
+import InteractiveDemo from '../components/sections/example/InteractiveDemo.svelte';
+---
+
+<EssayLayout title="Example Visual Essay">
+  <Introduction client:visible />
+  <InteractiveDemo client:visible />
+</EssayLayout>
+```
+
+Each section hydrates independently via `client:visible` (loads JS when scrolled into viewport).
+
+### Table of contents
+
+The TOC auto-generates from the DOM — no prop passing or duplication needed. Every section's `<h2 id="...">` is discovered at runtime via `document.querySelectorAll('h2[id]')` and tracked with `IntersectionObserver`. The sidebar is collapsible via a toggle button, slides in from the left.
+
+## Design System
+
+All visual decisions live in `src/styles/global.css` as CSS custom properties.
+
+### Colors
+
+| Token | Value | Use |
+|-------|-------|-----|
+| `--color-bg` | `#0f1117` | Page background |
+| `--color-bg-raised` | `#181b24` | Cards, raised surfaces |
+| `--color-bg-surface` | `#1e2230` | Interactive surfaces |
+| `--color-border` | `#2a2f3e` | Borders, dividers |
+| `--color-text` | `#e2e4e9` | Primary text |
+| `--color-text-muted` | `#8b90a0` | Secondary text, labels |
+| `--color-accent` | `#4d9fff` | Active states, links, focus rings, action links |
+| `--color-highlight` | `#f5a623` | Hover state for action links |
+| `--color-success` | `#34d399` | Success states |
+| `--color-error` | `#f87171` | Error states |
+
+### Typography
+
+| Token | Value | Use |
+|-------|-------|-----|
+| `--font-body` | Inter | Prose, UI text |
+| `--font-mono` | JetBrains Mono | Code, data values |
+
+Both loaded as variable fonts from Google Fonts.
+
+### Spacing & Layout
+
+8-step spacing scale: `--space-xs` (0.25rem) through `--space-3xl` (4rem).
+
+| Token | Value | Use |
+|-------|-------|-----|
+| `--prose-width` | `42rem` | Max width for text columns |
+| `--figure-width` | `64rem` | Max width for interactive figures |
+| `--sidebar-width` | `16rem` | TOC sidebar width |
+
+Three border radii: `--radius-sm` (4px), `--radius-md` (8px), `--radius-lg` (12px).
+
+### Transitions
+
+| Token | Value | Use |
+|-------|-------|-----|
+| `--transition-fast` | `150ms ease` | Hover, focus feedback |
+| `--transition-normal` | `250ms ease` | Panel open/close, reveals |
+
+### Accessibility
+
+- `prefers-reduced-motion: reduce` disables all animations and transitions
+- `button.action` has `:focus-visible` rings for keyboard navigation
+- TOC toggle uses `aria-label` and `aria-expanded`
+- TOC nav uses `aria-label="Table of contents"`
+
+## How To
+
+### Add a new widget
+
+1. Create `src/components/widgets/MyWidget.svelte`
+2. Use `$state` / `$derived` for reactivity
+3. Export methods via `export function` for prose control
+4. Create `src/pages/sandbox/my-widget.astro` for isolated development
+5. Add it to the sandbox index at `src/pages/sandbox/index.astro`
+
+### Add a new section
+
+1. Create `src/components/sections/{topic}/MySection.svelte`
+2. Add a `<h2 id="my-section">` for TOC registration
+3. Wrap prose in `<div class="prose">`
+4. Import widgets with `bind:this` for prose-widget interaction
+5. Wrap interactive figures in `<Figure>`
+6. Use `<button class="action">` for inline text that triggers widget methods
+
+### Add a new essay page
+
+1. Create `src/pages/my-essay.astro`
+2. Import `EssayLayout` and your section components
+3. Render sections in order with `client:visible`
+
+### Hydration directives
+
+| Directive | When JS loads | Use for |
+|-----------|--------------|---------|
+| `client:visible` | Scrolled into viewport | Most sections (lazy default) |
+| `client:load` | Page load | Above-the-fold interactions |
+| `client:idle` | Browser idle | TOC, non-critical components |
+| (none) | Never | Static-only content |
+
+## Commands
+
+Run from `site/`:
+
+| Command | Action |
+|---------|--------|
+| `npm install` | Install dependencies |
+| `npm run dev` | Dev server at `localhost:4321` |
+| `npm run build` | Production build to `dist/` |
+| `npm run preview` | Preview production build locally |
+
+## Dependency Rule
+
+```
+tokens (global.css)
+  → widgets (self-contained, sandbox-testable)
+    → sections (compose widgets + prose)
+      → pages (assemble sections into essays)
+```
+
+Nothing points down. A widget never imports a section. A section never imports a page. Each layer is independently workable.
