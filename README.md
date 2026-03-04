@@ -20,7 +20,8 @@ site/
 ├── src/
 │   ├── components/
 │   │   ├── debug/
-│   │   │   └── DebugPanel.svelte       # Dev-only spatial token sliders (auto-generated)
+│   │   │   ├── DebugPanel.svelte       # Dev-only global spatial token sliders
+│   │   │   └── WidgetDebugPanel.svelte # Reusable per-widget param sliders
 │   │   ├── essay/                      # Template primitives
 │   │   │   ├── Figure.svelte           # Wide container for interactive figures
 │   │   │   └── TableOfContents.svelte  # Collapsible sidebar TOC
@@ -31,7 +32,8 @@ site/
 │   │           ├── Introduction.svelte
 │   │           └── InteractiveDemo.svelte
 │   ├── lib/
-│   │   └── tokens.ts                   # Single source of truth for spatial tokens
+│   │   ├── tokens.ts                   # Single source of truth for spatial tokens
+│   │   └── params.ts                   # Param interface + helpers for widget parameters
 │   ├── layouts/
 │   │   ├── BaseLayout.astro            # HTML shell, fonts, CSS, token injection
 │   │   └── EssayLayout.astro           # TOC sidebar + scrollable content area
@@ -195,10 +197,14 @@ Three border radii: `--radius-sm` (4px), `--radius-md` (8px), `--radius-lg` (12p
 ### Add a new widget
 
 1. Create `src/components/widgets/MyWidget.svelte`
-2. Use `$state` / `$derived` for reactivity
-3. Export methods via `export function` for prose control
-4. Create `src/pages/sandbox/my-widget.astro` for isolated development
-5. Add it to the sandbox index at `src/pages/sandbox/index.astro`
+2. Define a `paramDefs` array with tunable parameters using the `Param` interface from `params.ts`
+3. Initialize reactive params with `loadParams()` from `params.ts`
+4. Use scoped CSS custom properties for style params (e.g. `--mywidget-font-size`), direct JS for behavioral params
+5. Include `<WidgetDebugPanel>` with `bind:values` for the per-widget debug panel
+6. Use `$state` / `$derived` for widget-internal reactivity
+7. Export methods via `export function` for prose control
+8. Create `src/pages/sandbox/my-widget.astro` for isolated development
+9. Add it to the sandbox index at `src/pages/sandbox/index.astro`
 
 ### Add a new section
 
@@ -230,11 +236,19 @@ Three border radii: `--radius-sm` (4px), `--radius-md` (8px), `--radius-lg` (12p
 | `client:idle` | Browser idle | TOC, non-critical components |
 | (none) | Never | Static-only content |
 
-## Debug Panel
+## Debug Panels
 
-In development (`npm run dev`), a debug panel is available in the bottom-right corner. Toggle it with the button or `Ctrl+.`. It renders sliders for all spatial tokens defined in `tokens.ts`, grouped by category (spacing, layout, radii). Drag a slider to adjust values in real time. Reset individual tokens or all at once.
+### Global tokens panel
 
-The panel is gated behind `import.meta.env.DEV` and is completely removed from production builds.
+In development (`npm run dev`), a global debug panel is available in the bottom-right corner. Toggle it with the button or `Ctrl+.`. It renders sliders for all spatial tokens defined in `tokens.ts`, grouped by category (spacing, layout, radii). Drag a slider to adjust values in real time. Reset individual tokens or all at once. The panel freezes its own token values so slider changes don't affect the panel itself.
+
+### Per-widget panels
+
+Each widget includes its own debug panel (gear icon in top-right corner) for adjusting widget-specific parameters like font size, spacing, and behavior settings. These are defined via `paramDefs` arrays inside each widget using the `Param` interface from `params.ts`. Widget params persist to localStorage independently per widget (`widget-params-{widgetId}`).
+
+Style params flow via scoped CSS custom properties (e.g. `--counter-font-size`). Behavioral params (e.g. `stepSize`) are used directly in JS logic. See [ADR 002](docs/decisions/002-per-widget-params.md) for rationale.
+
+Both panel types are gated behind `import.meta.env.DEV` and completely removed from production builds.
 
 ## Commands
 

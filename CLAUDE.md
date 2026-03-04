@@ -17,6 +17,23 @@ Visual essay template built with Astro 5 + Svelte 5. All source lives in `site/`
 2. It automatically appears as a CSS custom property and in the debug panel
 3. Do NOT add `--space-*`, `--radius-*`, or layout width tokens to `global.css`
 
+### Widget parameters
+
+- Each widget defines its own tunable params via a `paramDefs` array using the `Param` interface from `site/src/lib/params.ts`
+- `WidgetDebugPanel.svelte` renders sliders for any widget's params — never build custom debug UI per widget
+- Style params flow via scoped CSS custom properties (e.g. `--counter-font-size`), behavioral params are used directly in JS
+- Widget debug panels are gated behind `import.meta.env.DEV` internally — widgets include `<WidgetDebugPanel>` unconditionally
+
+### Adding a new widget
+
+1. Create `site/src/components/widgets/MyWidget.svelte`
+2. Define a `paramDefs` array with tunable parameters using the `Param` interface
+3. Initialize reactive params with `loadParams()` from `params.ts`
+4. Use scoped CSS custom properties for style params, direct JS for behavioral params
+5. Include `<WidgetDebugPanel>` with `bind:values` for the debug panel
+6. Export methods via `export function` for prose control
+7. Create `site/src/pages/sandbox/my-widget.astro` for isolated development
+
 ### Component patterns
 
 - **Widgets** (`components/widgets/`) are self-contained, expose imperative APIs via `export function`
@@ -26,8 +43,8 @@ Visual essay template built with Astro 5 + Svelte 5. All source lives in `site/`
 
 ### Dev tooling
 
-- Debug panel is gated behind `import.meta.env.DEV` — never appears in production builds
-- Toggle with the button in bottom-right corner or `Ctrl+.`
+- **Global debug panel**: gated behind `import.meta.env.DEV` — toggle with bottom-right button or `Ctrl+.`
+- **Widget debug panels**: gear icon in each widget's top-right corner (dev only)
 - Sandbox pages at `/sandbox/` for isolated widget development
 
 ## Commands
