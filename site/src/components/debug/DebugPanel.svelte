@@ -1,36 +1,87 @@
 <script lang="ts">
   import { tokens, type Token } from '../../lib/tokens';
 
+  const STORAGE_KEY = 'debug-token-overrides';
+
   let isOpen = $state(false);
+  let copyFeedback = $state('');
 
   // Group tokens by category
   type Group = { category: string; tokens: (Token & { current: number })[] };
+
+  // Restore saved overrides from localStorage
+  function loadSaved(): Record<string, number> {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+    } catch {
+      return {};
+    }
+  }
+
+  const saved = loadSaved();
 
   let groups: Group[] = $state(
     Object.entries(
       Object.groupBy(tokens, (t) => t.category),
     ).map(([category, items]) => ({
       category,
-      tokens: items!.map((t) => ({ ...t, current: t.value })),
+      tokens: items!.map((t) => ({ ...t, current: saved[t.name] ?? t.value })),
     })),
   );
+
+  // Apply any restored overrides to the DOM on mount
+  $effect(() => {
+    for (const token of allTokens) {
+      if (token.current !== token.value) {
+        document.documentElement.style.setProperty(token.name, `${token.current}${token.unit}`);
+      }
+    }
+  });
 
   let allTokens = $derived(groups.flatMap((g) => g.tokens));
   let hasOverrides = $derived(allTokens.some((t) => t.current !== t.value));
 
+  function persist() {
+    const overrides: Record<string, number> = {};
+    for (const t of allTokens) {
+      if (t.current !== t.value) overrides[t.name] = t.current;
+    }
+    if (Object.keys(overrides).length > 0) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }
+
   function apply(token: Token & { current: number }) {
     document.documentElement.style.setProperty(token.name, `${token.current}${token.unit}`);
+    persist();
   }
 
   function resetToken(token: Token & { current: number }) {
     token.current = token.value;
     document.documentElement.style.removeProperty(token.name);
+    persist();
   }
 
   function resetAll() {
     for (const token of allTokens) {
-      resetToken(token);
+      token.current = token.value;
+      document.documentElement.style.removeProperty(token.name);
     }
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  function copyTokens() {
+    const lines = allTokens.map((t) => {
+      const changed = t.current !== t.value;
+      const v = changed ? t.current : t.value;
+      return `  { name: '${t.name}', value: ${v}, unit: '${t.unit}', category: '${t.category}', min: ${t.min}, max: ${t.max}, step: ${t.step} },`;
+    });
+    navigator.clipboard.writeText(lines.join('\n')).then(() => {
+      copyFeedback = 'Copied!';
+      setTimeout(() => (copyFeedback = ''), 1500);
+    });
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -61,6 +112,9 @@
     <div class="debug-header">
       <span class="debug-title">Tokens</span>
       <div class="debug-actions">
+        <button class="debug-btn" onclick={copyTokens}>
+          {copyFeedback || 'Copy'}
+        </button>
         {#if hasOverrides}
           <button class="debug-btn" onclick={resetAll}>Reset all</button>
         {/if}
