@@ -19,8 +19,10 @@ A minimal template for building [ciechanow.ski](https://ciechanow.ski/)-style vi
 site/
 ├── src/
 │   ├── components/
+│   │   ├── debug/
+│   │   │   └── DebugPanel.svelte       # Dev-only spatial token sliders (auto-generated)
 │   │   ├── essay/                      # Template primitives
-│   │   │   ├── Figure.svelte           # Wide breakout container for interactive figures
+│   │   │   ├── Figure.svelte           # Wide container for interactive figures
 │   │   │   └── TableOfContents.svelte  # Collapsible sidebar TOC
 │   │   ├── widgets/                    # Reusable interactive components
 │   │   │   └── Counter.svelte          # Example: imperative API via export function
@@ -28,8 +30,10 @@ site/
 │   │       └── example/
 │   │           ├── Introduction.svelte
 │   │           └── InteractiveDemo.svelte
+│   ├── lib/
+│   │   └── tokens.ts                   # Single source of truth for spatial tokens
 │   ├── layouts/
-│   │   ├── BaseLayout.astro            # HTML shell, fonts, global CSS
+│   │   ├── BaseLayout.astro            # HTML shell, fonts, CSS, token injection
 │   │   └── EssayLayout.astro           # TOC sidebar + scrollable content area
 │   ├── pages/
 │   │   ├── index.astro                 # Assembled essay page
@@ -37,7 +41,7 @@ site/
 │   │       ├── index.astro             # Widget catalog
 │   │       └── counter.astro           # Isolated widget sandbox
 │   └── styles/
-│       └── global.css                  # Design tokens, reset, prose, .action class
+│       └── global.css                  # Non-spatial tokens, reset, prose, .action class
 ├── public/
 │   └── favicon.svg
 ├── package.json
@@ -91,7 +95,7 @@ site/
 
 **Essay primitives** are the layout building blocks provided by the template:
 
-- `Figure.svelte` — Wide breakout container. Prose is constrained to `--prose-width` (42rem), but figures break out to `--figure-width` (64rem) via a CSS `left: 50%; transform: translateX(-50%)` pattern. This creates the narrow-prose / wide-figure rhythm.
+- `Figure.svelte` — Wide container for interactive figures. Prose is constrained to `--prose-width` (42rem), figures expand to `--figure-width` (64rem). This creates the narrow-prose / wide-figure rhythm.
 - `TableOfContents.svelte` — Collapsible sidebar. Scans the DOM for `h2[id]` elements on mount, uses `IntersectionObserver` to highlight the active section. Toggle button in the top-left corner.
 
 ### Prose-widget interaction
@@ -130,7 +134,11 @@ The TOC auto-generates from the DOM — no prop passing or duplication needed. E
 
 ## Design System
 
-All visual decisions live in `src/styles/global.css` as CSS custom properties.
+Design tokens are split across two files:
+- **`src/lib/tokens.ts`** — spatial tokens (spacing, layout widths, radii). This is the single source of truth. `BaseLayout.astro` generates CSS custom properties from it, and the debug panel reads from it.
+- **`src/styles/global.css`** — non-spatial tokens (colors, typography, transitions) plus all styles (reset, prose, action class).
+
+See [ADR 001](docs/decisions/001-tokens-in-typescript.md) for why spatial tokens live in TypeScript.
 
 ### Colors
 
@@ -207,6 +215,12 @@ Three border radii: `--radius-sm` (4px), `--radius-md` (8px), `--radius-lg` (12p
 2. Import `EssayLayout` and your section components
 3. Render sections in order with `client:visible`
 
+### Add a new spatial token
+
+1. Add it to the `tokens` array in `src/lib/tokens.ts` with name, value, unit, category, and slider constraints
+2. It automatically appears as a CSS custom property and in the debug panel
+3. Do NOT add spatial tokens (`--space-*`, `--radius-*`, layout widths) to `global.css`
+
 ### Hydration directives
 
 | Directive | When JS loads | Use for |
@@ -215,6 +229,12 @@ Three border radii: `--radius-sm` (4px), `--radius-md` (8px), `--radius-lg` (12p
 | `client:load` | Page load | Above-the-fold interactions |
 | `client:idle` | Browser idle | TOC, non-critical components |
 | (none) | Never | Static-only content |
+
+## Debug Panel
+
+In development (`npm run dev`), a debug panel is available in the bottom-right corner. Toggle it with the button or `Ctrl+.`. It renders sliders for all spatial tokens defined in `tokens.ts`, grouped by category (spacing, layout, radii). Drag a slider to adjust values in real time. Reset individual tokens or all at once.
+
+The panel is gated behind `import.meta.env.DEV` and is completely removed from production builds.
 
 ## Commands
 
@@ -230,7 +250,7 @@ Run from `site/`:
 ## Dependency Rule
 
 ```
-tokens (global.css)
+tokens.ts + global.css (design foundation)
   → widgets (self-contained, sandbox-testable)
     → sections (compose widgets + prose)
       → pages (assemble sections into essays)
