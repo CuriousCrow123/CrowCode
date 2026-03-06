@@ -292,7 +292,7 @@ const arraysCode = [
 const aBase = S;
 const arrEntries = [10, 20, 30, 40, 50];
 
-function makeArrMemory(opts?: { scope?: boolean; isNew?: boolean }): MemoryEntry[] {
+function makeArrMemory(): MemoryEntry[] {
   const entries: MemoryEntry[] = arrEntries.map((v, i) => ({
     type: i === 0 ? 'int[5]' : '',
     name: i === 0 ? 'arr' : `arr[${i}]`,
@@ -312,15 +312,12 @@ const arrMainMemFull: MemoryEntry[] = [
   { type: 'int', name: 'array_size', value: '5', address: hex(aBase - 24) },
 ];
 
-// Function scope adds pointer and size params
-function arrFuncMem(extra?: { highlight?: number }): MemoryEntry[] {
-  const base: MemoryEntry[] = [
-    ...arrMainMemFull,
-    { type: 'const int*', name: 'arr', value: hex(aBase), address: hex(aBase - 32), scope: 'printArray', isNew: false },
-    { type: 'int', name: 'size', value: '5', address: hex(aBase - 40), scope: 'printArray' },
-  ];
-  return base;
-}
+// Function scope: pointer and size params (computed once — identical across all in-function steps)
+const arrFuncMemSnapshot: MemoryEntry[] = [
+  ...arrMainMemFull,
+  { type: 'const int*', name: 'arr', value: hex(aBase), address: hex(aBase - 32), scope: 'printArray', isNew: false },
+  { type: 'int', name: 'size', value: '5', address: hex(aBase - 40), scope: 'printArray' },
+];
 
 const arraysSteps: ProgramStep[] = [
   {
@@ -361,7 +358,7 @@ const arraysSteps: ProgramStep[] = [
   {
     lineNumber: 5,
     description: 'Call printArray — the array decays to a pointer! New scope created.',
-    memory: arrFuncMem(),
+    memory: arrFuncMemSnapshot,
     output: [
       { text: 'Array: 20 bytes' },
       { text: 'Elements: 5' },
@@ -370,7 +367,7 @@ const arraysSteps: ProgramStep[] = [
   {
     lineNumber: 8,
     description: 'sizeof(arr) inside function = 8! The array decayed to a pointer.',
-    memory: arrFuncMem(),
+    memory: arrFuncMemSnapshot,
     output: [
       { text: 'Array: 20 bytes' },
       { text: 'Elements: 5' },
@@ -380,7 +377,7 @@ const arraysSteps: ProgramStep[] = [
   {
     lineNumber: 9,
     description: 'Print arr[0] using the pointer',
-    memory: arrFuncMem(),
+    memory: arrFuncMemSnapshot,
     output: [
       { text: 'Array: 20 bytes' },
       { text: 'Elements: 5' },
@@ -391,7 +388,7 @@ const arraysSteps: ProgramStep[] = [
   {
     lineNumber: 10,
     description: 'Print arr[1]',
-    memory: arrFuncMem(),
+    memory: arrFuncMemSnapshot,
     output: [
       { text: 'Array: 20 bytes' },
       { text: 'Elements: 5' },
@@ -403,7 +400,7 @@ const arraysSteps: ProgramStep[] = [
   {
     lineNumber: 11,
     description: 'Print arr[2]',
-    memory: arrFuncMem(),
+    memory: arrFuncMemSnapshot,
     output: [
       { text: 'Array: 20 bytes' },
       { text: 'Elements: 5' },
@@ -416,7 +413,7 @@ const arraysSteps: ProgramStep[] = [
   {
     lineNumber: 12,
     description: 'Print arr[3]',
-    memory: arrFuncMem(),
+    memory: arrFuncMemSnapshot,
     output: [
       { text: 'Array: 20 bytes' },
       { text: 'Elements: 5' },
@@ -430,7 +427,7 @@ const arraysSteps: ProgramStep[] = [
   {
     lineNumber: 13,
     description: 'Print arr[4] — function complete, scope will be cleaned up',
-    memory: arrFuncMem(),
+    memory: arrFuncMemSnapshot,
     output: [
       { text: 'Array: 20 bytes' },
       { text: 'Elements: 5' },
@@ -465,33 +462,6 @@ const heapCode = [
   '*avg = *sum / *count;',
   'printf("Count: %d, Average: %.3f\\n", *count, *avg);',
 ];
-
-function heapMem(stack: Array<{ name: string; type: string; target: string; addr: number }>,
-                  heapBlocks: Array<{ name: string; type: string; value: string; addr: number; isNew?: boolean; isChanged?: boolean }>): MemoryEntry[] {
-  const entries: MemoryEntry[] = [];
-  for (const s of stack) {
-    entries.push({
-      type: s.type,
-      name: s.name,
-      value: hex(heapBlocks.find(h => h.name === s.target)?.addr ?? 0),
-      address: hex(s.addr),
-      region: 'stack',
-      isNew: s.addr === stack[stack.length - 1]?.addr && heapBlocks[heapBlocks.length - 1]?.isNew ? true : undefined,
-    });
-  }
-  for (const h of heapBlocks) {
-    entries.push({
-      type: h.type,
-      name: h.name,
-      value: h.value,
-      address: hex(h.addr),
-      region: 'heap',
-      isNew: h.isNew,
-      isChanged: h.isChanged,
-    });
-  }
-  return entries;
-}
 
 // Build heap steps procedurally
 function buildHeapSteps(): ProgramStep[] {

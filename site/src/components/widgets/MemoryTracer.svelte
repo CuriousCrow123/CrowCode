@@ -18,11 +18,19 @@
 
   let activeProgram = $state(0);
   let currentStep = $state(0);
-  let glowTimerId: ReturnType<typeof setTimeout> | undefined;
+  let glowTimerId = $state<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const program = $derived(programs[activeProgram]);
   const totalSteps = $derived(program.steps.length - 1);
   const snapshot = $derived(program.steps[currentStep]);
+  const isGlowing = $derived(glowTimerId !== undefined);
+  const hasScope = $derived(snapshot.memory.some(e => e.scope));
+  const hasRegion = $derived(snapshot.memory.some(e => e.region));
+
+  // Clean up glow timer on component destroy
+  $effect(() => {
+    return () => clearTimeout(glowTimerId);
+  });
 
   export function step() {
     if (currentStep >= totalSteps) return;
@@ -45,6 +53,7 @@
     if (index === activeProgram) return;
     activeProgram = index;
     currentStep = 0;
+    // Cancel any glow timer from the previous program
     clearGlow();
   }
 
@@ -56,12 +65,6 @@
   function clearGlow() {
     clearTimeout(glowTimerId);
     glowTimerId = undefined;
-  }
-
-  const isGlowing = $derived(glowTimerId !== undefined);
-
-  function isPointerType(type: string): boolean {
-    return type.includes('*');
   }
 </script>
 
@@ -136,10 +139,10 @@
                   <th>Name</th>
                   <th>Value</th>
                   <th>Address</th>
-                  {#if snapshot.memory.some(e => e.scope)}
+                  {#if hasScope}
                     <th>Scope</th>
                   {/if}
-                  {#if snapshot.memory.some(e => e.region)}
+                  {#if hasRegion}
                     <th>Region</th>
                   {/if}
                 </tr>
@@ -149,17 +152,16 @@
                   <tr
                     class:new-row={entry.isNew && isGlowing}
                     class:changed-row={entry.isChanged && isGlowing}
-                    class:pointer-type={isPointerType(entry.type)}
                     class:heap-entry={entry.region === 'heap'}
                   >
                     <td class="cell-type">{entry.type}</td>
                     <td class="cell-name">{entry.name}</td>
-                    <td class="cell-value" class:pointer-value={isPointerType(entry.type)}>{entry.value}</td>
+                    <td class="cell-value" class:pointer-value={entry.type.includes('*')}>{entry.value}</td>
                     <td class="cell-addr">{entry.address}</td>
-                    {#if snapshot.memory.some(e => e.scope)}
+                    {#if hasScope}
                       <td class="cell-scope">{entry.scope || 'main'}</td>
                     {/if}
-                    {#if snapshot.memory.some(e => e.region)}
+                    {#if hasRegion}
                       <td class="cell-region">
                         {#if entry.region}
                           <span class="region-badge" class:stack={entry.region === 'stack'} class:heap={entry.region === 'heap'}>

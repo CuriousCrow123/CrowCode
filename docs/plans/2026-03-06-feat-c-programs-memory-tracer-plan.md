@@ -136,59 +136,59 @@ pages/sandbox/memory-tracer.astro  — Sandbox page
 ### Implementation Phases
 
 #### Phase 1: Data Layer (`lib/programs.ts`)
-- [ ] Define TypeScript interfaces: `MemoryEntry`, `OutputLine`, `ProgramStep`, `Program`
-- [ ] Implement all 4 programs with pre-computed step snapshots
-- [ ] Use realistic addresses (stack: 0xBFFFF000 descending, heap: 0x0804B000 ascending)
+- [x] Define TypeScript interfaces: `MemoryEntry`, `OutputLine`, `ProgramStep`, `Program`
+- [x] Implement all 4 programs with pre-computed step snapshots
+- [x] Use realistic addresses (stack: 0xBFFFF000 descending, heap: 0x0804B000 ascending)
 
 #### Phase 2: Widget (`widgets/MemoryTracer.svelte`)
-- [ ] Program selector (horizontal pills)
-- [ ] Code panel with step controls (reuse existing code-stepper CSS pattern)
-- [ ] Memory table (4 columns: Type, Name, Value, Address)
-- [ ] Output panel (printf results accumulating)
-- [ ] Row glow on new/changed entries
-- [ ] Scope labels when functions are active
-- [ ] Responsive layout (side-by-side → stacked at <768px)
-- [ ] Widget param system (font sizes, table cell sizes)
-- [ ] WidgetDebugPanel integration
+- [x] Program selector (horizontal pills)
+- [x] Code panel with step controls (reuse existing code-stepper CSS pattern)
+- [x] Memory table (4 columns: Type, Name, Value, Address)
+- [x] Output panel (printf results accumulating)
+- [x] Row glow on new/changed entries
+- [x] Scope labels when functions are active
+- [x] Responsive layout (side-by-side → stacked at <768px)
+- [x] Widget param system (font sizes, table cell sizes)
+- [x] WidgetDebugPanel integration
 
 #### Phase 3: Section + Pages
-- [ ] Create `sections/programs/ProgramsInAction.svelte` with prose narrative
-- [ ] Add to `pages/index.astro` after DynamicMemory
-- [ ] Create `pages/sandbox/memory-tracer.astro`
-- [ ] Add to sandbox index
+- [x] Create `sections/programs/ProgramsInAction.svelte` with prose narrative
+- [x] Add to `pages/index.astro` after DynamicMemory
+- [x] Create `pages/sandbox/memory-tracer.astro`
+- [x] Add to sandbox index
 
 #### Phase 4: Polish
-- [ ] Verify build passes
-- [ ] Test stepping forward/back across all programs
-- [ ] Test program switching resets state
-- [ ] Responsive layout works on mobile viewport
+- [x] Verify build passes
+- [x] Test stepping forward/back across all programs
+- [x] Test program switching resets state
+- [ ] Responsive layout works on mobile viewport (deferred — requires viewport testing)
 
 ## Acceptance Criteria
 
 ### Functional
-- [ ] 4 programs selectable via tab pills
-- [ ] Step forward/back through each program
-- [ ] Memory table shows Type, Name, Value, Address columns
-- [ ] New rows glow when added
-- [ ] Changed values flash
-- [ ] Output panel shows printf results
-- [ ] Program 3 shows scope change (main → printArray → main)
-- [ ] Program 4 shows stack vs heap regions
-- [ ] Switching programs resets to step 0
+- [x] 4 programs selectable via tab pills
+- [x] Step forward/back through each program
+- [x] Memory table shows Type, Name, Value, Address columns
+- [x] New rows glow when added
+- [x] Changed values flash
+- [x] Output panel shows printf results
+- [x] Program 3 shows scope change (main → printArray → main)
+- [x] Program 4 shows stack vs heap regions
+- [x] Switching programs resets to step 0
 
 ### Non-Functional
-- [ ] Follows existing widget pattern (paramDefs, loadParams, WidgetDebugPanel)
-- [ ] Uses scoped CSS custom properties (no global spatial tokens)
-- [ ] Matches existing design language (colors, fonts, borders)
-- [ ] Responsive layout (side-by-side on desktop, stacked on mobile)
-- [ ] Build passes with no errors
+- [x] Follows existing widget pattern (paramDefs, loadParams, WidgetDebugPanel)
+- [x] Uses scoped CSS custom properties (no global spatial tokens)
+- [x] Matches existing design language (colors, fonts, borders)
+- [x] Responsive layout (side-by-side on desktop, stacked on mobile)
+- [x] Build passes with no errors
 
 ### Quality
-- [ ] Code stepper CSS matches existing widgets
-- [ ] Programs use realistic memory addresses
-- [ ] Printf output matches what students would see in their terminals
-- [ ] Section prose follows concrete-first pedagogical approach
-- [ ] Sandbox page exists for isolated development
+- [x] Code stepper CSS matches existing widgets
+- [x] Programs use realistic memory addresses
+- [x] Printf output matches what students would see in their terminals
+- [x] Section prose follows concrete-first pedagogical approach
+- [x] Sandbox page exists for isolated development
 
 ## Sources & References
 
