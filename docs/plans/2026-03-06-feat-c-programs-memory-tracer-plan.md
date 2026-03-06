@@ -1,7 +1,7 @@
 ---
 title: "feat: Add C Programs & Memory Tracer chapter with interactive MemoryTracer widget"
 type: feat
-status: active
+status: completed
 date: 2026-03-06
 origin: docs/brainstorms/2026-03-06-c-programs-memory-tracer-brainstorm.md
 ---
