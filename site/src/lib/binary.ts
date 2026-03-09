@@ -27,3 +27,16 @@ export function readUint(bits: number[], offset: number, numBits: number): numbe
 export function toBinary(value: number, numBits: number): string {
   return value.toString(2).padStart(numBits, '0');
 }
+
+/** Convert an unsigned integer to its two's complement signed value. */
+export function toSigned(unsigned: number, numBits: number): number {
+  const max = 1 << numBits;
+  const half = max >> 1;
+  return unsigned >= half ? unsigned - max : unsigned;
+}
+
+/** Convert a signed integer to its two's complement unsigned representation. */
+export function fromSigned(signed: number, numBits: number): number {
+  const max = 1 << numBits;
+  return signed < 0 ? signed + max : signed;
+}

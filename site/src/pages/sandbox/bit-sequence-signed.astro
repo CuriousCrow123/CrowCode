@@ -1,0 +1,18 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import BitSequenceSigned from '../../components/widgets/BitSequenceSigned.svelte';
+---
+
+<BaseLayout title="Sandbox: Bit Sequence Signed">
+  <main style="padding: var(--space-2xl); max-width: var(--figure-width); margin-inline: auto;">
+    <a href="/sandbox" style="color: var(--color-accent);">&larr; All widgets</a>
+    <h1 style="margin-block: var(--space-lg); font-size: 1.75rem;">Bit Sequence: Signed Integer</h1>
+    <p style="color: var(--color-text-muted); margin-bottom: var(--space-xl);">
+      Two's complement: how computers represent negative numbers.
+      Three progressive stages reveal sign bit emphasis, dual interpretation, and wraparound.
+    </p>
+    <div style="background: var(--color-bg-raised); padding: var(--space-xl); border-radius: var(--radius-lg); border: 1px solid var(--color-border);">
+      <BitSequenceSigned client:load />
+    </div>
+  </main>
+</BaseLayout>
