@@ -1,10 +1,10 @@
 ---
 import EssayLayout from '../layouts/EssayLayout.astro';
-import Introduction from '../components/sections/example/Introduction.svelte';
-import InteractiveDemo from '../components/sections/example/InteractiveDemo.svelte';
+import BitIntro from '../components/sections/bits/BitIntro.svelte';
+import BitRepresentations from '../components/sections/bits/BitRepresentations.svelte';
 ---
 
-<EssayLayout title="Example Visual Essay">
-  <Introduction client:visible />
-  <InteractiveDemo client:visible />
+<EssayLayout title="CrowCode">
+  <BitIntro client:visible />
+  <BitRepresentations client:visible />
 </EssayLayout>
