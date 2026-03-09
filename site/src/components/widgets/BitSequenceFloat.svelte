@@ -59,11 +59,7 @@
       case 'nan': return 'NaN';
       case 'zero': return sign ? '-0' : '0';
       default: {
-        const v = decodedValue;
-        if (Math.abs(v) < 0.001 || Math.abs(v) > 99999) {
-          return v.toExponential(4);
-        }
-        return v.toPrecision(5);
+        return String(decodedValue);
       }
     }
   });
