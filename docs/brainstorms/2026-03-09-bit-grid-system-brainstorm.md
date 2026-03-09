@@ -1,7 +1,7 @@
 # Brainstorm: BitGrid Widget System
 
 **Date:** 2026-03-09
-**Status:** Draft
+**Status:** Complete
 
 ## What We're Building
 
@@ -70,11 +70,10 @@ A composable bit-grid widget system that visualizes how computers represent and 
 
 ### Shared base (BitGridCore) API
 - **Data model**: Prop-driven pure renderer. Variant owns a `$state` bits array and passes it down. BitGridCore has no internal bit state.
-- **Props**: `bits: number[]` (reactive), `cols: number`, `rows: number`, `highlights?: Record<string, number[]>` (optional named highlight groups for decode panel coloring)
-- **Glow detection**: Base tracks previous bit values internally to detect which bits just changed, triggering glow animation on the diff
+- **Props**: `bits: number[]` (reactive), `cols: number`, `cellSize`, `cellGap`, `fontSize`, `glowDuration` (all numbers), `glowColor?: string`, `highlights?: Record<string, { indices: number[]; color: string }>` (named highlight groups with per-group color). No `rows` prop — grid auto-wraps based on `bits.length / cols`.
+- **Glow detection**: Base tracks previous bit values internally (plain `Uint8Array`, not `$state`) to detect which bits just changed, triggering glow animation on the diff
 - **No exported methods**: All mutation happens in the variant. Base just renders.
-- **Styling**: Own `paramDefs` for cell size, gap, glow color, glow duration, font size
-- **CSS prefix**: `--bg-` (bit-grid)
+- **Not a widget**: Has no `paramDefs` or `WidgetDebugPanel`. All numeric styling flows as props from the variant's own params.
 
 ### Widget CSS prefixes
 | Component | Prefix |
