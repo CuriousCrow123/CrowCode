@@ -95,6 +95,9 @@
   onDestroy(() => {
     stopBtnRepeat?.();
     stopBtnRepeat = null;
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('pointerup', handleBtnUp);
+    }
   });
 </script>
 
