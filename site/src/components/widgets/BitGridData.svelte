@@ -48,10 +48,16 @@
   let decodedX = $state(0);
   let decodedY = $state(0);
 
-  // Wire animation state
-  let wireProgress = $state(-1);
-  let wireAnimationId = $state(0);
-  let lastWireTime = $state(0);
+  // Multi-dot wire animation state
+  interface WireDot { id: number; startTime: number; }
+  let wireDots: WireDot[] = $state([]);
+  let wireNow = $state(0);
+  let wireRafId = 0;
+  let dotIdCounter = 0;
+  let lastDotSpawnTime = 0; // plain variable — 50ms min-interval throttle
+
+  // Change detection for data bits (plain Uint8Array, NOT $state)
+  let prevDataBits = new Uint8Array(0);
 
   const reducedMotion = typeof window !== 'undefined'
     ? window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -146,53 +152,45 @@
     if (!isVisible || !running || !canvasEl) return;
 
     // Initialize ball at a peak
-    ballX = params.curveWavelength / 4; // start at first peak
+    ballX = params.curveWavelength / 4;
     ballV = 0;
     lastFrameTime = performance.now();
 
     let rafId: number;
 
     function tick(now: number) {
-      const dt = Math.min((now - lastFrameTime) / 1000, 0.05); // cap dt to avoid spiral
+      if (document.hidden) {
+        lastFrameTime = now;
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
+
+      const dt = Math.min((now - lastFrameTime) / 1000, 0.05);
       lastFrameTime = now;
 
       if (!reducedMotion?.matches) {
-        // Physics: ball constrained to sine track
         const A = params.curveAmplitude;
         const wl = params.curveWavelength;
         const g = params.gravity;
         const k = (2 * Math.PI) / wl;
-
-        // Slope of sine curve at ballX
         const dydx = A * k * Math.cos(k * ballX);
         const theta = Math.atan(dydx);
-
-        // Tangential acceleration from gravity
-        // Negative because going "downhill" (positive slope going right means going up)
         const at = -g * Math.sin(theta);
-
-        // Update velocity and position (semi-implicit Euler for better energy conservation)
         ballV += at * dt;
         ballX += ballV * Math.cos(theta) * dt;
-
-        // Wrap periodically
         ballX = ((ballX % wl) + wl) % wl;
       }
 
-      // Compute canvas ball position
       const canvasWidth = canvasEl.clientWidth;
       const canvasHeight = params.canvasHeight;
       const A = params.curveAmplitude;
       const wl = params.curveWavelength;
-
-      // Map ballX to canvas coordinates (tile the sine wave across canvas width)
       const canvasX = (ballX / wl) * canvasWidth;
       const centerY = canvasHeight / 2;
       const canvasY = centerY - A * Math.sin((2 * Math.PI * ballX) / wl);
 
-      // Map to integer values for bits
-      const xNorm = ballX / wl; // 0..1
-      const yNorm = (canvasY / canvasHeight); // 0..1
+      const xNorm = ballX / wl;
+      const yNorm = canvasY / canvasHeight;
       const xInt = Math.round(xNorm * maxVal);
       const yInt = Math.round(yNorm * maxVal);
 
@@ -205,15 +203,27 @@
       writeValue(newBits, params.bitDepth, yInt, params.bitDepth);
       bits = newBits;
 
-      // Trigger wire animation at throttled rate (~10hz)
-      if (cpuVisible && now - lastWireTime > 100) {
-        lastWireTime = now;
-        triggerWire();
+      // Spawn wire dot when data bits actually changed (with 50ms throttle)
+      if (cpuVisible) {
+        const bd = params.bitDepth;
+        const dataLen = bd * 2;
+        if (prevDataBits.length !== dataLen) {
+          prevDataBits = new Uint8Array(dataLen);
+          for (let i = 0; i < dataLen; i++) prevDataBits[i] = newBits[i] ?? 0;
+        } else {
+          let changed = false;
+          for (let i = 0; i < dataLen; i++) {
+            if (newBits[i] !== prevDataBits[i]) { changed = true; break; }
+          }
+          if (changed && now - lastDotSpawnTime >= 50) {
+            lastDotSpawnTime = now;
+            spawnDot();
+          }
+          for (let i = 0; i < dataLen; i++) prevDataBits[i] = newBits[i] ?? 0;
+        }
       }
 
-      // Render canvas
       renderCanvas(canvasX, canvasY);
-
       rafId = requestAnimationFrame(tick);
     }
 
@@ -221,22 +231,25 @@
     return () => cancelAnimationFrame(rafId);
   });
 
-  function triggerWire() {
-    if (wireProgress >= 0) return; // already animating
-    wireProgress = 0;
-    const startTime = performance.now();
-    const duration = params.wireSpeed;
+  // Cleanup wire rAF on unmount
+  $effect(() => {
+    return () => { if (wireRafId) cancelAnimationFrame(wireRafId); };
+  });
 
-    function animate(now: number) {
-      const elapsed = now - startTime;
-      wireProgress = Math.min(elapsed / duration, 1);
-      if (wireProgress < 1) {
-        wireAnimationId = requestAnimationFrame(animate);
-      } else {
-        wireProgress = -1;
-      }
+  function spawnDot() {
+    if (wireDots.length >= 8) wireDots = wireDots.slice(1);
+    wireDots = [...wireDots, { id: dotIdCounter++, startTime: performance.now() }];
+    if (!wireRafId) wireRafId = requestAnimationFrame(tickWireDots);
+  }
+
+  function tickWireDots(now: number) {
+    wireNow = now;
+    wireDots = wireDots.filter(d => (now - d.startTime) / params.wireSpeed < 1);
+    if (wireDots.length > 0) {
+      wireRafId = requestAnimationFrame(tickWireDots);
+    } else {
+      wireRafId = 0;
     }
-    wireAnimationId = requestAnimationFrame(animate);
   }
 
   function renderCanvas(ballCanvasX: number, ballCanvasY: number) {
@@ -322,13 +335,16 @@
             <line x1="0" y1="50" x2="60" y2="50"
               stroke="var(--color-text-muted)" stroke-width="2" opacity="0.4"
             />
-            {#if wireProgress >= 0 && !reducedMotion?.matches}
-              <circle cx={wireProgress * 60} cy="30" r="3" fill="var(--color-accent)" />
-              <circle
-                cx={Math.max(0, wireProgress - 0.15) / 0.85 * 60} cy="50" r="3"
-                fill="var(--color-highlight)"
-                opacity={wireProgress > 0.15 ? 1 : 0}
-              />
+            {#if !reducedMotion?.matches}
+              {#each wireDots as dot (dot.id)}
+                {@const progress = Math.min((wireNow - dot.startTime) / params.wireSpeed, 1)}
+                <circle cx={progress * 60} cy="30" r="3" fill="var(--color-accent)" />
+                <circle
+                  cx={Math.max(0, progress - 0.15) / 0.85 * 60} cy="50" r="3"
+                  fill="var(--color-highlight)"
+                  opacity={progress > 0.15 ? 1 : 0}
+                />
+              {/each}
             {/if}
           </svg>
         </div>

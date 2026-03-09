@@ -32,10 +32,12 @@
   let containerEl: HTMLDivElement = $state();
   let isVisible = $state(false);
 
-  // Wire animation state
-  let wireProgress = $state(-1); // -1 = idle, 0..1 = traveling
-  let pendingByteIndex = $state(-1);
-  let wireAnimationId = $state(0);
+  // Multi-dot wire animation state
+  interface WireDot { id: number; startTime: number; }
+  let wireDots: WireDot[] = $state([]);
+  let wireNow = $state(0);
+  let wireRafId = 0;
+  let dotIdCounter = 0;
 
   // SVG layout refs
   let cpuEl: HTMLDivElement = $state();
@@ -87,7 +89,7 @@
     return () => observer.disconnect();
   });
 
-  // Byte flip loop
+  // Byte flip loop — flip immediately, spawn wire dot as visual echo
   $effect(() => {
     if (!isVisible || !running) return;
     const id = setInterval(() => {
@@ -97,18 +99,15 @@
       const totalBytes = Math.floor(totalBits / 8);
       const byteIdx = Math.floor(Math.random() * totalBytes);
       const startBit = byteIdx * 8;
-
-      if (cpuVisible) {
-        // Start wire animation, then flip byte when dot arrives
-        pendingByteIndex = startBit;
-        startWireAnimation(() => {
-          flipByte(startBit);
-        });
-      } else {
-        flipByte(startBit);
-      }
+      flipByte(startBit);
+      if (cpuVisible) spawnDot();
     }, params.flipInterval);
     return () => clearInterval(id);
+  });
+
+  // Cleanup wire rAF on unmount
+  $effect(() => {
+    return () => { if (wireRafId) cancelAnimationFrame(wireRafId); };
   });
 
   function flipByte(startBit: number) {
@@ -121,23 +120,20 @@
     bits = newBits;
   }
 
-  function startWireAnimation(onComplete: () => void) {
-    wireProgress = 0;
-    const startTime = performance.now();
-    const duration = params.wireSpeed;
+  function spawnDot() {
+    if (wireDots.length >= 8) wireDots = wireDots.slice(1);
+    wireDots = [...wireDots, { id: dotIdCounter++, startTime: performance.now() }];
+    if (!wireRafId) wireRafId = requestAnimationFrame(tickWireDots);
+  }
 
-    function animate(now: number) {
-      const elapsed = now - startTime;
-      wireProgress = Math.min(elapsed / duration, 1);
-      if (wireProgress < 1) {
-        wireAnimationId = requestAnimationFrame(animate);
-      } else {
-        wireProgress = -1;
-        pendingByteIndex = -1;
-        onComplete();
-      }
+  function tickWireDots(now: number) {
+    wireNow = now;
+    wireDots = wireDots.filter(d => (now - d.startTime) / params.wireSpeed < 1);
+    if (wireDots.length > 0) {
+      wireRafId = requestAnimationFrame(tickWireDots);
+    } else {
+      wireRafId = 0;
     }
-    wireAnimationId = requestAnimationFrame(animate);
   }
 
   // Reduced motion check for wire animation
@@ -184,22 +180,25 @@
           opacity="0.4"
         />
 
-        {#if wireProgress >= 0 && !reducedMotion?.matches}
-          <!-- Traveling dot on address bus -->
-          <circle
-            cx={wireProgress * 60}
-            cy="30"
-            r={params.dotSize / 2}
-            fill="var(--color-accent)"
-          />
-          <!-- Traveling dot on data bus (slightly delayed) -->
-          <circle
-            cx={Math.max(0, wireProgress - 0.15) / 0.85 * 60}
-            cy="50"
-            r={params.dotSize / 2}
-            fill="var(--color-highlight)"
-            opacity={wireProgress > 0.15 ? 1 : 0}
-          />
+        {#if !reducedMotion?.matches}
+          {#each wireDots as dot (dot.id)}
+            {@const progress = Math.min((wireNow - dot.startTime) / params.wireSpeed, 1)}
+            <!-- Address bus dot -->
+            <circle
+              cx={progress * 60}
+              cy="30"
+              r={params.dotSize / 2}
+              fill="var(--color-accent)"
+            />
+            <!-- Data bus dot (slightly delayed) -->
+            <circle
+              cx={Math.max(0, progress - 0.15) / 0.85 * 60}
+              cy="50"
+              r={params.dotSize / 2}
+              fill="var(--color-highlight)"
+              opacity={progress > 0.15 ? 1 : 0}
+            />
+          {/each}
         {/if}
       </svg>
       <div class="wire-labels">
