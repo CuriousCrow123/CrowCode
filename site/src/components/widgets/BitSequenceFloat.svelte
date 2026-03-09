@@ -2,6 +2,7 @@
   import type { Param } from '../../lib/params';
   import { loadParams } from '../../lib/params';
   import { readUint, writeUint, float16Decode, float16Encode, float16Classify } from '../../lib/binary';
+  import { startRepeat } from '../../lib/repeat';
   import WidgetDebugPanel from '../debug/WidgetDebugPanel.svelte';
   import BitSequenceCore from './BitSequenceCore.svelte';
 
@@ -14,6 +15,9 @@
     { name: 'glowDuration',    value: 300, unit: 'ms',  category: 'animation', min: 50,  max: 1000, step: 50,   description: 'Glow-pulse duration' },
     { name: 'valueFontSize',   value: 2,   unit: 'rem', category: 'style',     min: 1,   max: 4,    step: 0.25, description: 'Decoded value display size' },
     { name: 'formulaFontSize', value: 1.1, unit: 'rem', category: 'style',     min: 0.7, max: 2,    step: 0.1,  description: 'Formula display size' },
+    { name: 'repeatDelay',    value: 400, unit: 'ms',  category: 'behavior',  min: 100, max: 1000, step: 50,   description: 'Delay before auto-repeat starts' },
+    { name: 'repeatInterval', value: 80,  unit: 'ms',  category: 'behavior',  min: 30,  max: 300,  step: 10,   description: 'Interval between repeats' },
+    { name: 'repeatAccelMs',  value: 800, unit: 'ms',  category: 'behavior',  min: 200, max: 3000, step: 100,  description: 'Time between delta doublings' },
   ];
 
   let params = $state(loadParams(WIDGET_ID, paramDefs));
@@ -23,8 +27,7 @@
   let isEditing = $state(false);
   let editValue = $state('');
   let isDragging = $state(false);
-  let dragStartX = 0;
-  let dragStartValue = 0;
+  let railEl: HTMLElement;
   let inputEl: HTMLInputElement;
 
   // Derived
@@ -35,6 +38,7 @@
   let sign = $derived(bits[0]);
   let exponent = $derived(readUint(bits, 1, 5));
   let mantissa = $derived(readUint(bits, 6, 10));
+  let scrubPercent = $derived((bits16 / 65535) * 100);
 
   // Section colors for bit row
   let sectionColors = $derived({
@@ -130,29 +134,49 @@
     else if (e.key === 'Escape') cancelEdit();
   }
 
-  // --- Drag-scrub (increments raw bit pattern, not decoded float) ---
-  function handlePointerDown(e: PointerEvent) {
-    dragStartX = e.clientX;
-    dragStartValue = bits16;
+  // --- Scrub slider (maps position to raw 16-bit pattern) ---
+  function updateScrubValue(e: PointerEvent) {
+    if (!railEl) return;
+    const rect = railEl.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const pattern = Math.round(x * 65535);
+    const newBits = Array(16).fill(0);
+    writeUint(newBits, 0, pattern, 16);
+    bits = newBits;
+  }
+
+  function handleScrubDown(e: PointerEvent) {
+    e.preventDefault();
+    isDragging = true;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    updateScrubValue(e);
   }
 
-  function handlePointerMove(e: PointerEvent) {
-    const dx = e.clientX - dragStartX;
-    if (!isDragging && Math.abs(dx) > 5) isDragging = true;
-    if (isDragging) {
-      const delta = Math.floor(dx / 4);
-      let newPattern = dragStartValue + delta;
-      newPattern = ((newPattern % 65536) + 65536) % 65536;
-      const newBits = Array(16).fill(0);
-      writeUint(newBits, 0, newPattern, 16);
-      bits = newBits;
-    }
+  function handleScrubMove(e: PointerEvent) {
+    if (!isDragging) return;
+    updateScrubValue(e);
   }
 
-  function handlePointerUp() {
-    if (!isDragging) startEdit();
+  function handleScrubUp() {
     isDragging = false;
+  }
+
+  // --- Press-and-hold +/- buttons ---
+  let stopBtnRepeat: (() => void) | null = null;
+
+  function handleBtnDown(dir: 1 | -1) {
+    stopBtnRepeat?.();
+    stopBtnRepeat = startRepeat((delta) => {
+      const newVal = Math.max(0, Math.min(65535, bits16 + dir * delta));
+      const newBits = Array(16).fill(0);
+      writeUint(newBits, 0, newVal, 16);
+      bits = newBits;
+    }, params.repeatDelay, params.repeatInterval, params.repeatAccelMs);
+  }
+
+  function handleBtnUp() {
+    stopBtnRepeat?.();
+    stopBtnRepeat = null;
   }
 </script>
 
@@ -190,20 +214,39 @@
     {:else}
       <span
         class="value"
-        class:dragging={isDragging}
         class:special={classification === 'infinity' || classification === 'nan'}
-        role="spinbutton"
-        tabindex="0"
-        aria-valuenow={decodedValue}
-        onpointerdown={handlePointerDown}
-        onpointermove={handlePointerMove}
-        onpointerup={handlePointerUp}
-        onpointercancel={() => { isDragging = false; }}
+        onclick={startEdit}
       >
         {displayValue}
       </span>
     {/if}
     <span class="badge">{classification}</span>
+  </div>
+
+  <div class="scrub-row">
+    <button class="scrub-btn" onpointerdown={(e) => { e.preventDefault(); handleBtnDown(-1); }} onpointerup={handleBtnUp} onpointerleave={handleBtnUp} aria-label="Decrement">&minus;</button>
+    <div
+      class="scrub-track"
+      class:active={isDragging}
+      role="slider"
+      tabindex="0"
+      aria-valuenow={bits16}
+      aria-valuemin={0}
+      aria-valuemax={65535}
+      aria-label="Drag to scrub bit pattern"
+      onpointerdown={handleScrubDown}
+      onpointermove={handleScrubMove}
+      onpointerup={handleScrubUp}
+      onpointercancel={() => { isDragging = false; }}
+    >
+      <span class="scrub-label">0</span>
+      <div class="scrub-rail" bind:this={railEl}>
+        <div class="scrub-fill" style="width: {scrubPercent}%"></div>
+        <div class="scrub-knob" style="left: {scrubPercent}%"></div>
+      </div>
+      <span class="scrub-label">65535</span>
+    </div>
+    <button class="scrub-btn" onpointerdown={(e) => { e.preventDefault(); handleBtnDown(1); }} onpointerup={handleBtnUp} onpointerleave={handleBtnUp} aria-label="Increment">+</button>
   </div>
 
   <!-- Formula breakdown -->
@@ -287,7 +330,7 @@
     font-size: var(--bsf-value-font-size);
     font-weight: 700;
     color: var(--color-text);
-    cursor: ew-resize;
+    cursor: text;
     border-bottom: 2px dotted var(--color-text-muted);
     transition: border-color var(--transition-fast);
     padding: 0 0.125rem;
@@ -300,15 +343,112 @@
     border-bottom-style: solid;
   }
 
-  .value.dragging {
-    user-select: none;
-    border-bottom-color: var(--color-accent);
-    border-bottom-style: solid;
-  }
-
   .value.special {
     color: var(--color-text-muted);
     font-style: italic;
+  }
+
+  .scrub-track {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    touch-action: none;
+    user-select: none;
+    cursor: pointer;
+  }
+
+  .scrub-label {
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+    min-width: 2ch;
+    text-align: center;
+  }
+
+  .scrub-rail {
+    position: relative;
+    width: 140px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+  }
+
+  .scrub-rail::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--color-border);
+    border-radius: 1.5px;
+  }
+
+  .scrub-fill {
+    position: absolute;
+    left: 0;
+    height: 3px;
+    background: var(--color-accent);
+    border-radius: 1.5px;
+    pointer-events: none;
+  }
+
+  .scrub-knob {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    transform: translateX(-50%);
+    pointer-events: none;
+    transition: box-shadow var(--transition-fast);
+  }
+
+  .scrub-track:hover .scrub-knob {
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
+  }
+
+  .scrub-track.active .scrub-knob {
+    box-shadow: 0 0 0 6px rgba(99, 102, 241, 0.2);
+  }
+
+  .scrub-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .scrub-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 1.5px solid var(--color-border);
+    background: var(--color-bg-surface);
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+    flex-shrink: 0;
+    padding: 0;
+  }
+
+  .scrub-btn:hover {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+    background: rgba(99, 102, 241, 0.08);
+  }
+
+  .scrub-btn:active {
+    background: rgba(99, 102, 241, 0.15);
+    transform: scale(0.92);
   }
 
   .value-input {

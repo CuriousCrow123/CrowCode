@@ -2,6 +2,7 @@
   import type { Param } from '../../lib/params';
   import { loadParams } from '../../lib/params';
   import { readUint, writeUint } from '../../lib/binary';
+  import { startRepeat } from '../../lib/repeat';
   import WidgetDebugPanel from '../debug/WidgetDebugPanel.svelte';
   import BitSequenceCore from './BitSequenceCore.svelte';
 
@@ -15,30 +16,27 @@
     { name: 'flipDuration',  value: 350, unit: 'ms',  category: 'animation', min: 100, max: 1000, step: 50,   description: '3D flip animation duration' },
     { name: 'valueFontSize', value: 1.5, unit: 'rem', category: 'style',     min: 1,  max: 4,    step: 0.25, description: 'Value display size' },
     { name: 'charFontSize',  value: 3,   unit: 'rem', category: 'style',     min: 1,  max: 6,    step: 0.25, description: 'Character display size' },
-    { name: 'bitCount',      value: 4,   unit: '',    category: 'behavior',  min: 4,  max: 7,    step: 1,    description: 'Number of bits (4 or 7)' },
+    { name: 'repeatDelay',   value: 400, unit: 'ms', category: 'behavior',  min: 100, max: 1000, step: 50,  description: 'Delay before auto-repeat starts' },
+    { name: 'repeatInterval', value: 80, unit: 'ms', category: 'behavior',  min: 30,  max: 300,  step: 10,  description: 'Interval between repeats' },
+    { name: 'repeatAccelMs', value: 800, unit: 'ms', category: 'behavior',  min: 200, max: 3000, step: 100, description: 'Time between delta doublings' },
   ];
 
   let params = $state(loadParams(WIDGET_ID, paramDefs));
 
   // State
   let bits: number[] = $state(Array(4).fill(0));
+  let stage: 1 | 2 = $state(1);
   let showTable = $state(false);
   let isEditing = $state(false);
   let editValue = $state('');
   let isDragging = $state(false);
-  let dragStartX = 0;
-  let dragStartValue = 0;
+  let railEl: HTMLElement;
   let inputEl: HTMLInputElement;
 
-  // Sync bit count
-  $effect(() => {
-    const target = params.bitCount;
-    if (bits.length !== target) {
-      setBitCount(target);
-    }
-  });
+  // Stage 1: arbitrary mapping (4 bits → 16 letters, NOT ASCII)
+  const CUSTOM_MAP = 'ABCDEFGHIJKLMNOP';
 
-  // Control characters
+  // ASCII control characters
   const CONTROL_CHARS: Record<number, string> = {
     0: 'NUL', 1: 'SOH', 2: 'STX', 3: 'ETX', 4: 'EOT', 5: 'ENQ',
     6: 'ACK', 7: 'BEL', 8: 'BS',  9: 'TAB', 10: 'LF', 11: 'VT',
@@ -59,10 +57,27 @@
   }
 
   // Derived
+  let bitCount = $derived(stage === 1 ? 4 : 7);
   let decimalValue = $derived(readUint(bits, 0, bits.length));
   let maxValue = $derived((1 << bits.length) - 1);
-  let char = $derived(asciiChar(decimalValue));
-  let isPrintable = $derived(decimalValue >= 32 && decimalValue <= 126);
+  let displayChar = $derived(
+    stage === 1 ? (CUSTOM_MAP[decimalValue] ?? '?') : asciiChar(decimalValue)
+  );
+  let scrubPercent = $derived(maxValue > 0 ? (decimalValue / maxValue) * 100 : 0);
+  let isPrintable = $derived(
+    stage === 1 ? true : (decimalValue >= 32 && decimalValue <= 126)
+  );
+
+  // Sync bit count when stage changes
+  $effect(() => {
+    if (bits.length !== bitCount) {
+      const currentValue = readUint(bits, 0, bits.length);
+      const newMax = (1 << bitCount) - 1;
+      const newBits = Array(bitCount).fill(0);
+      writeUint(newBits, 0, Math.min(currentValue, newMax), bitCount);
+      bits = newBits;
+    }
+  });
 
   // Bit change handler
   function handleBitChange(index: number, value: 0 | 1) {
@@ -70,7 +85,6 @@
     bits = bits;
   }
 
-  // Bidirectional
   export function setValue(code: number) {
     const clamped = Math.max(0, Math.min(maxValue, Math.round(code)));
     const newBits = Array(bits.length).fill(0);
@@ -78,91 +92,97 @@
     bits = newBits;
   }
 
-  export function setBitCount(n: number) {
-    const currentValue = readUint(bits, 0, bits.length);
-    const newMax = (1 << n) - 1;
-    const newBits = Array(n).fill(0);
-    writeUint(newBits, 0, Math.min(currentValue, newMax), n);
-    bits = newBits;
-  }
-
-  export function showAsciiTable() { showTable = true; }
-  export function hideAsciiTable() { showTable = false; }
-  export function reset() { bits = Array(bits.length).fill(0); }
+  export function setStage(s: 1 | 2) { stage = s; }
+  export function showMappingTable() { showTable = true; }
+  export function hideMappingTable() { showTable = false; }
+  export function reset() { bits = Array(bits.length).fill(0); stage = 1; showTable = false; }
 
   // --- Edit mode ---
   function startEdit() {
     isEditing = true;
-    editValue = isPrintable ? char : String(decimalValue);
+    if (stage === 1) {
+      editValue = displayChar;
+    } else {
+      editValue = isPrintable ? displayChar : String(decimalValue);
+    }
     requestAnimationFrame(() => {
       if (inputEl) {
         inputEl.focus();
-        if (matchMedia('(pointer: fine)').matches) {
-          inputEl.select();
-        }
+        if (matchMedia('(pointer: fine)').matches) inputEl.select();
       }
     });
   }
 
   function commitEdit() {
-    if (editValue.length === 1 && editValue.charCodeAt(0) >= 32 && editValue.charCodeAt(0) <= 126) {
-      setValue(editValue.charCodeAt(0));
+    if (stage === 1) {
+      const upper = editValue.toUpperCase();
+      if (upper.length === 1) {
+        const idx = CUSTOM_MAP.indexOf(upper);
+        if (idx >= 0) { setValue(idx); isEditing = false; return; }
+      }
     } else {
-      const parsed = parseInt(editValue, 10);
-      if (!isNaN(parsed)) {
-        setValue(parsed);
+      if (editValue.length === 1 && editValue.charCodeAt(0) >= 32 && editValue.charCodeAt(0) <= 126) {
+        setValue(editValue.charCodeAt(0));
+        isEditing = false;
+        return;
       }
     }
+    const parsed = parseInt(editValue, 10);
+    if (!isNaN(parsed)) setValue(parsed);
     isEditing = false;
   }
 
-  function cancelEdit() {
-    isEditing = false;
-  }
+  function cancelEdit() { isEditing = false; }
 
   function handleEditKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') { commitEdit(); }
-    else if (e.key === 'Escape') { cancelEdit(); }
+    if (e.key === 'Enter') commitEdit();
+    else if (e.key === 'Escape') cancelEdit();
   }
 
-  // --- Drag-scrub ---
-  function handlePointerDown(e: PointerEvent) {
-    dragStartX = e.clientX;
-    dragStartValue = decimalValue;
+  // --- Scrub slider ---
+  function updateScrubValue(e: PointerEvent) {
+    if (!railEl) return;
+    const rect = railEl.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    setValue(Math.round(x * maxValue));
+  }
+
+  function handleScrubDown(e: PointerEvent) {
+    e.preventDefault();
+    isDragging = true;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    updateScrubValue(e);
   }
 
-  function handlePointerMove(e: PointerEvent) {
-    const dx = e.clientX - dragStartX;
-    if (!isDragging && Math.abs(dx) > 5) {
-      isDragging = true;
-    }
-    if (isDragging) {
-      const sensitivity = Math.max(1, Math.floor((maxValue + 1) / 256));
-      const delta = Math.floor(dx / 4) * sensitivity;
-      let newValue = dragStartValue + delta;
-      const range = maxValue + 1;
-      newValue = ((newValue % range) + range) % range;
-      setValue(newValue);
-    }
+  function handleScrubMove(e: PointerEvent) {
+    if (!isDragging) return;
+    updateScrubValue(e);
   }
 
-  function handlePointerUp() {
-    if (!isDragging) {
-      startEdit();
-    }
-    isDragging = false;
+  function handleScrubUp() { isDragging = false; }
+
+  // --- Press-and-hold +/- buttons ---
+  let stopBtnRepeat: (() => void) | null = null;
+
+  function handleBtnDown(dir: 1 | -1) {
+    stopBtnRepeat?.();
+    stopBtnRepeat = startRepeat((delta) => {
+      setValue(decimalValue + dir * delta);
+    }, params.repeatDelay, params.repeatInterval, params.repeatAccelMs);
   }
 
-  // --- ASCII table click (event delegation) ---
+  function handleBtnUp() {
+    stopBtnRepeat?.();
+    stopBtnRepeat = null;
+  }
+
+  // --- Table click (event delegation) ---
   function handleTableClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
     const cell = target.closest('[data-code]') as HTMLElement | null;
     if (cell) {
       const code = parseInt(cell.dataset.code!, 10);
-      if (!isNaN(code) && code <= maxValue) {
-        setValue(code);
-      }
+      if (!isNaN(code) && code <= maxValue) setValue(code);
     }
   }
 </script>
@@ -186,19 +206,8 @@
   />
 
   <div class="mapping-display">
-    <span class="decimal-value"
-      class:dragging={isDragging}
-      role="spinbutton"
-      tabindex="0"
-      aria-valuenow={decimalValue}
-      aria-valuemin={0}
-      aria-valuemax={maxValue}
-      onpointerdown={handlePointerDown}
-      onpointermove={handlePointerMove}
-      onpointerup={handlePointerUp}
-      onpointercancel={() => { isDragging = false; }}
-    >
-      {#if isEditing}
+    {#if isEditing}
+      <span class="decimal-value">
         <input
           bind:this={inputEl}
           bind:value={editValue}
@@ -207,30 +216,84 @@
           onblur={commitEdit}
           onkeydown={handleEditKeydown}
         />
-      {:else}
-        = {decimalValue}
-      {/if}
-    </span>
+      </span>
+    {:else}
+      <span class="decimal-value" onclick={startEdit}>= {decimalValue}</span>
+    {/if}
     <span class="equals">=</span>
     <span class="char-display" class:control={!isPrintable}>
-      '{char}'
+      '{displayChar}'
     </span>
+    <button
+      class="table-toggle"
+      class:open={showTable}
+      onclick={() => { showTable = !showTable; }}
+      aria-expanded={showTable}
+      aria-label={showTable ? 'Hide mapping table' : 'Show mapping table'}
+    >
+      {showTable ? 'Hide' : 'Show'} table
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
+        <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+  </div>
+
+  <div class="scrub-row">
+    <button class="scrub-btn" onpointerdown={(e) => { e.preventDefault(); handleBtnDown(-1); }} onpointerup={handleBtnUp} onpointerleave={handleBtnUp} aria-label="Decrement">&minus;</button>
+    <div
+      class="scrub-track"
+      class:active={isDragging}
+      role="slider"
+      tabindex="0"
+      aria-valuenow={decimalValue}
+      aria-valuemin={0}
+      aria-valuemax={maxValue}
+      aria-label="Drag to scrub value"
+      onpointerdown={handleScrubDown}
+      onpointermove={handleScrubMove}
+      onpointerup={handleScrubUp}
+      onpointercancel={() => { isDragging = false; }}
+    >
+      <span class="scrub-label">0</span>
+      <div class="scrub-rail" bind:this={railEl}>
+        <div class="scrub-fill" style="width: {scrubPercent}%"></div>
+        <div class="scrub-knob" style="left: {scrubPercent}%"></div>
+      </div>
+      <span class="scrub-label">{maxValue}</span>
+    </div>
+    <button class="scrub-btn" onpointerdown={(e) => { e.preventDefault(); handleBtnDown(1); }} onpointerup={handleBtnUp} onpointerleave={handleBtnUp} aria-label="Increment">+</button>
   </div>
 
   {#if showTable}
-    <div class="ascii-table-wrapper">
+  <div class="table-wrapper">
+    {#if stage === 1}
+      <!-- Stage 1: Custom 4×4 table (arbitrary mapping) -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="custom-table" onclick={handleTableClick}>
+        {#each CUSTOM_MAP.split('') as ch, code}
+          <div
+            class="table-cell"
+            class:active={code === decimalValue}
+            data-code={code}
+          >
+            <span class="cell-code">{code}</span>
+            <span class="cell-char">{ch}</span>
+          </div>
+        {/each}
+      </div>
+    {:else}
+      <!-- Stage 2: Full ASCII table (standard mapping) -->
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="ascii-table" onclick={handleTableClick}>
         {#each Array(128) as _, code}
-          {@const inRange = code <= maxValue}
           {@const isActive = code === decimalValue}
           {@const ctrl = isControl(code)}
           <div
-            class="ascii-cell"
+            class="table-cell"
             class:active={isActive}
             class:control={ctrl}
-            class:out-of-range={!inRange}
             data-code={code}
           >
             <span class="cell-code">{code}</span>
@@ -238,7 +301,8 @@
           </div>
         {/each}
       </div>
-    </div>
+    {/if}
+  </div>
   {/if}
 
   <WidgetDebugPanel defs={paramDefs} bind:values={params} widgetId={WIDGET_ID} />
@@ -265,19 +329,13 @@
     font-size: var(--bsa-value-font-size);
     font-weight: 600;
     color: var(--color-text);
-    cursor: ew-resize;
+    cursor: text;
     border-bottom: 2px dotted var(--color-text-muted);
     transition: border-color var(--transition-fast);
     padding: 0 0.125rem;
   }
 
   .decimal-value:hover {
-    border-bottom-color: var(--color-accent);
-    border-bottom-style: solid;
-  }
-
-  .decimal-value.dragging {
-    user-select: none;
     border-bottom-color: var(--color-accent);
     border-bottom-style: solid;
   }
@@ -293,6 +351,137 @@
     outline: none;
     text-align: center;
     width: 4ch;
+  }
+
+  .scrub-track {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    touch-action: none;
+    user-select: none;
+    cursor: pointer;
+  }
+
+  .scrub-label {
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+    min-width: 2ch;
+    text-align: center;
+  }
+
+  .scrub-rail {
+    position: relative;
+    width: 120px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+  }
+
+  .scrub-rail::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--color-border);
+    border-radius: 1.5px;
+  }
+
+  .scrub-fill {
+    position: absolute;
+    left: 0;
+    height: 3px;
+    background: var(--color-accent);
+    border-radius: 1.5px;
+    pointer-events: none;
+  }
+
+  .scrub-knob {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    transform: translateX(-50%);
+    pointer-events: none;
+    transition: box-shadow var(--transition-fast);
+  }
+
+  .scrub-track:hover .scrub-knob {
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
+  }
+
+  .scrub-track.active .scrub-knob {
+    box-shadow: 0 0 0 6px rgba(99, 102, 241, 0.2);
+  }
+
+  .scrub-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .scrub-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 1.5px solid var(--color-border);
+    background: var(--color-bg-surface);
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+    flex-shrink: 0;
+    padding: 0;
+  }
+
+  .scrub-btn:hover {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+    background: rgba(99, 102, 241, 0.08);
+  }
+
+  .scrub-btn:active {
+    background: rgba(99, 102, 241, 0.15);
+    transform: scale(0.92);
+  }
+
+  .table-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    background: var(--color-bg-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: color var(--transition-fast), border-color var(--transition-fast);
+  }
+
+  .table-toggle:hover {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+  }
+
+  .table-toggle svg {
+    transition: transform var(--transition-fast);
+  }
+
+  .table-toggle.open svg {
+    transform: rotate(180deg);
   }
 
   .equals {
@@ -312,11 +501,19 @@
     font-size: calc(var(--bsa-char-font-size) * 0.6);
   }
 
-  /* ── ASCII Table ── */
-  .ascii-table-wrapper {
+  /* ── Tables ── */
+  .table-wrapper {
     width: 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .custom-table {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    max-width: 280px;
+    margin: 0 auto;
   }
 
   .ascii-table {
@@ -326,33 +523,32 @@
     min-width: 600px;
   }
 
-  .ascii-cell {
+  .table-cell {
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 4px 2px;
-    border-radius: 3px;
+    padding: 6px 2px;
+    border-radius: 4px;
     cursor: pointer;
     background: var(--color-bg-surface);
     transition: background var(--transition-fast);
-    gap: 1px;
+    gap: 2px;
   }
 
-  .ascii-cell:hover:not(.out-of-range) {
+  .table-cell:hover {
     background: var(--color-bg-raised);
   }
 
-  .ascii-cell.active {
+  .table-cell.active {
     background: var(--color-accent);
+  }
+
+  .table-cell.active .cell-code,
+  .table-cell.active .cell-char {
     color: var(--color-bg);
   }
 
-  .ascii-cell.active .cell-code,
-  .ascii-cell.active .cell-char {
-    color: var(--color-bg);
-  }
-
-  .ascii-cell.out-of-range {
+  .table-cell.out-of-range {
     opacity: 0.25;
     cursor: default;
   }
@@ -372,7 +568,11 @@
     line-height: 1;
   }
 
-  .ascii-cell.control .cell-char {
+  .custom-table .cell-char {
+    font-size: 1rem;
+  }
+
+  .table-cell.control .cell-char {
     color: var(--color-text-muted);
     font-style: italic;
     font-size: 0.55rem;
