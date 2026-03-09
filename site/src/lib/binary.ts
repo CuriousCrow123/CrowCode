@@ -40,3 +40,60 @@ export function fromSigned(signed: number, numBits: number): number {
   const max = 1 << numBits;
   return signed < 0 ? signed + max : signed;
 }
+
+// --- IEEE 754 half-precision (binary16) ---
+
+/** Decode a 16-bit pattern to an IEEE 754 half-precision float. */
+export function float16Decode(bits16: number): number {
+  const sign = (bits16 >> 15) & 1;
+  const exp = (bits16 >> 10) & 0x1f;
+  const mant = bits16 & 0x3ff;
+  const s = sign ? -1 : 1;
+
+  if (exp === 0) {
+    // Subnormal or zero
+    return s * (2 ** -14) * (mant / 1024);
+  } else if (exp === 31) {
+    // Infinity or NaN
+    return mant === 0 ? s * Infinity : NaN;
+  } else {
+    // Normal
+    return s * (2 ** (exp - 15)) * (1 + mant / 1024);
+  }
+}
+
+/** Encode a float value to a 16-bit IEEE 754 half-precision bit pattern. */
+export function float16Encode(value: number): number {
+  if (isNaN(value)) return 0x7e00; // canonical NaN
+  if (!isFinite(value)) return value > 0 ? 0x7c00 : 0xfc00;
+  if (value === 0) return Object.is(value, -0) ? 0x8000 : 0;
+
+  const sign = value < 0 ? 1 : 0;
+  const abs = Math.abs(value);
+
+  // Subnormal range
+  if (abs < 2 ** -14) {
+    const mant = Math.round(abs / (2 ** -14) * 1024);
+    return (sign << 15) | mant;
+  }
+
+  // Normal range
+  let exp = Math.floor(Math.log2(abs));
+  let mant = Math.round((abs / (2 ** exp) - 1) * 1024);
+  if (mant === 1024) { exp++; mant = 0; }
+  const biasedExp = exp + 15;
+
+  if (biasedExp >= 31) return (sign << 15) | 0x7c00; // overflow to Inf
+  if (biasedExp <= 0) return (sign << 15); // underflow to zero
+
+  return (sign << 15) | (biasedExp << 10) | mant;
+}
+
+/** Classify a 16-bit float pattern. */
+export function float16Classify(bits16: number): 'zero' | 'subnormal' | 'normal' | 'infinity' | 'nan' {
+  const exp = (bits16 >> 10) & 0x1f;
+  const mant = bits16 & 0x3ff;
+  if (exp === 0) return mant === 0 ? 'zero' : 'subnormal';
+  if (exp === 31) return mant === 0 ? 'infinity' : 'nan';
+  return 'normal';
+}
