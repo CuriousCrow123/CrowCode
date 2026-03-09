@@ -1,7 +1,7 @@
 ---
 title: "feat: Sync bus wire pulses with bit flip events"
 type: feat
-status: active
+status: completed
 date: 2026-03-09
 ---
 
@@ -96,6 +96,22 @@ Both widgets duplicate the dot-animation pattern (~15 lines). No shared module �
 
 - `site/src/components/widgets/BitGridBytes.svelte` — multi-dot state, `spawnDot()`, SVG `{#each}`, rAF loop
 - `site/src/components/widgets/BitGridData.svelte` — `prevDataBits` snapshot, change detection, `spawnDot()`, physics `document.hidden` guard, remove fixed throttle
+
+## Implementation Notes (post-completion)
+
+Further iterations after this plan was completed:
+
+- **Merged rAF loop**: BitGridData no longer uses a separate `tickWireDots` rAF — wire dot ticking is done inside the physics tick for zero sync gap. This survived from the jitter-fix exploration.
+- **`prevDataBits` replaced**: Simple integer comparison (`lastSentX`/`lastSentY`) replaced the `Uint8Array` change detection since we compute the integers directly.
+- **Wire dots as visual echoes**: Dots are spawned when x/y values change (50ms throttle) but carry no data — bits are written immediately from physics. Dots are purely visual indicators of CPU→RAM activity.
+- **Play/pause button**: Added to canvas section (top-right, hover-reveal).
+- **`timeScale` param**: Simulation speed multiplier (default 0.1x) for slow, readable animation.
+- **Direction arrows**: Decode panel shows up/down arrows indicating whether each value is increasing or decreasing, drawing attention to the correspondence between Y value direction and ball motion.
+- **Bottom-left Y origin**: Y coordinate flipped so y=0 is at the bottom and y=max is at the top. Ball going up = Y increasing, which matches student intuition.
+- **Canvas axes and grid**: X-Y axes with labels and a dense square grid background (20px spacing) give the canvas a graph/plot feel.
+- **TimeScale scrubber**: Compact range slider next to play/pause button (top-right, hover-reveal) for adjusting simulation speed inline.
+
+**Attempted and reverted:** Deferred bit writes (dots carrying `pendingX`/`pendingY`, bits updating only on dot arrival) and smooth interpolation (`lerpSpeed` param, exponential lerp) were implemented to create visual causality but caused persistent jitter issues (discrete teleporting, wrapping artifacts, cold-start slides). Reverted to immediate writes — see [jitter fix brainstorm](../brainstorms/2026-03-09-bitgriddata-jitter-fix-brainstorm.md) for details.
 
 ## Sources
 

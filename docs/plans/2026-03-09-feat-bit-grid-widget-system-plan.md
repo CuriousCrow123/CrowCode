@@ -391,6 +391,16 @@ Minor deviations from the plan discovered during implementation:
 - **Bits initialization**: Using `$state([])` (empty) with a resize `$effect` instead of `$state(randomBits(...))` to avoid Svelte 5 `state_referenced_locally` warning.
 - **Element refs need `$state()`**: All `bind:this` refs (`containerEl`, `cpuEl`, etc.) must be declared with `$state()` in Svelte 5.
 
-### Follow-up plan
+### Follow-up plans
 
-- **Wire-flip sync**: [docs/plans/2026-03-09-feat-wire-pulse-flip-sync-plan.md](docs/plans/2026-03-09-feat-wire-pulse-flip-sync-plan.md) — makes wire pulses correspond with actual bit flip events (multi-dot, change-detection-based).
+- **Wire-flip sync**: [docs/plans/2026-03-09-feat-wire-pulse-flip-sync-plan.md](docs/plans/2026-03-09-feat-wire-pulse-flip-sync-plan.md) — multi-dot wire animation synced to bit changes. Dots are visual echoes (bits write immediately).
+- **Jitter fix brainstorm**: [docs/brainstorms/2026-03-09-bitgriddata-jitter-fix-brainstorm.md](docs/brainstorms/2026-03-09-bitgriddata-jitter-fix-brainstorm.md) — explored deferred writes + lerp interpolation to create visual causality; approach was reverted due to persistent jitter. Merged rAF loop was the surviving improvement.
+
+### Additional BitGridData features (post-plan)
+
+- `timeScale` param (default 0.1) for slow, readable simulation speed, with inline scrubber next to play/pause
+- Play/pause button on canvas (top-right, hover-reveal)
+- Ball initialized with `ballV = 20` nudge to start rolling immediately (was stuck at sine peak with zero velocity)
+- Direction arrows in decode panel showing whether x/y values are increasing or decreasing
+- Bottom-left Y origin: y=0 at bottom, y=max at top (ball up = Y increases)
+- Canvas axes (x/y labels) and dense square grid background for a graph/plot appearance
