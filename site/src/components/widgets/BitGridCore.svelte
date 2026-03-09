@@ -27,8 +27,8 @@
     highlights?: Record<string, { indices: number[]; color: string }>;
   } = $props();
 
-  // Internal previous-bits snapshot for change detection
-  let prevBits: Uint8Array = $state(new Uint8Array(0));
+  // Internal previous-bits snapshot for change detection (NOT reactive — only used in effect)
+  let prevBits = new Uint8Array(0);
   let glowingCells: Set<number> = $state(new Set());
 
   // Build a highlight lookup: index → color
@@ -59,7 +59,6 @@
     }
 
     if (changed.length > 0) {
-      // Trigger glow on changed cells
       glowingCells = new Set([...glowingCells, ...changed]);
     }
 
@@ -68,7 +67,7 @@
 
   function handleAnimationEnd(index: number) {
     glowingCells.delete(index);
-    glowingCells = new Set(glowingCells); // trigger reactivity
+    glowingCells = new Set(glowingCells);
   }
 </script>
 

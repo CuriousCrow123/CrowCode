@@ -32,11 +32,11 @@
   let params = $state(loadParams(WIDGET_ID, paramDefs));
 
   // State
-  let bits: number[] = $state(randomBits(params.cols * params.rows));
+  let bits: number[] = $state([]);
   let running = $state(true);
   let cpuVisible = $state(true);
-  let containerEl: HTMLDivElement;
-  let canvasEl: HTMLCanvasElement;
+  let containerEl: HTMLDivElement = $state();
+  let canvasEl: HTMLCanvasElement = $state();
   let isVisible = $state(false);
 
   // Physics state

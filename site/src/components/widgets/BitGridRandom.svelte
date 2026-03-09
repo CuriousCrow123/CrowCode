@@ -23,16 +23,16 @@
   let params = $state(loadParams(WIDGET_ID, paramDefs));
 
   // State
-  let bits: number[] = $state(randomBits(params.cols * params.rows));
+  let bits: number[] = $state([]);
   let running = $state(true);
-  let containerEl: HTMLDivElement;
+  let containerEl: HTMLDivElement = $state();
   let isVisible = $state(false);
 
   function randomBits(count: number): number[] {
     return Array.from({ length: count }, () => Math.round(Math.random()));
   }
 
-  // Resize bits array when cols/rows change
+  // Resize bits array when cols/rows change (also handles initial creation)
   $effect(() => {
     const targetSize = params.cols * params.rows;
     if (bits.length !== targetSize) {

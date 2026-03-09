@@ -26,10 +26,10 @@
   let params = $state(loadParams(WIDGET_ID, paramDefs));
 
   // State
-  let bits: number[] = $state(randomBits(params.cols * params.rows));
+  let bits: number[] = $state([]);
   let running = $state(true);
   let cpuVisible = $state(true);
-  let containerEl: HTMLDivElement;
+  let containerEl: HTMLDivElement = $state();
   let isVisible = $state(false);
 
   // Wire animation state
@@ -38,8 +38,8 @@
   let wireAnimationId = $state(0);
 
   // SVG layout refs
-  let cpuEl: HTMLDivElement;
-  let gridWrapEl: HTMLDivElement;
+  let cpuEl: HTMLDivElement = $state();
+  let gridWrapEl: HTMLDivElement = $state();
 
   function randomBits(count: number): number[] {
     return Array.from({ length: count }, () => Math.round(Math.random()));
