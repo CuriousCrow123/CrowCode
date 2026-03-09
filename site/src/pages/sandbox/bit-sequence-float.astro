@@ -1,19 +1,8 @@
 ---
-import BaseLayout from '../../layouts/BaseLayout.astro';
+import SandboxLayout from '../../layouts/SandboxLayout.astro';
 import BitSequenceFloat from '../../components/widgets/BitSequenceFloat.svelte';
 ---
 
-<BaseLayout title="Sandbox: Bit Sequence Float">
-  <main style="padding: var(--space-2xl); max-width: var(--figure-width); margin-inline: auto;">
-    <a href="/sandbox" style="color: var(--color-accent);">&larr; All widgets</a>
-    <h1 style="margin-block: var(--space-lg); font-size: 1.75rem;">Bit Sequence: Float (IEEE 754)</h1>
-    <p style="color: var(--color-text-muted); margin-bottom: var(--space-xl);">
-      IEEE 754 half-precision: 1 sign bit, 5 exponent bits, 10 mantissa bits.
-      Color-coded sections show how the bit pattern encodes a decimal number.
-      Drag-scrub increments the raw bit pattern to explore precision variation.
-    </p>
-    <div style="background: var(--color-bg-raised); padding: var(--space-xl); border-radius: var(--radius-lg); border: 1px solid var(--color-border);">
-      <BitSequenceFloat client:load />
-    </div>
-  </main>
-</BaseLayout>
+<SandboxLayout title="Bit Sequence: Float (IEEE 754)" description="IEEE 754 half-precision: 1 sign bit, 5 exponent bits, 10 mantissa bits. Color-coded sections show how the bit pattern encodes a decimal number. Drag-scrub increments the raw bit pattern to explore precision variation.">
+  <BitSequenceFloat client:load />
+</SandboxLayout>

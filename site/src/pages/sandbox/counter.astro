@@ -1,20 +1,8 @@
 ---
-import BaseLayout from '../../layouts/BaseLayout.astro';
+import SandboxLayout from '../../layouts/SandboxLayout.astro';
 import Counter from '../../components/widgets/Counter.svelte';
 ---
 
-<BaseLayout title="Sandbox: Counter">
-  <main style="padding: var(--space-2xl); max-width: var(--figure-width); margin-inline: auto;">
-    <a href="/sandbox" style="color: var(--color-accent);">&larr; All widgets</a>
-    <h1 style="margin-block: var(--space-lg); font-size: 1.75rem;">Counter</h1>
-    <p style="color: var(--color-text-muted); margin-bottom: var(--space-xl);">
-      Minimal widget demonstrating <code style="font-family: var(--font-mono); background: var(--color-bg-raised); padding: 0.15em 0.35em; border-radius: var(--radius-sm); font-size: 0.9em;">$state</code>,
-      <code style="font-family: var(--font-mono); background: var(--color-bg-raised); padding: 0.15em 0.35em; border-radius: var(--radius-sm); font-size: 0.9em;">$derived</code>,
-      and exported imperative methods (<code style="font-family: var(--font-mono); background: var(--color-bg-raised); padding: 0.15em 0.35em; border-radius: var(--radius-sm); font-size: 0.9em;">reset()</code>,
-      <code style="font-family: var(--font-mono); background: var(--color-bg-raised); padding: 0.15em 0.35em; border-radius: var(--radius-sm); font-size: 0.9em;">setCount()</code>).
-    </p>
-    <div style="background: var(--color-bg-raised); padding: var(--space-xl); border-radius: var(--radius-lg); border: 1px solid var(--color-border);">
-      <Counter client:load />
-    </div>
-  </main>
-</BaseLayout>
+<SandboxLayout title="Counter" description="Minimal widget demonstrating $state, $derived, and exported imperative methods (reset(), setCount()).">
+  <Counter client:load />
+</SandboxLayout>

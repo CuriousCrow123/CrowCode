@@ -1,18 +1,8 @@
 ---
-import BaseLayout from '../../layouts/BaseLayout.astro';
+import SandboxLayout from '../../layouts/SandboxLayout.astro';
 import BitSequenceAsciiSandbox from '../../components/sandbox/BitSequenceAsciiSandbox.svelte';
 ---
 
-<BaseLayout title="Sandbox: Bit Sequence ASCII">
-  <main style="padding: var(--space-2xl); max-width: var(--figure-width); margin-inline: auto;">
-    <a href="/sandbox" style="color: var(--color-accent);">&larr; All widgets</a>
-    <h1 style="margin-block: var(--space-lg); font-size: 1.75rem;">Bit Sequence: ASCII Character</h1>
-    <p style="color: var(--color-text-muted); margin-bottom: var(--space-xl);">
-      Stage 1: 4 bits mapped to arbitrary letters (A–P). Stage 2: 7 bits mapped to standard ASCII.
-      Click bits to flip, use the slider to scrub, or click a table cell to jump.
-    </p>
-    <div style="background: var(--color-bg-raised); padding: var(--space-xl); border-radius: var(--radius-lg); border: 1px solid var(--color-border);">
-      <BitSequenceAsciiSandbox client:load />
-    </div>
-  </main>
-</BaseLayout>
+<SandboxLayout title="Bit Sequence: ASCII Character" description="Stage 1: 4 bits mapped to arbitrary letters (A-P). Stage 2: 7 bits mapped to standard ASCII. Click bits to flip, use the slider to scrub, or click a table cell to jump.">
+  <BitSequenceAsciiSandbox client:load />
+</SandboxLayout>

@@ -1,18 +1,8 @@
 ---
-import BaseLayout from '../../layouts/BaseLayout.astro';
+import SandboxLayout from '../../layouts/SandboxLayout.astro';
 import BitConnections from '../../components/widgets/BitConnections.svelte';
 ---
 
-<BaseLayout title="Sandbox: Bit Connections">
-  <main style="padding: var(--space-2xl); max-width: var(--figure-width); margin-inline: auto;">
-    <a href="/sandbox" style="color: var(--color-accent);">&larr; All widgets</a>
-    <h1 style="margin-block: var(--space-lg); font-size: 1.75rem;">Bit Connections</h1>
-    <p style="color: var(--color-text-muted); margin-bottom: var(--space-xl);">
-      Drag wires from the bit's port to connect it to two-state targets.
-      Flipping the bit flips all connected items.
-    </p>
-    <div style="background: var(--color-bg-raised); padding: var(--space-xl); border-radius: var(--radius-lg); border: 1px solid var(--color-border);">
-      <BitConnections client:load />
-    </div>
-  </main>
-</BaseLayout>
+<SandboxLayout title="Bit Connections" description="Drag wires from the bit's port to connect it to two-state targets. Flipping the bit flips all connected items.">
+  <BitConnections client:load />
+</SandboxLayout>
