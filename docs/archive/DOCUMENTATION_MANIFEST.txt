@@ -1,0 +1,330 @@
+================================================================================
+CROWCODE REPOSITORY RESEARCH — DOCUMENTATION MANIFEST
+================================================================================
+
+Generated: March 4, 2026
+Total Documentation: 7 comprehensive guides + 1 index
+Total Size: ~119KB
+
+================================================================================
+FILE LISTING & PURPOSES
+================================================================================
+
+1. RESEARCH_INDEX.md (11KB)
+   Location: /Users/alan/Desktop/CrowCode/RESEARCH_INDEX.md
+   Purpose: Navigation hub for all research documentation
+   Use: READ THIS FIRST - directs you to the right docs for your needs
+   Contents:
+     - Start here (recommended reading order)
+     - Deep dives (reference docs)
+     - Common questions & answers
+     - Documentation map
+     - Next steps checklist
+
+2. QUICK_REFERENCE.md (13KB) ⭐ BOOKMARK THIS
+   Location: /Users/alan/Desktop/CrowCode/QUICK_REFERENCE.md
+   Purpose: Essential patterns, checklist, copy-paste templates
+   Use: Daily reference during development
+   Contents:
+     - 90-second widget creation
+     - Animation pattern quick pick
+     - Widget anatomy diagram
+     - Essential patterns (visibility gate, cleanup, etc.)
+     - Never do this (common mistakes)
+     - Section template
+     - File structure
+     - Dev commands
+     - Token & color reference
+     - Testing checklist
+
+3. CLAUDE.md (3KB) - PROJECT RULES
+   Location: /Users/alan/Desktop/CrowCode/CLAUDE.md
+   Purpose: Non-negotiable architecture constraints
+   Use: READ BEFORE CODING - these rules override everything
+   Contents:
+     - Token system rules
+     - Widget parameter rules
+     - Component patterns
+     - Dev tooling info
+     - Commands
+
+4. RESEARCH_SUMMARY.md (16KB)
+   Location: /Users/alan/Desktop/CrowCode/RESEARCH_SUMMARY.md
+   Purpose: Executive overview of the architecture
+   Use: Understand the big picture
+   Contents:
+     - Overview (what is CrowCode)
+     - Three pillars (tokens, params, sections)
+     - Animation patterns overview
+     - Widget structure checklist
+     - Debug system explanation
+     - Key files (all absolute paths)
+     - For your new chapter (recommendations)
+
+5. RESEARCH_PATTERNS.md (22KB)
+   Location: /Users/alan/Desktop/CrowCode/RESEARCH_PATTERNS.md
+   Purpose: Complete technical analysis of patterns
+   Use: Deep understanding of how everything works
+   Contents:
+     - Architecture & structure
+     - Widget param system (full spec)
+     - Animation patterns (BitMatrix, BitRepresenter, continuous)
+     - Section composition patterns
+     - Design token system (spatial vs non-spatial)
+     - Debug panel system
+     - Hydration & performance
+     - No Canvas/WebGL usage
+     - For your new chapter
+
+6. ANIMATION_PATTERNS.md (25KB)
+   Location: /Users/alan/Desktop/CrowCode/ANIMATION_PATTERNS.md
+   Purpose: Detailed, working code examples for animations
+   Use: Copy & modify when building animated widgets
+   Contents:
+     - Pattern 1: Interval-based grid (BitMatrix style) - full example
+     - Pattern 2: SVG signals (BitRepresenter style) - full example
+     - Pattern 3: Continuous sin wave (Canvas) - full example
+     - Pattern 4: RGB visualizer (multi-canvas) - full example
+     - Performance checklist
+     - Canvas patterns & helpers
+     - Testing patterns
+     - Gotchas & common mistakes
+
+7. WIDGET_IMPLEMENTATION_GUIDE.md (17KB)
+   Location: /Users/alan/Desktop/CrowCode/WIDGET_IMPLEMENTATION_GUIDE.md
+   Purpose: Practical, task-focused implementation guide
+   Use: Step-by-step guide when building new widgets
+   Contents:
+     - Quick start (90 seconds)
+     - Widget template (copy-paste ready)
+     - Animation patterns (which to use when)
+     - Parameter categories reference
+     - State management pattern
+     - SVG wiring pattern
+     - Common mistakes to avoid
+     - Section integration pattern
+     - Sandbox page pattern
+     - Testing checklist
+     - Performance tips
+     - Useful code snippets
+
+8. RESEARCH_SUMMARY.md (16KB)
+   Location: /Users/alan/Desktop/CrowCode/RESEARCH_SUMMARY.md
+   Purpose: Executive overview and recommendations
+   Use: Quick understanding of architecture + your chapter prep
+
+================================================================================
+READING ROADMAP
+================================================================================
+
+⏱️  5 MINUTES:
+  → QUICK_REFERENCE.md (essential patterns)
+
+⏱️  15 MINUTES:
+  → CLAUDE.md (understand the rules)
+  → RESEARCH_SUMMARY.md (executive overview)
+
+⏱️  45 MINUTES:
+  → RESEARCH_PATTERNS.md (complete analysis)
+  → WIDGET_IMPLEMENTATION_GUIDE.md (task guide)
+
+⏱️  ONGOING:
+  → ANIMATION_PATTERNS.md (reference while coding)
+  → QUICK_REFERENCE.md (daily checklist)
+
+================================================================================
+BY USE CASE
+================================================================================
+
+NEW TO THE PROJECT?
+  1. RESEARCH_INDEX.md (navigation)
+  2. QUICK_REFERENCE.md (essential patterns)
+  3. CLAUDE.md (rules)
+  4. Explore example widgets in /site/src/components/widgets/
+
+BUILDING A SIMPLE WIDGET?
+  1. QUICK_REFERENCE.md (template)
+  2. WIDGET_IMPLEMENTATION_GUIDE.md (checklist)
+  3. Copy Counter.svelte pattern
+
+BUILDING AN ANIMATED WIDGET?
+  1. ANIMATION_PATTERNS.md (pick pattern)
+  2. Copy corresponding code example
+  3. Modify for your use case
+  4. QUICK_REFERENCE.md (performance tips)
+
+DEBUGGING/TROUBLESHOOTING?
+  1. QUICK_REFERENCE.md (common mistakes)
+  2. RESEARCH_PATTERNS.md (deep dive)
+
+INTEGRATING INTO SECTIONS?
+  1. WIDGET_IMPLEMENTATION_GUIDE.md (section pattern)
+  2. Copy WhatIsABit.svelte as example
+
+ARCHITECTURE QUESTIONS?
+  1. RESEARCH_PATTERNS.md (full analysis)
+  2. RESEARCH_SUMMARY.md (overview)
+
+================================================================================
+ABSOLUTE PATHS - ALL FILES REFERENCED
+================================================================================
+
+PROJECT FILES:
+  /Users/alan/Desktop/CrowCode/CLAUDE.md
+  /Users/alan/Desktop/CrowCode/README.md
+  /Users/alan/Desktop/CrowCode/RESEARCH_INDEX.md
+  /Users/alan/Desktop/CrowCode/QUICK_REFERENCE.md
+  /Users/alan/Desktop/CrowCode/RESEARCH_SUMMARY.md
+  /Users/alan/Desktop/CrowCode/RESEARCH_PATTERNS.md
+  /Users/alan/Desktop/CrowCode/ANIMATION_PATTERNS.md
+  /Users/alan/Desktop/CrowCode/WIDGET_IMPLEMENTATION_GUIDE.md
+  /Users/alan/Desktop/CrowCode/DOCUMENTATION_MANIFEST.txt (this file)
+
+SOURCE FILES REFERENCED:
+  /Users/alan/Desktop/CrowCode/site/src/lib/tokens.ts
+  /Users/alan/Desktop/CrowCode/site/src/lib/params.ts
+  /Users/alan/Desktop/CrowCode/site/src/styles/global.css
+  /Users/alan/Desktop/CrowCode/site/src/layouts/BaseLayout.astro
+  /Users/alan/Desktop/CrowCode/site/src/layouts/EssayLayout.astro
+  /Users/alan/Desktop/CrowCode/site/src/components/debug/DebugPanel.svelte
+  /Users/alan/Desktop/CrowCode/site/src/components/debug/WidgetDebugPanel.svelte
+  /Users/alan/Desktop/CrowCode/site/src/components/widgets/Counter.svelte
+  /Users/alan/Desktop/CrowCode/site/src/components/widgets/SingleBit.svelte
+  /Users/alan/Desktop/CrowCode/site/src/components/widgets/BitMatrix.svelte
+  /Users/alan/Desktop/CrowCode/site/src/components/widgets/BitRepresenter.svelte
+  /Users/alan/Desktop/CrowCode/site/src/components/sections/bits/WhatIsABit.svelte
+  /Users/alan/Desktop/CrowCode/site/src/components/sections/example/InteractiveDemo.svelte
+  /Users/alan/Desktop/CrowCode/site/src/pages/sandbox/index.astro
+  /Users/alan/Desktop/CrowCode/docs/decisions/001-tokens-in-typescript.md
+  /Users/alan/Desktop/CrowCode/docs/decisions/002-per-widget-params.md
+
+================================================================================
+KEY TAKEAWAYS
+================================================================================
+
+1. ARCHITECTURE IS SIMPLE
+   - 3 dependencies (Astro, Svelte, @astrojs/svelte)
+   - Clear separation: tokens → widgets → sections → pages
+   - No hidden magic or runtime discovery
+
+2. WIDGET INDEPENDENCE
+   - Each widget defines its own parameters
+   - Widgets never reference global spacing tokens
+   - Per-widget debug panels for real-time tuning
+
+3. ANIMATION PATTERNS
+   - Interval-based grid mutation (DOM refs + class toggling)
+   - SVG stroke-dash animations (getTotalLength + CSS transitions)
+   - Canvas continuous animation (frame counter + setInterval)
+   - All have visibility observers + document.hidden checks
+
+4. DEBUG SYSTEM
+   - Global panel: design tokens (bottom-right, Ctrl+.)
+   - Per-widget panel: widget params (gear icon)
+   - Two layers completely independent
+   - Both removed from production via import.meta.env.DEV
+
+5. DEVELOPMENT WORKFLOW
+   - Create widget in isolation (sandbox page)
+   - Tune with debug panel in real-time
+   - Integrate into section with prose
+   - Add to essay page
+
+================================================================================
+FOR YOUR NEW CHAPTER
+================================================================================
+
+SCOPE: Bits to Numbers
+  - Sin wave animation (continuous)
+  - Representation mapping (RGB, ASCII, etc.)
+  - RAM visualization (memory grid)
+  - Variable/memory viewer (composite widget)
+
+PATTERNS YOU'LL USE:
+  ✓ Interval-based grid (RAM grid, memory viewer)
+  ✓ SVG signal animation (CPU wires, signal propagation)
+  ✓ Canvas continuous (sin wave, oscillators)
+  ✓ Simple state (RGB sliders, ASCII display)
+
+RECOMMENDED APPROACH:
+  1. Read QUICK_REFERENCE.md (5 min)
+  2. Read CLAUDE.md (understand rules)
+  3. Create sin wave widget using ANIMATION_PATTERNS.md template
+  4. Test in sandbox with debug panel
+  5. Create section with prose + widget
+  6. Iterate: refine params, improve animations
+  7. Repeat for other widgets
+  8. Compose all widgets into final essay page
+
+EXPECTED WIDGETS:
+  1. SinWave - Canvas-based continuous animation
+  2. RGBViewer - Three sliders + color swatch
+  3. CharacterEncoder - Number → ASCII display
+  4. RAMGrid - 16x16 byte grid with addresses
+  5. CPUBus - SVG wires + signal propagation
+  6. MemoryViewer - Composite (code + grid views)
+
+================================================================================
+RESEARCH APPROACH USED
+================================================================================
+
+This research analyzed:
+  ✓ All existing widgets (Counter, SingleBit, BitMatrix, BitRepresenter)
+  ✓ Section composition patterns (interactive prose integration)
+  ✓ Parameter system (per-widget tunable params)
+  ✓ Token system (spatial in TS, non-spatial in CSS)
+  ✓ Debug panels (global + per-widget)
+  ✓ Animation patterns (interval, SVG, canvas)
+  ✓ Performance patterns (visibility observers, document.hidden)
+  ✓ Architecture decisions (ADRs 001, 002)
+  ✓ TypeScript interfaces (Param, Token)
+  ✓ Svelte 5 patterns ($state, $derived, $effect)
+  ✓ Astro layout system (BaseLayout, EssayLayout)
+
+Result: Comprehensive understanding of patterns, conventions, and best practices
+for building complex interactive widgets in this architecture.
+
+================================================================================
+IMPORTANT: THESE ARE RULES
+================================================================================
+
+From CLAUDE.md - These OVERRIDE all other patterns:
+
+1. Widgets must NOT reference global spatial tokens
+   (--space-*, --radius-*, layout widths)
+
+2. All widget numeric styling comes from widget's own paramDefs
+
+3. Non-spatial globals are fine
+   (--color-*, --font-*, --transition-*)
+
+4. Widgets include <WidgetDebugPanel> unconditionally
+
+5. Style params flow via scoped CSS custom properties
+
+6. Behavioral params used directly in JS
+
+7. Sections are Svelte components (not Markdown)
+
+8. Every section's <h2> needs unique id for TOC
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. ✓ Read QUICK_REFERENCE.md
+2. ✓ Read CLAUDE.md
+3. ✓ Explore /site/src/components/widgets/
+4. ✓ Start with first widget using WIDGET_IMPLEMENTATION_GUIDE.md
+5. ✓ Develop in sandbox with debug panel
+6. ✓ Integrate into section
+7. ✓ Repeat for each widget
+
+================================================================================
+
+All documentation is ready to use.
+All paths are absolute and file-safe.
+
+Good luck! 🚀
+
+================================================================================
