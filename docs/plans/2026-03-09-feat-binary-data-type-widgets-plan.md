@@ -31,6 +31,52 @@ origin: docs/brainstorms/2026-03-09-binary-data-types-brainstorm.md
 
 ---
 
+## Implementation Notes (Post-Build)
+
+Key deviations from the original plan, documented for reference:
+
+### Value scrubbing replaced with track+knob slider
+
+The plan specified drag-scrub on the decimal value display (click-drag horizontally to increment/decrement). Implementation uses a dedicated **track+knob slider** below the value display instead, with `setPointerCapture` for reliable drag tracking. This provides clearer affordance and separates the "edit value" (click) interaction from the "scrub value" (drag slider) interaction.
+
+### Press-and-hold +/- buttons with acceleration
+
+All 4 widgets have circular `+`/`-` buttons flanking the slider. These support **press-and-hold** with accelerating delta via a shared `lib/repeat.ts` utility:
+- Fires immediately with delta=1
+- After `repeatDelay` ms (default 400), begins repeating at `repeatInterval` ms (default 80)
+- Delta doubles every `repeatAccelMs` ms (default 800): 1 → 2 → 4 → 8 → ...
+- All 3 params are tunable in each widget's debug panel
+
+### ASCII widget uses stages instead of bitCount
+
+Instead of `setBitCount(7)`, the ASCII widget uses `setStage(1 | 2)`:
+- **Stage 1** (4 bits): arbitrary A-P mapping — introduces the concept of encoding without ASCII complexity
+- **Stage 2** (7 bits): full ASCII table with standard character codes
+
+### Signed widget stage behavior refined
+
+Stage behavior differs from original plan in several ways:
+- **Stage 1**: No sign bit highlighting (the leftmost bit isn't a sign bit yet — it's just the highest unsigned place value). Labels show unsigned place values (8, 4, 2, 1). Only unsigned readout shown.
+- **Stage 2**: Sign bit highlighted red. Labels switch to two's complement weights (-8, 4, 2, 1). Unsigned readout **hidden** — only signed readout shown (not dual display as originally planned, since the dual interpretation is less useful when the focus is "this IS a signed number").
+- **Stage 3**: Circular number line appears. **Draggable** (not just clickable) via pointer events with `setPointerCapture`. Snapping to label intervals disabled during drag for smooth control.
+
+### Sandbox wrappers for staged widgets
+
+Svelte component methods aren't accessible from Astro inline JS. Created Svelte sandbox wrapper components (`BitSequenceAsciiSandbox.svelte`, `BitSequenceSignedSandbox.svelte`) that use `bind:this` to expose stage toggle buttons.
+
+### Additional files created
+
+- `site/src/lib/repeat.ts` — shared press-and-hold utility
+- `site/src/components/sandbox/BitSequenceAsciiSandbox.svelte` — sandbox wrapper
+- `site/src/components/sandbox/BitSequenceSignedSandbox.svelte` — sandbox wrapper
+- `site/src/pages/pages.astro` — all-pages navigation index
+
+### Browser text selection prevention
+
+All `pointerdown` handlers across all 4 widgets call `e.preventDefault()` to prevent browser text selection highlighting during drag interactions (slider, number line).
+
+---
+
 ## Overview
 
 Four interactive widgets that bridge the narrative gap between "a single bit represents two states" (BitConnections, section 2) and "a grid of bits represents RAM" (BitGrid, section 3). A shared `BitSequenceCore` renderer provides the interactive bit row; four variants wrap it with different interpretation displays: unsigned integer, ASCII character, signed integer (two's complement), and IEEE 754 half-precision float.
@@ -134,7 +180,7 @@ When a variant grows its bit count (e.g., 4 -> 8 via prose action):
 BitSequenceCore accepts an optional `labels: string[]` prop (same length as `bits`). If provided, each label is rendered below its corresponding bit cell in a small, muted font. The variant decides what to pass:
 - **Uint:** Powers of 2 (`"8"`, `"4"`, `"2"`, `"1"` for 4-bit)
 - **ASCII:** No labels (the character display is the focus)
-- **Signed:** Bit indices (`"3"`, `"2"`, `"1"`, `"0"`) with the MSB labeled `"sign"` in accent color
+- **Signed:** Stage-dependent — Stage 1: unsigned place values (`"8"`, `"4"`, `"2"`, `"1"`); Stage 2+: two's complement weights (`"-8"`, `"4"`, `"2"`, `"1"`)
 - **Float:** Segment labels (`"S"`, `"E"`, `"E"`, `"E"`, `"E"`, `"E"`, `"M"`, ...) color-coded to match segments
 
 #### Reduced motion
@@ -431,15 +477,15 @@ Recommended shared param names across variants:
 
 #### Phase 1 acceptance criteria:
 
-- [ ] `binary.ts` exports `writeUint`, `readUint`, `toBinary` (Phase 1 scope; add `toSigned`/`fromSigned` in Phase 4, `float16*` in Phase 5)
-- [ ] BitGridData.svelte uses `writeUint`/`readUint`/`toBinary` from `binary.ts` instead of inline functions
-- [ ] BitGridData sandbox page (`/sandbox/bit-grid-data`) still works identically
-- [ ] BitSequenceCore renders a row of interactive bit cells
-- [ ] 3D flip animation works for 8 or fewer bits
-- [ ] Glow-pulse toggle works for more than 8 bits
-- [ ] Labels render below cells when provided
-- [ ] Section colors highlight cells when provided
-- [ ] Reduced motion skips 3D animation
+- [x] `binary.ts` exports `writeUint`, `readUint`, `toBinary` (Phase 1 scope; add `toSigned`/`fromSigned` in Phase 4, `float16*` in Phase 5)
+- [x] BitGridData.svelte uses `writeUint`/`readUint`/`toBinary` from `binary.ts` instead of inline functions
+- [x] BitGridData sandbox page (`/sandbox/bit-grid-data`) still works identically
+- [x] BitSequenceCore renders a row of interactive bit cells
+- [x] 3D flip animation works for 8 or fewer bits
+- [x] Glow-pulse toggle works for more than 8 bits
+- [x] Labels render below cells when provided
+- [x] Section colors highlight cells when provided
+- [x] Reduced motion skips 3D animation
 
 ---
 
@@ -562,9 +608,11 @@ export function reset() {
 | fontSize | 20 | px | style | Digit size in bit cells |
 | perspective | 400 | px | style | 3D perspective depth |
 | flipDuration | 350 | ms | animation | 3D flip animation duration |
-| glowDuration | 300 | ms | animation | Glow-pulse duration |
 | valueFontSize | 2 | rem | style | Decimal value display size |
-| bitCount | 4 | | behavior | Number of bits (4 or 8) |
+| bitCount | 4 | | behavior | Number of bits (3-8) |
+| repeatDelay | 400 | ms | behavior | Delay before auto-repeat starts |
+| repeatInterval | 80 | ms | behavior | Interval between repeats |
+| repeatAccelMs | 800 | ms | behavior | Time between delta doublings |
 
 #### Phase 2 files:
 
@@ -575,15 +623,15 @@ export function reset() {
 
 #### Phase 2 acceptance criteria:
 
-- [ ] Clicking individual bits flips them with 3D animation and updates decimal readout
-- [ ] Clicking decimal value enters edit mode; typing a number updates bits
-- [ ] Drag-scrubbing decimal value updates bits smoothly with wrapping
-- [ ] Labels show powers of 2 below each bit cell
-- [ ] `setBitCount(8)` grows to 8 bits with zero-extension (value preserved, new bits fade in)
-- [ ] `setValue(n)` sets the decimal value and updates bits
-- [ ] `reset()` zeros all bits
-- [ ] WidgetDebugPanel renders with all paramDefs
-- [ ] Sandbox page at `/sandbox/bit-sequence-uint` works with `client:load`
+- [x] Clicking individual bits flips them with 3D animation and updates decimal readout
+- [x] Clicking decimal value enters edit mode; typing a number updates bits
+- [x] ~~Drag-scrubbing decimal value~~ Track+knob slider scrubs value; +/- buttons with press-and-hold acceleration
+- [x] Labels show powers of 2 below each bit cell
+- [x] `setBitCount(8)` grows to 8 bits with zero-extension (value preserved)
+- [x] `setValue(n)` sets the decimal value and updates bits
+- [x] `reset()` zeros all bits
+- [x] WidgetDebugPanel renders with all paramDefs
+- [x] Sandbox page at `/sandbox/bit-sequence-uint` works with `client:load`
 
 ---
 
@@ -665,10 +713,11 @@ export function reset() { bits = Array(bits.length).fill(0); }
 | fontSize | 20 | px | style | Digit size in bit cells |
 | perspective | 400 | px | style | 3D perspective depth |
 | flipDuration | 350 | ms | animation | 3D flip animation duration |
-| glowDuration | 300 | ms | animation | Glow-pulse duration |
 | valueFontSize | 2 | rem | style | Value display size |
 | charFontSize | 3 | rem | style | Character display size |
-| bitCount | 4 | | behavior | Number of bits (4 or 7) |
+| repeatDelay | 400 | ms | behavior | Delay before auto-repeat starts |
+| repeatInterval | 80 | ms | behavior | Interval between repeats |
+| repeatAccelMs | 800 | ms | behavior | Time between delta doublings |
 
 **Note on 4-bit starting state:** At 4 bits, all values (0-15) are control characters. The inline mapping shows `0101 = 5 = 'ENQ'` — the abbreviation appears in a muted style. The prose should say something like: "Right now we can only represent control codes. Let's add more bits to reach the printable characters."
 
@@ -688,15 +737,15 @@ export function reset() { bits = Array(bits.length).fill(0); }
 
 #### Phase 3 acceptance criteria:
 
-- [ ] Inline mapping shows `bits = decimal = character` reactively
-- [ ] Control characters (0-31, 127) display with standard abbreviations in muted style
-- [ ] Printable characters (32-126) display in highlighted style
-- [ ] `showAsciiTable()` reveals the full 16x8 ASCII table with current value highlighted
-- [ ] Clicking an ASCII table cell sets the bits to that character's value
-- [ ] Click-to-edit on character display: typing a printable char sets bits to its code
-- [ ] Drag-scrub on decimal value works with wrapping
-- [ ] `setBitCount(7)` grows to 7 bits with zero-extension
-- [ ] Sandbox page at `/sandbox/bit-sequence-ascii` works
+- [x] Inline mapping shows `bits = decimal = character` reactively
+- [x] Control characters (0-31, 127) display with standard abbreviations in muted style
+- [x] Printable characters (32-126) display in highlighted style
+- [x] `showAsciiTable()` reveals the full 16x8 ASCII table with current value highlighted
+- [x] Clicking an ASCII table cell sets the bits to that character's value
+- [x] Click-to-edit on character display: typing a printable char sets bits to its code
+- [x] ~~Drag-scrub on decimal value~~ Track+knob slider with +/- buttons (press-and-hold acceleration)
+- [x] ~~`setBitCount(7)`~~ Stage-based: `setStage(2)` switches from 4-bit custom mapping (A-P) to 7-bit ASCII
+- [x] Sandbox page at `/sandbox/bit-sequence-ascii` works (with stage toggle buttons via sandbox wrapper)
 
 ---
 
@@ -719,26 +768,31 @@ let stage: 1 | 2 | 3 = $state(1);
 ```typescript
 let unsignedValue = $derived(readUint(bits, 0, bits.length));
 let signedValue = $derived(toSigned(unsignedValue, bits.length));
-let signBit = $derived(bits[0]); // MSB
 let maxUnsigned = $derived((1 << bits.length) - 1);
 let maxSigned = $derived((1 << (bits.length - 1)) - 1);
 let minSigned = $derived(-(1 << (bits.length - 1)));
+let totalValues = $derived(1 << bits.length);
+
+// Sign bit highlight — only in stage 2+
+let sectionColors = $derived(
+  stage >= 2 ? { sign: { indices: [0], color: 'rgba(239, 68, 68, 0.15)' } } : {}
+);
+
+// Labels show place values; MSB is negated in stage 2+ (two's complement weights)
 let labels = $derived(
-  Array.from({ length: bits.length }, (_, i) =>
-    i === 0 ? 'sign' : String(bits.length - 1 - i)
-  )
+  Array.from({ length: bits.length }, (_, i) => {
+    const placeValue = 1 << (bits.length - 1 - i);
+    if (stage === 1) return String(placeValue);          // e.g., "8", "4", "2", "1"
+    return i === 0 ? String(-placeValue) : String(placeValue);  // e.g., "-8", "4", "2", "1"
+  })
 );
 ```
 
 **Progressive reveal stages:**
 
-**Stage 1** (default): Sign bit is visually highlighted (accent color background on MSB cell via `sectionColors` prop). Only unsigned decimal readout shown. User can flip bits and see the unsigned value change. Flipping the sign bit causes a dramatic value jump (e.g., 3 -> 11 at 4 bits).
+**Stage 1** (default): No sign bit highlighting — the MSB is just the highest unsigned place value. Labels show unsigned place values (e.g., `8 4 2 1`). Only unsigned decimal readout shown. User can flip bits and see the unsigned value change.
 
-**Stage 2** (revealed by prose action): A second readout appears below the unsigned one showing the signed interpretation. Both update reactively.
-```
-unsigned: 13  |  signed: -3
-```
-The sign bit label gets a tooltip or annotation explaining "this bit determines the sign."
+**Stage 2** (revealed by prose action): Sign bit highlighted red via `sectionColors`. Labels switch to two's complement weights (e.g., `-8 4 2 1`). Unsigned readout hidden — only signed readout shown (the dual interpretation was less useful when the focus is "this IS a signed number").
 
 **Stage 3** (revealed by prose action): A circular number line SVG appears below the readouts. The circle shows all possible values arranged clockwise:
 - Outer ring: unsigned values 0, 1, 2, ... maxUnsigned
@@ -773,9 +827,7 @@ The SVG is approximately 240x240px (increased from 200px for legibility). Values
 >
 > **Responsive:** SVGs scale naturally with `viewBox`. Ensure the container uses `max-width: 100%; height: auto;`.
 
-**Signed edit mode:** After Stage 2, both readouts are editable. Editing the unsigned value clamps to `[0, maxUnsigned]`. Editing the signed value clamps to `[minSigned, maxSigned]`. Either edit updates the bits accordingly.
-
-**Signed drag-scrub:** Scrubs the unsigned value (0 to maxUnsigned, wrapping). The signed readout updates reactively.
+**Signed edit mode:** The active readout is editable (unsigned in stage 1, signed in stage 2+). Editing the unsigned value clamps to `[0, maxUnsigned]`. Editing the signed value clamps to `[minSigned, maxSigned]`. Track+knob slider with +/- buttons (press-and-hold acceleration via `lib/repeat.ts`) operates on the unsigned value.
 
 **Bit count growth:** Sign-extension. When growing from 4 to 8 bits, the MSB (sign bit) is replicated into the new positions. The signed value is preserved.
 
@@ -813,10 +865,12 @@ export function reset() {
 | fontSize | 20 | px | style | Digit size in bit cells |
 | perspective | 400 | px | style | 3D perspective depth |
 | flipDuration | 350 | ms | animation | 3D flip animation duration |
-| glowDuration | 300 | ms | animation | Glow-pulse duration |
 | valueFontSize | 2 | rem | style | Value display size |
-| numberLineSize | 200 | px | style | Circular number line diameter |
-| bitCount | 4 | | behavior | Number of bits (4 or 8) |
+| numberLineSize | 240 | px | style | Circular number line diameter |
+| bitCount | 4 | | behavior | Number of bits (3-8) |
+| repeatDelay | 400 | ms | behavior | Delay before auto-repeat starts |
+| repeatInterval | 80 | ms | behavior | Interval between repeats |
+| repeatAccelMs | 800 | ms | behavior | Time between delta doublings |
 
 #### Phase 4 files:
 
@@ -827,15 +881,15 @@ export function reset() {
 
 #### Phase 4 acceptance criteria:
 
-- [ ] Stage 1: sign bit highlighted with accent color, only unsigned readout shown
-- [ ] Stage 2: signed readout appears alongside unsigned, both update reactively
-- [ ] Stage 3: circular number line SVG appears, shows dual unsigned/signed labeling
-- [ ] Number line dot moves as bits change
-- [ ] Clicking on number line sets the bits to that value
-- [ ] `setStage(n)` controls progressive reveal
-- [ ] `setBitCount(8)` sign-extends (signed value preserved)
-- [ ] Both readouts are editable/scrubbable after Stage 2
-- [ ] Sandbox page at `/sandbox/bit-sequence-signed` works
+- [x] Stage 1: ~~sign bit highlighted~~ no sign bit highlight (it's not a sign bit yet), unsigned readout only, labels show unsigned place values (8, 4, 2, 1)
+- [x] Stage 2: signed readout replaces unsigned (unsigned hidden), labels switch to two's complement weights (-8, 4, 2, 1), sign bit highlighted red
+- [x] Stage 3: circular number line SVG appears, shows dual unsigned/signed labeling
+- [x] Number line dot moves as bits change
+- [x] ~~Clicking~~ Dragging on number line sets value (pointer-based drag with `setPointerCapture`)
+- [x] `setStage(n)` controls progressive reveal
+- [x] `setBitCount(8)` sign-extends (signed value preserved)
+- [x] ~~Both readouts editable~~ Active readout is editable (unsigned in stage 1, signed in stage 2+); track+knob slider with +/- buttons
+- [x] Sandbox page at `/sandbox/bit-sequence-signed` works (with 3 stage toggle buttons via sandbox wrapper)
 
 ---
 
@@ -983,6 +1037,9 @@ export function setSpecial(kind: 'zero' | 'negzero' | 'inf' | 'neginf' | 'nan') 
 | glowDuration | 300 | ms | animation | Glow-pulse duration (always >8 bits, no 3D flip) |
 | valueFontSize | 2 | rem | style | Decoded value display size |
 | formulaFontSize | 1.1 | rem | style | Formula display size (increased for readability) |
+| repeatDelay | 400 | ms | behavior | Delay before auto-repeat starts |
+| repeatInterval | 80 | ms | behavior | Interval between repeats |
+| repeatAccelMs | 800 | ms | behavior | Time between delta doublings |
 
 Note: No `perspective` or `flipDuration` params since float is always 16 bits (toggle mode, passed as `mode="toggle"` to Core).
 
@@ -995,16 +1052,16 @@ Note: No `perspective` or `flipDuration` params since float is always 16 bits (t
 
 #### Phase 5 acceptance criteria:
 
-- [ ] 16 bit cells with color-coded sections (sign=red, exponent=blue, mantissa=green)
-- [ ] Section labels (S, E, M) below each cell
-- [ ] Decoded float value updates reactively as bits flip
-- [ ] Formula display shows color-coded breakdown, updates reactively
-- [ ] Subnormal formula switches to `2^(-14) * (m/1024)` form
-- [ ] Special values display: +0, -0, +Infinity, -Infinity, NaN
-- [ ] Drag-scrub increments raw bit pattern (not decoded value)
-- [ ] Click-to-edit: typing a decimal encodes via `float16Encode`
-- [ ] `setSpecial('inf')` etc. sets special bit patterns
-- [ ] Sandbox page at `/sandbox/bit-sequence-float` works
+- [x] 16 bit cells with color-coded sections (sign=red, exponent=blue, mantissa=green)
+- [x] Section labels (S, E, M) below each cell
+- [x] Decoded float value updates reactively as bits flip
+- [x] Formula display shows color-coded breakdown, updates reactively
+- [x] Subnormal formula switches to `2^(-14) * (m/1024)` form
+- [x] Special values display: +0, -0, +Infinity, -Infinity, NaN
+- [x] ~~Drag-scrub~~ Track+knob slider increments raw bit pattern; +/- buttons with press-and-hold acceleration
+- [x] Click-to-edit: typing a decimal encodes via `float16Encode`
+- [x] `setSpecial('inf')` etc. sets special bit patterns
+- [x] Sandbox page at `/sandbox/bit-sequence-float` works
 
 ---
 
@@ -1037,31 +1094,31 @@ Note: No `perspective` or `flipDuration` params since float is always 16 bits (t
 
 ### Functional Requirements
 
-- [ ] All four variant widgets render and are interactive
-- [ ] BitSequenceCore supports both 3D flip (<=8 bits) and glow-pulse toggle (>8 bits)
-- [ ] Bidirectional editing works: flip bits -> value updates; edit value -> bits update
-- [ ] Drag-scrub works on value displays with wrapping
-- [ ] Bit count growth preserves values (zero-extension for unsigned, sign-extension for signed)
-- [ ] ASCII table reveals progressively and is interactive
-- [ ] Two's complement reveals three progressive stages
-- [ ] Float shows color-coded segments with decode formula
-- [ ] Float handles all special values (0, -0, Inf, -Inf, NaN, subnormals)
-- [ ] Each variant has a working sandbox page
+- [x] All four variant widgets render and are interactive
+- [x] BitSequenceCore supports both 3D flip (<=8 bits) and glow-pulse toggle (>8 bits)
+- [x] Bidirectional editing works: flip bits -> value updates; edit value -> bits update
+- [x] ~~Drag-scrub~~ Track+knob slider + press-and-hold +/- buttons on all variants
+- [x] Bit count growth preserves values (zero-extension for unsigned, sign-extension for signed)
+- [x] ASCII table reveals progressively and is interactive
+- [x] Two's complement reveals three progressive stages
+- [x] Float shows color-coded segments with decode formula
+- [x] Float handles all special values (0, -0, Inf, -Inf, NaN, subnormals)
+- [x] Each variant has a working sandbox page
 
 ### Non-Functional Requirements
 
-- [ ] Reduced motion support: 3D flips skipped, glow-pulse suppressed
-- [ ] `binary.ts` functions are pure and have no side effects
-- [ ] No global spatial token references in any widget (per CLAUDE.md separation rule)
-- [ ] All paramDefs use scoped CSS custom properties with the correct prefix
+- [x] Reduced motion support: 3D flips skipped, glow-pulse suppressed
+- [x] `binary.ts` functions are pure and have no side effects
+- [x] No global spatial token references in any widget (per CLAUDE.md separation rule)
+- [x] All paramDefs use scoped CSS custom properties with the correct prefix
 
 ### Quality Gates
 
-- [ ] BitGridData sandbox page still works after `binary.ts` extraction
-- [ ] Each sandbox page loads without console errors
-- [ ] All widgets render correctly at default param values
-- [ ] Dev build includes WidgetDebugPanel for each variant
-- [ ] Production build excludes debug panels
+- [x] BitGridData sandbox page still works after `binary.ts` extraction
+- [x] Each sandbox page loads without console errors
+- [x] All widgets render correctly at default param values
+- [x] Dev build includes WidgetDebugPanel for each variant
+- [x] Production build excludes debug panels
 
 ## Dependencies & Prerequisites
 
