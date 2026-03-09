@@ -33,11 +33,12 @@ Visual essay template built with Astro 5 + Svelte 5. All source lives in `site/`
 4. Use scoped CSS custom properties for style params, direct JS for behavioral params
 5. Include `<WidgetDebugPanel>` with `bind:values` for the debug panel
 6. Export methods via `export function` for prose control
-7. Create `site/src/pages/sandbox/my-widget.astro` for isolated development
+7. Create `site/src/pages/sandbox/my-widget.astro` using `SandboxLayout` for isolated development
 
 ### Component patterns
 
 - **Widgets** (`components/widgets/`) are self-contained, expose imperative APIs via `export function`
+- **Shared widget components** (`components/widgets/shared/`) are stateless/presentational Svelte components used by multiple widgets (e.g. `ScrubSlider`). They have no `WIDGET_ID` or `paramDefs` — they receive all data via props and communicate changes via callbacks
 - **Sections** (`components/sections/`) compose widgets + prose, use `bind:this` for prose-widget interaction
 - Prose text that triggers widget actions uses `<button class="action">` (styled in `global.css`)
 - Every section's `<h2>` needs an `id` attribute for TOC auto-generation
@@ -46,7 +47,7 @@ Visual essay template built with Astro 5 + Svelte 5. All source lives in `site/`
 
 - **Global debug panel**: gated behind `import.meta.env.DEV` — toggle with bottom-right button or `Ctrl+.`
 - **Widget debug panels**: gear icon in each widget's top-right corner (dev only)
-- Sandbox pages at `/sandbox/` for isolated widget development
+- Sandbox pages at `/sandbox/` for isolated widget development — use `SandboxLayout.astro` for consistent page structure
 
 ## Commands
 
