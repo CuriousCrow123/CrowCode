@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Param } from '../../lib/params';
   import { loadParams } from '../../lib/params';
+  import { writeUint, readUint, toBinary } from '../../lib/binary';
   import WidgetDebugPanel from '../debug/WidgetDebugPanel.svelte';
   import BitGridCore from './BitGridCore.svelte';
 
@@ -19,6 +20,7 @@
     { name: 'bitDepth',        value: 8,   unit: '',   category: 'behavior',  min: 8,   max: 16,   step: 8,   description: 'Bits per value (8 or 16)' },
     { name: 'ambientRate',     value: 200, unit: 'ms', category: 'behavior',  min: 50,  max: 1000, step: 50,  description: 'Ambient random flip interval' },
     // Physics
+    { name: 'timeScale',       value: 0.4, unit: 'x',  category: 'physics',   min: 0.1, max: 2,    step: 0.1, description: 'Simulation speed multiplier' },
     { name: 'gravity',         value: 500, unit: '',   category: 'physics',   min: 100, max: 2000, step: 100, description: 'Gravity strength' },
     { name: 'curveAmplitude',  value: 60,  unit: 'px', category: 'physics',   min: 20,  max: 120,  step: 10,  description: 'Sine wave amplitude' },
     { name: 'curveWavelength', value: 200, unit: 'px', category: 'physics',   min: 100, max: 400,  step: 20,  description: 'Sine wave wavelength' },
@@ -26,6 +28,7 @@
     { name: 'ballSize',        value: 8,   unit: 'px', category: 'style',     min: 4,   max: 16,   step: 1,   description: 'Ball radius' },
     { name: 'canvasHeight',    value: 160, unit: 'px', category: 'style',     min: 80,  max: 300,  step: 10,  description: 'Animation canvas height' },
     { name: 'wireSpeed',       value: 400, unit: 'ms', category: 'animation', min: 100, max: 1000, step: 50,  description: 'Bus wire dot travel time' },
+    { name: 'lerpSpeed',       value: 12,  unit: '',   category: 'animation', min: 2,   max: 30,   step: 1,   description: 'Ball smoothing speed (higher = snappier)' },
     { name: 'cpuSize',         value: 80,  unit: 'px', category: 'style',     min: 40,  max: 120,  step: 10,  description: 'CPU block size' },
   ];
 
@@ -48,16 +51,19 @@
   let decodedX = $state(0);
   let decodedY = $state(0);
 
-  // Multi-dot wire animation state
-  interface WireDot { id: number; startTime: number; }
+  // Multi-dot wire animation state (ticked inside physics loop, no separate rAF)
+  interface WireDot { id: number; startTime: number; pendingX: number; pendingY: number; bitDepth: number; }
   let wireDots: WireDot[] = $state([]);
   let wireNow = $state(0);
-  let wireRafId = 0;
   let dotIdCounter = 0;
-  let lastDotSpawnTime = 0; // plain variable — 50ms min-interval throttle
+  let lastDotSpawnTime = 0;
+  let lastSentX = -1;
+  let lastSentY = -1;
 
-  // Change detection for data bits (plain Uint8Array, NOT $state)
-  let prevDataBits = new Uint8Array(0);
+  // Smoothed display position (lerps toward decoded values)
+  // Stored as normalized [0,1] to handle x-wrapping correctly
+  let displayNormX = -1; // -1 = uninitialized, snap on first update
+  let displayNormY = -1;
 
   const reducedMotion = typeof window !== 'undefined'
     ? window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -86,27 +92,6 @@
     };
   });
 
-  // Write an integer value to bits array at a given bit offset
-  function writeValue(newBits: number[], offset: number, value: number, numBits: number) {
-    const clamped = Math.max(0, Math.min((1 << numBits) - 1, Math.round(value)));
-    for (let i = 0; i < numBits; i++) {
-      newBits[offset + i] = (clamped >> (numBits - 1 - i)) & 1;
-    }
-  }
-
-  // Read an integer value from bits array
-  function readValue(bitsArr: number[], offset: number, numBits: number): number {
-    let val = 0;
-    for (let i = 0; i < numBits; i++) {
-      val = (val << 1) | (bitsArr[offset + i] ?? 0);
-    }
-    return val;
-  }
-
-  // Format binary string
-  function toBinary(value: number, numBits: number): string {
-    return value.toString(2).padStart(numBits, '0');
-  }
 
   // Resize bits array when params change
   $effect(() => {
@@ -147,13 +132,19 @@
     return () => clearInterval(id);
   });
 
+  // Initialize ball once on mount
+  let ballInitialized = false;
+  $effect(() => {
+    if (!canvasEl || ballInitialized) return;
+    ballX = params.curveWavelength / 4;
+    ballV = 20;
+    ballInitialized = true;
+  });
+
   // Physics simulation + canvas rendering (rAF loop)
   $effect(() => {
     if (!isVisible || !running || !canvasEl) return;
 
-    // Initialize ball at a peak
-    ballX = params.curveWavelength / 4;
-    ballV = 0;
     lastFrameTime = performance.now();
 
     let rafId: number;
@@ -165,7 +156,8 @@
         return;
       }
 
-      const dt = Math.min((now - lastFrameTime) / 1000, 0.05);
+      const rawDt = Math.min((now - lastFrameTime) / 1000, 0.05);
+      const dt = rawDt * params.timeScale;
       lastFrameTime = now;
 
       if (!reducedMotion?.matches) {
@@ -183,47 +175,79 @@
 
       const canvasWidth = canvasEl.clientWidth;
       const canvasHeight = params.canvasHeight;
-      const A = params.curveAmplitude;
       const wl = params.curveWavelength;
-      const canvasX = (ballX / wl) * canvasWidth;
+      const A = params.curveAmplitude;
       const centerY = canvasHeight / 2;
-      const canvasY = centerY - A * Math.sin((2 * Math.PI * ballX) / wl);
 
+      // CPU computes values from physics state
       const xNorm = ballX / wl;
-      const yNorm = canvasY / canvasHeight;
+      const canvasYPhysics = centerY - A * Math.sin((2 * Math.PI * ballX) / wl);
+      const yNorm = canvasYPhysics / canvasHeight;
       const xInt = Math.round(xNorm * maxVal);
       const yInt = Math.round(yNorm * maxVal);
 
-      decodedX = xInt;
-      decodedY = yInt;
-
-      // Write to bits array
-      const newBits = [...bits];
-      writeValue(newBits, 0, xInt, params.bitDepth);
-      writeValue(newBits, params.bitDepth, yInt, params.bitDepth);
-      bits = newBits;
-
-      // Spawn wire dot when data bits actually changed (with 50ms throttle)
       if (cpuVisible) {
-        const bd = params.bitDepth;
-        const dataLen = bd * 2;
-        if (prevDataBits.length !== dataLen) {
-          prevDataBits = new Uint8Array(dataLen);
-          for (let i = 0; i < dataLen; i++) prevDataBits[i] = newBits[i] ?? 0;
-        } else {
-          let changed = false;
-          for (let i = 0; i < dataLen; i++) {
-            if (newBits[i] !== prevDataBits[i]) { changed = true; break; }
-          }
-          if (changed && now - lastDotSpawnTime >= 50) {
-            lastDotSpawnTime = now;
-            spawnDot();
-          }
-          for (let i = 0; i < dataLen; i++) prevDataBits[i] = newBits[i] ?? 0;
+        // Defer bit writes — dots carry pending values, bits update on arrival
+        if ((xInt !== lastSentX || yInt !== lastSentY) && now - lastDotSpawnTime >= 50) {
+          lastDotSpawnTime = now;
+          lastSentX = xInt;
+          lastSentY = yInt;
+          spawnDot(xInt, yInt, params.bitDepth);
         }
+
+        // Tick wire dots: apply completed dot values to bits
+        wireNow = now;
+        let lastCompleted: WireDot | null = null;
+        const active: WireDot[] = [];
+        for (const d of wireDots) {
+          if ((now - d.startTime) / params.wireSpeed >= 1) {
+            lastCompleted = d;
+          } else {
+            active.push(d);
+          }
+        }
+        if (lastCompleted) {
+          const newBits = [...bits];
+          writeUint(newBits, 0, lastCompleted.pendingX, lastCompleted.bitDepth);
+          writeUint(newBits, lastCompleted.bitDepth, lastCompleted.pendingY, lastCompleted.bitDepth);
+          bits = newBits;
+          decodedX = lastCompleted.pendingX;
+          decodedY = lastCompleted.pendingY;
+        }
+        wireDots = active;
+      } else {
+        // No CPU/wires — write bits immediately
+        const newBits = [...bits];
+        writeUint(newBits, 0, xInt, params.bitDepth);
+        writeUint(newBits, params.bitDepth, yInt, params.bitDepth);
+        bits = newBits;
+        decodedX = xInt;
+        decodedY = yInt;
       }
 
-      renderCanvas(canvasX, canvasY);
+      // Smooth interpolation in normalized [0,1] space
+      const targetNormX = decodedX / maxVal;
+      const targetNormY = decodedY / maxVal;
+
+      if (displayNormX < 0) {
+        // First frame: snap to target (no lerp from origin)
+        displayNormX = targetNormX;
+        displayNormY = targetNormY;
+      } else {
+        const lerpFactor = 1 - Math.exp(-params.lerpSpeed * rawDt);
+
+        // Wrap-aware lerp for X (circular — the ball wraps at edges)
+        let dx = targetNormX - displayNormX;
+        if (dx > 0.5) dx -= 1;
+        if (dx < -0.5) dx += 1;
+        displayNormX += dx * lerpFactor;
+        displayNormX = ((displayNormX % 1) + 1) % 1;
+
+        // Normal lerp for Y (no wrapping)
+        displayNormY += (targetNormY - displayNormY) * lerpFactor;
+      }
+
+      renderCanvas(displayNormX * canvasWidth, displayNormY * canvasHeight);
       rafId = requestAnimationFrame(tick);
     }
 
@@ -231,25 +255,9 @@
     return () => cancelAnimationFrame(rafId);
   });
 
-  // Cleanup wire rAF on unmount
-  $effect(() => {
-    return () => { if (wireRafId) cancelAnimationFrame(wireRafId); };
-  });
-
-  function spawnDot() {
+  function spawnDot(pendingX: number, pendingY: number, bitDepth: number) {
     if (wireDots.length >= 8) wireDots = wireDots.slice(1);
-    wireDots = [...wireDots, { id: dotIdCounter++, startTime: performance.now() }];
-    if (!wireRafId) wireRafId = requestAnimationFrame(tickWireDots);
-  }
-
-  function tickWireDots(now: number) {
-    wireNow = now;
-    wireDots = wireDots.filter(d => (now - d.startTime) / params.wireSpeed < 1);
-    if (wireDots.length > 0) {
-      wireRafId = requestAnimationFrame(tickWireDots);
-    } else {
-      wireRafId = 0;
-    }
+    wireDots = [...wireDots, { id: dotIdCounter++, startTime: performance.now(), pendingX, pendingY, bitDepth }];
   }
 
   function renderCanvas(ballCanvasX: number, ballCanvasY: number) {
@@ -307,8 +315,10 @@
   export function setBitDepth(depth: 8 | 16) { params.bitDepth = depth; }
   export function reset() {
     ballX = params.curveWavelength / 4;
-    ballV = 0;
+    ballV = 20;
     bits = randomBits(params.cols * params.rows);
+    ballInitialized = true;
+    displayNormX = -1; // snap on next frame
   }
 </script>
 
@@ -388,6 +398,22 @@
       style="height: {params.canvasHeight}px;"
       aria-label="Ball rolling along a sine wave, position encoded as binary in the grid above"
     ></canvas>
+    <button
+      class="play-pause-btn"
+      onclick={() => { running = !running; }}
+      aria-label={running ? 'Pause animation' : 'Play animation'}
+    >
+      {#if running}
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <rect x="6" y="4" width="4" height="16" rx="1" />
+          <rect x="14" y="4" width="4" height="16" rx="1" />
+        </svg>
+      {:else}
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <polygon points="6,4 20,12 6,20" />
+        </svg>
+      {/if}
+    </button>
     {#if reducedMotion?.matches}
       <p class="reduced-motion-note">(animation paused — reduced motion)</p>
     {/if}
@@ -511,6 +537,31 @@
     height: var(--bgd-canvas-height);
     border-radius: 4px;
     background: var(--color-bg-surface);
+  }
+
+  .play-pause-btn {
+    position: absolute;
+    top: 0.375rem;
+    right: 0.375rem;
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .canvas-section:hover .play-pause-btn {
+    opacity: 0.5;
+  }
+
+  .play-pause-btn:hover {
+    opacity: 1;
   }
 
   .reduced-motion-note {
