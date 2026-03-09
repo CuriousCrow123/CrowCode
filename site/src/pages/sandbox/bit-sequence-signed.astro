@@ -1,6 +1,6 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import BitSequenceSigned from '../../components/widgets/BitSequenceSigned.svelte';
+import BitSequenceSignedSandbox from '../../components/sandbox/BitSequenceSignedSandbox.svelte';
 ---
 
 <BaseLayout title="Sandbox: Bit Sequence Signed">
@@ -12,7 +12,7 @@ import BitSequenceSigned from '../../components/widgets/BitSequenceSigned.svelte
       Three progressive stages reveal sign bit emphasis, dual interpretation, and wraparound.
     </p>
     <div style="background: var(--color-bg-raised); padding: var(--space-xl); border-radius: var(--radius-lg); border: 1px solid var(--color-border);">
-      <BitSequenceSigned client:load />
+      <BitSequenceSignedSandbox client:load />
     </div>
   </main>
 </BaseLayout>
