@@ -1,0 +1,18 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import BitGridData from '../../components/widgets/BitGridData.svelte';
+---
+
+<BaseLayout title="Sandbox: Bit Grid Data">
+  <main style="padding: var(--space-2xl); max-width: var(--figure-width); margin-inline: auto;">
+    <a href="/sandbox" style="color: var(--color-accent);">&larr; All widgets</a>
+    <h1 style="margin-block: var(--space-lg); font-size: 1.75rem;">Bit Grid: Data</h1>
+    <p style="color: var(--color-text-muted); margin-bottom: var(--space-xl);">
+      Byte groups encode x,y integers that drive a ball rolling along a sine wave.
+      The decode panel shows the binary-to-decimal mapping in real time.
+    </p>
+    <div style="background: var(--color-bg-raised); padding: var(--space-xl); border-radius: var(--radius-lg); border: 1px solid var(--color-border); overflow-x: auto;">
+      <BitGridData client:load />
+    </div>
+  </main>
+</BaseLayout>
