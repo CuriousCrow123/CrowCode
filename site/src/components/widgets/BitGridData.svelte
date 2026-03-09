@@ -20,7 +20,7 @@
     { name: 'bitDepth',        value: 8,   unit: '',   category: 'behavior',  min: 8,   max: 16,   step: 8,   description: 'Bits per value (8 or 16)' },
     { name: 'ambientRate',     value: 200, unit: 'ms', category: 'behavior',  min: 50,  max: 1000, step: 50,  description: 'Ambient random flip interval' },
     // Physics
-    { name: 'timeScale',       value: 0.4, unit: 'x',  category: 'physics',   min: 0.1, max: 2,    step: 0.1, description: 'Simulation speed multiplier' },
+    { name: 'timeScale',       value: 0.1, unit: 'x',  category: 'physics',   min: 0.1, max: 2,    step: 0.1, description: 'Simulation speed multiplier' },
     { name: 'gravity',         value: 500, unit: '',   category: 'physics',   min: 100, max: 2000, step: 100, description: 'Gravity strength' },
     { name: 'curveAmplitude',  value: 60,  unit: 'px', category: 'physics',   min: 20,  max: 120,  step: 10,  description: 'Sine wave amplitude' },
     { name: 'curveWavelength', value: 200, unit: 'px', category: 'physics',   min: 100, max: 400,  step: 20,  description: 'Sine wave wavelength' },
@@ -28,7 +28,6 @@
     { name: 'ballSize',        value: 8,   unit: 'px', category: 'style',     min: 4,   max: 16,   step: 1,   description: 'Ball radius' },
     { name: 'canvasHeight',    value: 160, unit: 'px', category: 'style',     min: 80,  max: 300,  step: 10,  description: 'Animation canvas height' },
     { name: 'wireSpeed',       value: 400, unit: 'ms', category: 'animation', min: 100, max: 1000, step: 50,  description: 'Bus wire dot travel time' },
-    { name: 'lerpSpeed',       value: 12,  unit: '',   category: 'animation', min: 2,   max: 30,   step: 1,   description: 'Ball smoothing speed (higher = snappier)' },
     { name: 'cpuSize',         value: 80,  unit: 'px', category: 'style',     min: 40,  max: 120,  step: 10,  description: 'CPU block size' },
   ];
 
@@ -51,19 +50,18 @@
   let decodedX = $state(0);
   let decodedY = $state(0);
 
-  // Multi-dot wire animation state (ticked inside physics loop, no separate rAF)
-  interface WireDot { id: number; startTime: number; pendingX: number; pendingY: number; bitDepth: number; }
+  // Direction arrows: 1 = increasing, -1 = decreasing, 0 = no change yet
+  let xDir = $state(0);
+  let yDir = $state(0);
+
+  // Multi-dot wire animation state (ticked inside physics loop)
+  interface WireDot { id: number; startTime: number; }
   let wireDots: WireDot[] = $state([]);
   let wireNow = $state(0);
   let dotIdCounter = 0;
   let lastDotSpawnTime = 0;
   let lastSentX = -1;
   let lastSentY = -1;
-
-  // Smoothed display position (lerps toward decoded values)
-  // Stored as normalized [0,1] to handle x-wrapping correctly
-  let displayNormX = -1; // -1 = uninitialized, snap on first update
-  let displayNormY = -1;
 
   const reducedMotion = typeof window !== 'undefined'
     ? window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -156,8 +154,7 @@
         return;
       }
 
-      const rawDt = Math.min((now - lastFrameTime) / 1000, 0.05);
-      const dt = rawDt * params.timeScale;
+      const dt = Math.min((now - lastFrameTime) / 1000, 0.05) * params.timeScale;
       lastFrameTime = now;
 
       if (!reducedMotion?.matches) {
@@ -173,81 +170,43 @@
         ballX = ((ballX % wl) + wl) % wl;
       }
 
-      const canvasWidth = canvasEl.clientWidth;
       const canvasHeight = params.canvasHeight;
       const wl = params.curveWavelength;
       const A = params.curveAmplitude;
       const centerY = canvasHeight / 2;
 
-      // CPU computes values from physics state
-      const xNorm = ballX / wl;
-      const canvasYPhysics = centerY - A * Math.sin((2 * Math.PI * ballX) / wl);
-      const yNorm = canvasYPhysics / canvasHeight;
-      const xInt = Math.round(xNorm * maxVal);
-      const yInt = Math.round(yNorm * maxVal);
+      // Derive integer values from physics
+      const normY = centerY - A * Math.sin((2 * Math.PI * ballX) / wl);
+      const xInt = Math.round((ballX / wl) * maxVal);
+      const yInt = Math.round((1 - normY / canvasHeight) * maxVal);
 
+      // Track value direction before updating
+      if (xInt !== decodedX) xDir = xInt > decodedX ? 1 : -1;
+      if (yInt !== decodedY) yDir = yInt > decodedY ? 1 : -1;
+
+      // Write bits immediately
+      const newBits = [...bits];
+      writeUint(newBits, 0, xInt, params.bitDepth);
+      writeUint(newBits, params.bitDepth, yInt, params.bitDepth);
+      bits = newBits;
+      decodedX = xInt;
+      decodedY = yInt;
+
+      // Spawn wire dot as visual echo when values change (with 50ms throttle)
       if (cpuVisible) {
-        // Defer bit writes — dots carry pending values, bits update on arrival
+        // Tick existing dots
+        wireNow = now;
+        wireDots = wireDots.filter(d => (now - d.startTime) / params.wireSpeed < 1);
+
         if ((xInt !== lastSentX || yInt !== lastSentY) && now - lastDotSpawnTime >= 50) {
           lastDotSpawnTime = now;
           lastSentX = xInt;
           lastSentY = yInt;
-          spawnDot(xInt, yInt, params.bitDepth);
+          spawnDot();
         }
-
-        // Tick wire dots: apply completed dot values to bits
-        wireNow = now;
-        let lastCompleted: WireDot | null = null;
-        const active: WireDot[] = [];
-        for (const d of wireDots) {
-          if ((now - d.startTime) / params.wireSpeed >= 1) {
-            lastCompleted = d;
-          } else {
-            active.push(d);
-          }
-        }
-        if (lastCompleted) {
-          const newBits = [...bits];
-          writeUint(newBits, 0, lastCompleted.pendingX, lastCompleted.bitDepth);
-          writeUint(newBits, lastCompleted.bitDepth, lastCompleted.pendingY, lastCompleted.bitDepth);
-          bits = newBits;
-          decodedX = lastCompleted.pendingX;
-          decodedY = lastCompleted.pendingY;
-        }
-        wireDots = active;
-      } else {
-        // No CPU/wires — write bits immediately
-        const newBits = [...bits];
-        writeUint(newBits, 0, xInt, params.bitDepth);
-        writeUint(newBits, params.bitDepth, yInt, params.bitDepth);
-        bits = newBits;
-        decodedX = xInt;
-        decodedY = yInt;
       }
 
-      // Smooth interpolation in normalized [0,1] space
-      const targetNormX = decodedX / maxVal;
-      const targetNormY = decodedY / maxVal;
-
-      if (displayNormX < 0) {
-        // First frame: snap to target (no lerp from origin)
-        displayNormX = targetNormX;
-        displayNormY = targetNormY;
-      } else {
-        const lerpFactor = 1 - Math.exp(-params.lerpSpeed * rawDt);
-
-        // Wrap-aware lerp for X (circular — the ball wraps at edges)
-        let dx = targetNormX - displayNormX;
-        if (dx > 0.5) dx -= 1;
-        if (dx < -0.5) dx += 1;
-        displayNormX += dx * lerpFactor;
-        displayNormX = ((displayNormX % 1) + 1) % 1;
-
-        // Normal lerp for Y (no wrapping)
-        displayNormY += (targetNormY - displayNormY) * lerpFactor;
-      }
-
-      renderCanvas(displayNormX * canvasWidth, displayNormY * canvasHeight);
+      renderCanvas(ballX);
       rafId = requestAnimationFrame(tick);
     }
 
@@ -255,12 +214,12 @@
     return () => cancelAnimationFrame(rafId);
   });
 
-  function spawnDot(pendingX: number, pendingY: number, bitDepth: number) {
+  function spawnDot() {
     if (wireDots.length >= 8) wireDots = wireDots.slice(1);
-    wireDots = [...wireDots, { id: dotIdCounter++, startTime: performance.now(), pendingX, pendingY, bitDepth }];
+    wireDots = [...wireDots, { id: dotIdCounter++, startTime: performance.now() }];
   }
 
-  function renderCanvas(ballCanvasX: number, ballCanvasY: number) {
+  function renderCanvas(physBallX: number) {
     if (!canvasEl) return;
     const ctx = canvasEl.getContext('2d');
     if (!ctx) return;
@@ -278,32 +237,89 @@
 
     ctx.clearRect(0, 0, w, h);
 
-    // Draw sine curve
+    const mutedColor = getComputedStyle(canvasEl).getPropertyValue('--color-text-muted').trim() || '#8b90a0';
+    const accentColor = getComputedStyle(canvasEl).getPropertyValue('--color-accent').trim() || '#4d9fff';
+
+    // Axis insets
+    const axisLeft = 20;
+    const axisBottom = 16;
+    const plotW = w - axisLeft;
+    const plotH = h - axisBottom;
+
+    // Square grid lines
+    const gridSpacing = 20;
+    ctx.strokeStyle = mutedColor;
+    ctx.lineWidth = 0.5;
+    ctx.globalAlpha = 0.12;
+    for (let gy = gridSpacing; gy < plotH; gy += gridSpacing) {
+      ctx.beginPath();
+      ctx.moveTo(axisLeft, gy);
+      ctx.lineTo(w, gy);
+      ctx.stroke();
+    }
+    for (let gx = axisLeft + gridSpacing; gx < w; gx += gridSpacing) {
+      ctx.beginPath();
+      ctx.moveTo(gx, 0);
+      ctx.lineTo(gx, plotH);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Axes
+    ctx.strokeStyle = mutedColor;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.4;
+    ctx.beginPath();
+    ctx.moveTo(axisLeft, 0);
+    ctx.lineTo(axisLeft, plotH);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(axisLeft, plotH);
+    ctx.lineTo(w, plotH);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Axis labels (no rotation)
+    ctx.font = '9px sans-serif';
+    ctx.fillStyle = mutedColor;
+    ctx.globalAlpha = 0.5;
+    ctx.textAlign = 'center';
+    ctx.fillText('x', axisLeft + plotW / 2, h - 2);
+    ctx.textBaseline = 'middle';
+    ctx.fillText('y', 8, plotH / 2);
+    ctx.textBaseline = 'alphabetic';
+    ctx.globalAlpha = 1;
+
+    // Draw sine curve (within plot area)
     const A = params.curveAmplitude;
     const wl = params.curveWavelength;
-    const centerY = h / 2;
+    const centerY = plotH / 2;
 
     ctx.beginPath();
-    ctx.strokeStyle = getComputedStyle(canvasEl).getPropertyValue('--color-text-muted').trim() || '#8b90a0';
+    ctx.strokeStyle = mutedColor;
     ctx.lineWidth = 1.5;
-    for (let px = 0; px <= w; px++) {
-      const xOnCurve = (px / w) * wl;
+    for (let px = 0; px <= plotW; px++) {
+      const xOnCurve = (px / plotW) * wl;
       const y = centerY - A * Math.sin((2 * Math.PI * xOnCurve) / wl);
-      if (px === 0) ctx.moveTo(px, y);
-      else ctx.lineTo(px, y);
+      if (px === 0) ctx.moveTo(axisLeft + px, y);
+      else ctx.lineTo(axisLeft + px, y);
     }
     ctx.stroke();
 
+    // Compute ball position in same coordinate system as curve
+    const plotBallX = axisLeft + (physBallX / wl) * plotW;
+    const plotBallY = centerY - A * Math.sin((2 * Math.PI * physBallX) / wl);
+
     // Draw ball
     ctx.beginPath();
-    ctx.fillStyle = getComputedStyle(canvasEl).getPropertyValue('--color-accent').trim() || '#4d9fff';
-    ctx.arc(ballCanvasX, ballCanvasY, params.ballSize, 0, Math.PI * 2);
+    ctx.fillStyle = accentColor;
+    ctx.arc(plotBallX, plotBallY, params.ballSize, 0, Math.PI * 2);
     ctx.fill();
 
     // Ball glow
     ctx.beginPath();
-    ctx.fillStyle = (getComputedStyle(canvasEl).getPropertyValue('--color-accent').trim() || '#4d9fff') + '40';
-    ctx.arc(ballCanvasX, ballCanvasY, params.ballSize * 2, 0, Math.PI * 2);
+    ctx.fillStyle = accentColor + '40';
+    ctx.arc(plotBallX, plotBallY, params.ballSize * 2, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -318,7 +334,6 @@
     ballV = 20;
     bits = randomBits(params.cols * params.rows);
     ballInitialized = true;
-    displayNormX = -1; // snap on next frame
   }
 </script>
 
@@ -380,12 +395,14 @@
           <span class="decode-binary">{toBinary(decodedX, params.bitDepth)}</span>
           <span class="decode-equals">=</span>
           <span class="decode-decimal">{decodedX}</span>
+          <span class="decode-arrow x-arrow">{xDir > 0 ? '\u2191' : ''}</span>
         </div>
         <div class="decode-row y-row">
           <span class="decode-label">y</span>
           <span class="decode-binary">{toBinary(decodedY, params.bitDepth)}</span>
           <span class="decode-equals">=</span>
           <span class="decode-decimal">{decodedY}</span>
+          <span class="decode-arrow y-arrow">{yDir > 0 ? '\u2191' : yDir < 0 ? '\u2193' : ''}</span>
         </div>
       </div>
     </div>
@@ -398,22 +415,35 @@
       style="height: {params.canvasHeight}px;"
       aria-label="Ball rolling along a sine wave, position encoded as binary in the grid above"
     ></canvas>
-    <button
-      class="play-pause-btn"
-      onclick={() => { running = !running; }}
-      aria-label={running ? 'Pause animation' : 'Play animation'}
-    >
-      {#if running}
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-          <rect x="6" y="4" width="4" height="16" rx="1" />
-          <rect x="14" y="4" width="4" height="16" rx="1" />
-        </svg>
-      {:else}
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-          <polygon points="6,4 20,12 6,20" />
-        </svg>
-      {/if}
-    </button>
+    <div class="canvas-controls">
+      <div class="scrubber">
+        <span class="scrubber-label">{params.timeScale.toFixed(1)}x</span>
+        <input
+          type="range"
+          min="0.1"
+          max="2"
+          step="0.1"
+          bind:value={params.timeScale}
+          aria-label="Simulation speed"
+        />
+      </div>
+      <button
+        class="play-pause-btn"
+        onclick={() => { running = !running; }}
+        aria-label={running ? 'Pause animation' : 'Play animation'}
+      >
+        {#if running}
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <rect x="6" y="4" width="4" height="16" rx="1" />
+            <rect x="14" y="4" width="4" height="16" rx="1" />
+          </svg>
+        {:else}
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <polygon points="6,4 20,12 6,20" />
+          </svg>
+        {/if}
+      </button>
+    </div>
     {#if reducedMotion?.matches}
       <p class="reduced-motion-note">(animation paused — reduced motion)</p>
     {/if}
@@ -528,6 +558,15 @@
     text-align: right;
   }
 
+  .decode-arrow {
+    font-weight: 700;
+    min-width: 1.5ch;
+    text-align: center;
+  }
+
+  .x-arrow { color: var(--color-accent); }
+  .y-arrow { color: var(--color-highlight); }
+
   .canvas-section {
     position: relative;
   }
@@ -539,10 +578,26 @@
     background: var(--color-bg-surface);
   }
 
-  .play-pause-btn {
+  .canvas-controls {
     position: absolute;
     top: 0.375rem;
     right: 0.375rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .canvas-section:hover .canvas-controls {
+    opacity: 0.6;
+  }
+
+  .canvas-controls:hover {
+    opacity: 1 !important;
+  }
+
+  .play-pause-btn {
     width: 24px;
     height: 24px;
     display: grid;
@@ -552,16 +607,53 @@
     background: transparent;
     color: var(--color-text-muted);
     cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.15s;
-  }
-
-  .canvas-section:hover .play-pause-btn {
-    opacity: 0.5;
+    flex-shrink: 0;
   }
 
   .play-pause-btn:hover {
-    opacity: 1;
+    color: var(--color-text);
+  }
+
+  .scrubber {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .scrubber input[type="range"] {
+    width: 60px;
+    height: 2px;
+    appearance: none;
+    background: var(--color-text-muted);
+    border-radius: 1px;
+    cursor: pointer;
+    opacity: 0.5;
+  }
+
+  .scrubber input[type="range"]::-webkit-slider-thumb {
+    appearance: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    cursor: pointer;
+  }
+
+  .scrubber input[type="range"]::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: none;
+    cursor: pointer;
+  }
+
+  .scrubber-label {
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    color: var(--color-text-muted);
+    min-width: 3ch;
+    text-align: right;
   }
 
   .reduced-motion-note {
