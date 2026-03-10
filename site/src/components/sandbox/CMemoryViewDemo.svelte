@@ -10,7 +10,7 @@
   } from '../../lib/c-program';
 
   /** Map sub-step kinds to highlight colors (replaces kind-based CSS classes). */
-  const SUB_STEP_COLORS: Record<CSubStepKind, string> = {
+  const SUB_STEP_COLORS: Partial<Record<CSubStepKind, string>> = {
     declare:             'rgba(239, 68, 68, 0.15)',
     read:                'rgba(99, 102, 241, 0.15)',
     compute:             'rgba(234, 179, 8, 0.15)',
@@ -42,7 +42,7 @@
     if (!cachedSubSteps.has(instrIdx)) {
       const steps = decomposeInstruction(
         program[instrIdx],
-        (name) => memoryView?.getVariable(name)?.value ?? null,
+        { getVarValue: (name) => memoryView?.getVariable(name)?.value ?? null },
       ).map((step) => ({ ...step, instrIdx }));
       cachedSubSteps.set(instrIdx, steps);
     }
