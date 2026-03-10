@@ -1,0 +1,8 @@
+---
+import SandboxLayout from '../../layouts/SandboxLayout.astro';
+import CMemoryViewDemo from '../../components/sandbox/CMemoryViewDemo.svelte';
+---
+
+<SandboxLayout title="C Memory View" description="Shows how C instructions allocate and modify bytes in memory. Code panel + byte grid with variable annotations.">
+  <CMemoryViewDemo client:load />
+</SandboxLayout>
