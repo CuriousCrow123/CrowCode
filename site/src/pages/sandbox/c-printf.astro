@@ -1,0 +1,8 @@
+---
+import SandboxLayout from '../../layouts/SandboxLayout.astro';
+import CPrintfDemo from '../../components/sandbox/CPrintfDemo.svelte';
+---
+
+<SandboxLayout title="C Printf" description="Shows how printf processes format strings, resolves placeholders to variable arguments, and produces stdout output.">
+  <CPrintfDemo client:load />
+</SandboxLayout>
