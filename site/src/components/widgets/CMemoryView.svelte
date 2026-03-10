@@ -470,10 +470,13 @@
     };
     variables = [...variables, v];
 
-    // Glow effect for new bytes
+    // Glow effect for new bytes (use bit indices, not byte offsets)
     const changed: number[] = [];
     for (let i = 0; i < totalSize; i++) {
-      changed.push(address - BASE_ADDRESS + i);
+      const byteIdx = address - BASE_ADDRESS + i;
+      for (let bit = 0; bit < 8; bit++) {
+        changed.push(byteIdx * 8 + bit);
+      }
     }
     glowingCells = new Set([...glowingCells, ...changed]);
 
@@ -517,13 +520,6 @@
       return variable;
     });
     variables = updatedVars;
-
-    // Glow effect
-    const changed: number[] = [];
-    for (let i = 0; i < elementSize; i++) {
-      changed.push(byteOffset + i);
-    }
-    glowingCells = new Set([...glowingCells, ...changed]);
 
     // Track for table view glow
     glowingVarNames = new Set([...glowingVarNames, `${name}[${index}]`]);

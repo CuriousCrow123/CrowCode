@@ -303,7 +303,11 @@
             if (gen !== generation) return;
 
             if (showMath) {
-              const elemSize = C_TYPE_SIZES['int'];
+              const arrName2 = ptrToArray.get(step.action.varName)!;
+              const arrVar2 = memoryView.getVariable(arrName2);
+              const elemSize = arrVar2?.arrayElements
+                ? arrVar2.size / arrVar2.arrayElements
+                : C_TYPE_SIZES['int'];
               const prevAddr = value - elemSize;
               arithmeticDisplay = {
                 base: toHex(prevAddr, 4),

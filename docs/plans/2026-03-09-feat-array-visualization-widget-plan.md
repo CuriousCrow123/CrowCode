@@ -557,40 +557,40 @@ import CArrayDemo from '../../components/sandbox/CArrayDemo.svelte';
 ## Implementation Phases
 
 ### Phase 0: CMemoryView Bug Fix + Capacity
-- Fix `glowingCells` Set mutation bug (`.add()` → reassignment)
-- Increase `TOTAL_BYTES` from 32 to 64
+- [x] Fix `glowingCells` Set mutation bug (`.add()` → reassignment)
+- [x] Increase `TOTAL_BYTES` from 32 to 64
 - **Files:** `site/src/components/widgets/CMemoryView.svelte`
 
 ### Phase 1: Data Model (`c-program.ts`)
-- Add 3 new `CInstruction` kinds (`declare-array`, `array-index-read`, `pointer-arith-deref`)
-- Add 3 new `CSubStep.action` kinds (`declareArray`, `assignArrayElement`, `highlightArrayElement`)
-- Implement `countSubSteps` and `decomposeInstruction` for new kinds
+- [x] Add 3 new `CInstruction` kinds (`declare-array`, `array-index-read`, `pointer-arith-deref`)
+- [x] Add 3 new `CSubStep.action` kinds (`declareArray`, `assignArrayElement`, `highlightArrayElement`)
+- [x] Implement `countSubSteps` and `decomposeInstruction` for new kinds
 - **Files:** `site/src/lib/c-program.ts`
 
 ### Phase 2: CMemoryView Extensions
-- Add `arrayElements` and `elementValues` to `CVariable` interface
-- Add `highlightedElement` state for element-level highlighting
-- Implement `declareArray`, `assignArrayElement`, `highlightArrayElement`, `highlightOob`
-- Update bits view display for array element labels
-- Update table view display for array element grouping
+- [x] Add `arrayElements` and `elementValues` to `CVariable` interface
+- [x] Add `highlightedElement` state for element-level highlighting
+- [x] Implement `declareArray`, `assignArrayElement`, `highlightArrayElement`, `highlightOob`
+- [x] Update bits view display for array element labels
+- [x] Update table view display for array element grouping
 - **Files:** `site/src/components/widgets/CMemoryView.svelte`
 
 ### Phase 3: CArrayStrip Component
-- Create widget with imperative API (7 methods)
-- Arithmetic display and OOB as reactive props from orchestrator
-- CSS `transform`-based pointer slide animation
+- [x] Create widget with imperative API (7 methods)
+- [x] Arithmetic display and OOB as reactive props from orchestrator
+- [x] CSS `transform`-based pointer slide animation
 - **Files:** `site/src/components/widgets/CArrayStrip.svelte`
 
 ### Phase 4: CArrayDemo Orchestrator
-- Static program (fixed size 4)
-- Dual-view dispatch with generation checks after every `await`
-- `replaySubStep` for both views (instant strip positioning)
-- showMath as boolean toggle button
+- [x] Static program (fixed size 4)
+- [x] Dual-view dispatch with generation checks after every `await`
+- [x] `replaySubStep` for both views (instant strip positioning)
+- [x] showMath as boolean toggle button
 - **Files:** `site/src/components/sandbox/CArrayDemo.svelte`
 
 ### Phase 5: CodePanel + Sandbox Page
-- Update CodePanel tokenizer regex for `[]` and `{}`
-- Create sandbox page
+- [x] Update CodePanel tokenizer regex for `[]` and `{}`
+- [x] Create sandbox page
 - **Files:** `site/src/components/widgets/shared/CodePanel.svelte`, `site/src/pages/sandbox/c-array.astro`
 
 ## Dependencies & Risks
