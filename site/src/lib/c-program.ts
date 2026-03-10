@@ -7,13 +7,14 @@
 
 // --- Type system ---
 
-export type CTypeName = 'char' | 'int' | 'float' | 'double';
+export type CTypeName = 'char' | 'int' | 'float' | 'double' | 'pointer';
 
 export const C_TYPE_SIZES: Record<CTypeName, number> = {
   char: 1,
   int: 4,
   float: 4,
   double: 8,
+  pointer: 4, // 32-bit model; parameterizable via CMemoryView
 };
 
 /** Color palette for variable annotations (cycled by variable index). */
@@ -28,7 +29,7 @@ export const VAR_COLORS: string[] = [
 // --- Instruction model ---
 
 export type CInstruction =
-  | { kind: 'declare'; code: string; varName: string; type: CTypeName }
+  | { kind: 'declare'; code: string; varName: string; type: CTypeName; targetType?: CTypeName }
   | { kind: 'assign'; code: string; varName: string; value: number }
   | { kind: 'declare-assign'; code: string; varName: string; type: CTypeName; value: number }
   | {
@@ -38,13 +39,20 @@ export type CInstruction =
       sources: string[];
       value: number;
     }
-  | { kind: 'printf'; code: string; format: string; sources: string[] };
+  | { kind: 'printf'; code: string; format: string; sources: string[] }
+  | { kind: 'scanf'; code: string; format: string; targets: string[]; inputValues: number[]; inputBuffer: string }
+  | { kind: 'declare-pointer-assign'; code: string; varName: string; targetType: CTypeName; targetName: string }
+  | { kind: 'pointer-assign'; code: string; ptrName: string; targetName: string }
+  | { kind: 'deref-write'; code: string; ptrName: string; targetName: string; value: number }
+  | { kind: 'deref-read-assign'; code: string; varName: string; type: CTypeName; ptrName: string; targetName: string }
+  | { kind: 'comment'; code: string; label: string };
 
 // --- Runtime state ---
 
 export interface CVariable {
   name: string;
   type: CTypeName;
+  targetType?: CTypeName; // for pointer variables: what they point to
   address: number; // byte offset in memory region
   size: number; // C_TYPE_SIZES[type]
   color: string; // annotation overlay color
@@ -54,7 +62,9 @@ export interface CVariable {
 // --- Sub-step decomposition ---
 
 export type CSubStepKind = 'declare' | 'read' | 'compute' | 'assign'
-  | 'printf-literal' | 'printf-placeholder';
+  | 'printf-literal' | 'printf-placeholder'
+  | 'scanf-address' | 'scanf-consume' | 'scanf-skip'
+  | 'deref-read' | 'deref-write' | 'pointer-assign';
 
 export interface CSubStep {
   kind: CSubStepKind;
@@ -66,10 +76,12 @@ export interface CSubStep {
   highlightOffset?: number;
   /** Action to perform on the memory view, or null for compute (no memory change) */
   action:
-    | { kind: 'declareVar'; typeName: CTypeName; varName: string }
+    | { kind: 'declareVar'; typeName: CTypeName; varName: string; targetType?: CTypeName }
     | { kind: 'assignVar'; varName: string; value: number }
     | { kind: 'highlightVar'; varName: string }
     | { kind: 'appendStdout'; text: string; raw?: string }
+    | { kind: 'scanfRead'; varName: string; value: number; specifier: '%d' | '%c'; chars: number }
+    | { kind: 'scanfSkip'; chars: number }
     | null;
 }
 
@@ -169,7 +181,31 @@ export function countSubSteps(instr: CInstruction): number {
       return (instr.target.type ? 1 : 0) + instr.sources.length + (isSimpleCopy ? 0 : 1) + 1;
     }
     case 'printf': return parseFormatString(instr.format).length;
+    case 'scanf': {
+      const segments = parseFormatString(instr.format);
+      let count = 0;
+      for (const seg of segments) {
+        if (seg.kind === 'literal' && /^\s+$/.test(seg.text)) {
+          count += 1; // scanf-skip
+        } else if (seg.kind === 'specifier') {
+          count += 2; // scanf-address + scanf-consume
+        }
+        // other literals (non-whitespace) are skipped silently
+      }
+      return count;
+    }
+    case 'declare-pointer-assign': return 3; // declare + read(&) + pointer-assign
+    case 'pointer-assign': return 2;          // read(&) + pointer-assign
+    case 'deref-write': return 2;             // deref-read + deref-write
+    case 'deref-read-assign': return 3;       // declare + deref-read + assign
+    case 'comment': return 1;                  // single pause step
   }
+}
+
+export interface DecomposeOptions {
+  getVarValue?: (name: string) => number | null;
+  getVarColor?: (name: string) => string | null;
+  getVarAddress?: (name: string) => string | null;
 }
 
 /**
@@ -177,24 +213,31 @@ export function countSubSteps(instr: CInstruction): number {
  *
  * Each sub-step maps to one visual beat: a code highlight, a status label,
  * and optionally a CMemoryView imperative call.
- *
- * @param getVarValue Optional callback to read current variable values for
- *   labels (e.g., "Read x → 10"). When omitted, labels show without values.
- *   The highlight substring must appear exactly once in instr.code.
  */
 export function decomposeInstruction(
   instr: CInstruction,
-  getVarValue?: (name: string) => number | null,
-  getVarColor?: (name: string) => string | null,
+  options?: DecomposeOptions,
 ): CSubStep[] {
+  const getVarValue = options?.getVarValue;
+  const getVarColor = options?.getVarColor;
+  const getVarAddress = options?.getVarAddress;
   switch (instr.kind) {
-    case 'declare':
+    case 'declare': {
+      const isPointer = instr.type === 'pointer';
+      const typeLabel = isPointer ? `pointer-to-${instr.targetType ?? 'int'}` : instr.type;
+      const sizeBytes = C_TYPE_SIZES[instr.type];
       return [{
         kind: 'declare',
-        highlight: `${instr.type} ${instr.varName}`,
-        label: `Declare ${instr.varName} (${C_TYPE_SIZES[instr.type]} byte${C_TYPE_SIZES[instr.type] !== 1 ? 's' : ''}, uninitialized)`,
-        action: { kind: 'declareVar', typeName: instr.type, varName: instr.varName },
+        highlight: instr.code.replace(';', '').trim(),
+        label: `Declare ${typeLabel} ${instr.varName} (${sizeBytes} byte${sizeBytes !== 1 ? 's' : ''})`,
+        action: {
+          kind: 'declareVar',
+          typeName: instr.type,
+          varName: instr.varName,
+          ...(isPointer && instr.targetType ? { targetType: instr.targetType } : {}),
+        },
       }];
+    }
 
     case 'assign': {
       const assignExpr = instr.code.replace(';', '').trim();
@@ -332,6 +375,214 @@ export function decomposeInstruction(
 
       return steps;
     }
+
+    case 'scanf': {
+      const steps: CSubStep[] = [];
+      const segments = parseFormatString(instr.format);
+
+      // Pre-compute char counts by walking the input buffer
+      let bufferPos = 0;
+      let targetIndex = 0;
+
+      // Find where the format string starts in code (after the opening quote)
+      const fmtStart = instr.code.indexOf('"') + 1;
+      let fmtOffset = 0;
+
+      for (const seg of segments) {
+        if (seg.kind === 'literal' && /^\s+$/.test(seg.text)) {
+          // Whitespace in format string → scanf-skip
+          const skipChars = countWhitespace(instr.inputBuffer, bufferPos);
+          steps.push({
+            kind: 'scanf-skip',
+            highlight: seg.text,
+            highlightOffset: fmtStart + fmtOffset,
+            label: 'Skip whitespace',
+            action: { kind: 'scanfSkip', chars: skipChars },
+          });
+          bufferPos += skipChars;
+          fmtOffset += seg.text.length;
+        } else if (seg.kind === 'specifier') {
+          const name = instr.targets[targetIndex];
+          const value = instr.inputValues[targetIndex];
+          const address = getVarAddress?.(name);
+
+          // 1. scanf-address sub-step
+          const ampTarget = '&' + name;
+          const ampOffset = instr.code.indexOf(ampTarget);
+          steps.push({
+            kind: 'scanf-address',
+            highlight: ampTarget,
+            highlightOffset: ampOffset >= 0 ? ampOffset : undefined,
+            label: address ? `&${name} → ${address}` : `&${name}`,
+            action: { kind: 'highlightVar', varName: name },
+          });
+
+          // 2. scanf-consume sub-step
+          let chars: number;
+          if (seg.spec === '%c') {
+            chars = 1;
+          } else {
+            // %d: count consecutive digits
+            chars = countDigits(instr.inputBuffer, bufferPos);
+          }
+
+          const valueLabel = formatScanfValue(value, seg.spec as '%d' | '%c');
+          steps.push({
+            kind: 'scanf-consume',
+            highlight: seg.spec,
+            highlightOffset: fmtStart + fmtOffset,
+            label: valueLabel,
+            action: { kind: 'scanfRead', varName: name, value, specifier: seg.spec as '%d' | '%c', chars },
+          });
+
+          bufferPos += chars;
+          targetIndex++;
+          fmtOffset += seg.spec.length;
+        } else {
+          // Non-whitespace literal or escape — advance fmtOffset only
+          if (seg.kind === 'literal') fmtOffset += seg.text.length;
+          else if (seg.kind === 'escape') fmtOffset += seg.raw.length;
+        }
+      }
+
+      return steps;
+    }
+
+    case 'declare-pointer-assign': {
+      // e.g. "int *p = &x;" → declare + read(&) + pointer-assign
+      const addrHex = getVarAddress?.(instr.targetName);
+      const addrNum = addrHex ? parseInt(addrHex, 16) : 0;
+      const sizeBytes = C_TYPE_SIZES['pointer'];
+
+      return [
+        {
+          kind: 'declare',
+          highlight: instr.code.replace(';', '').trim(),
+          label: `Declare pointer-to-${instr.targetType} ${instr.varName} (${sizeBytes} bytes)`,
+          action: { kind: 'declareVar', typeName: 'pointer', varName: instr.varName, targetType: instr.targetType },
+        },
+        {
+          kind: 'read',
+          highlight: `&${instr.targetName}`,
+          label: addrHex ? `&${instr.targetName} → ${addrHex}` : `&${instr.targetName}`,
+          action: { kind: 'highlightVar', varName: instr.targetName },
+        },
+        {
+          kind: 'pointer-assign',
+          highlight: `= &${instr.targetName}`,
+          label: addrHex ? `Store ${addrHex} in ${instr.varName}` : `Store address in ${instr.varName}`,
+          action: { kind: 'assignVar', varName: instr.varName, value: addrNum },
+        },
+      ];
+    }
+
+    case 'pointer-assign': {
+      // e.g. "p = &x;" → read(&) + pointer-assign
+      const addrHex = getVarAddress?.(instr.targetName);
+      const addrNum = addrHex ? parseInt(addrHex, 16) : 0;
+
+      return [
+        {
+          kind: 'read',
+          highlight: `&${instr.targetName}`,
+          label: addrHex ? `&${instr.targetName} → ${addrHex}` : `&${instr.targetName}`,
+          action: { kind: 'highlightVar', varName: instr.targetName },
+        },
+        {
+          kind: 'pointer-assign',
+          highlight: instr.code.replace(';', '').trim(),
+          label: addrHex ? `Store ${addrHex} in ${instr.ptrName}` : `Store address in ${instr.ptrName}`,
+          action: { kind: 'assignVar', varName: instr.ptrName, value: addrNum },
+        },
+      ];
+    }
+
+    case 'deref-write': {
+      // e.g. "*p = 42;" → deref-read (follow pointer) + deref-write (write value)
+      const addrHex = getVarAddress?.(instr.targetName);
+
+      return [
+        {
+          kind: 'deref-read',
+          highlight: `*${instr.ptrName}`,
+          label: addrHex
+            ? `* go to address in ${instr.ptrName} → ${addrHex}`
+            : `* dereference ${instr.ptrName}`,
+          action: { kind: 'highlightVar', varName: instr.targetName },
+        },
+        {
+          kind: 'deref-write',
+          highlight: instr.code.replace(';', '').trim(),
+          label: addrHex
+            ? `place: write ${instr.value} to ${addrHex}`
+            : `place: write ${instr.value}`,
+          action: { kind: 'assignVar', varName: instr.targetName, value: instr.value },
+        },
+      ];
+    }
+
+    case 'deref-read-assign': {
+      // e.g. "int y = *p;" → declare + deref-read + assign
+      const addrHex = getVarAddress?.(instr.targetName);
+      const targetValue = getVarValue?.(instr.targetName);
+      const sizeBytes = C_TYPE_SIZES[instr.type];
+
+      return [
+        {
+          kind: 'declare',
+          highlight: `${instr.type} ${instr.varName}`,
+          label: `Declare ${instr.type} ${instr.varName} (${sizeBytes} byte${sizeBytes !== 1 ? 's' : ''})`,
+          action: { kind: 'declareVar', typeName: instr.type, varName: instr.varName },
+        },
+        {
+          kind: 'deref-read',
+          highlight: `*${instr.ptrName}`,
+          label: addrHex
+            ? `* go to address in ${instr.ptrName} → read ${targetValue ?? '?'} from ${addrHex}`
+            : `* dereference ${instr.ptrName}`,
+          action: { kind: 'highlightVar', varName: instr.targetName },
+        },
+        {
+          kind: 'assign',
+          highlight: `${instr.varName} = *${instr.ptrName}`,
+          label: `value: ${instr.varName} = ${targetValue ?? '?'}`,
+          action: { kind: 'assignVar', varName: instr.varName, value: targetValue ?? 0 },
+        },
+      ];
+    }
+
+    case 'comment': {
+      // Pause step — no action, just a status label
+      return [{
+        kind: 'compute',
+        highlight: instr.code,
+        label: instr.label,
+        action: null,
+      }];
+    }
+  }
+}
+
+function countDigits(buf: string, pos: number): number {
+  let i = pos;
+  while (i < buf.length && /\d/.test(buf[i])) i++;
+  return i - pos;
+}
+
+function countWhitespace(buf: string, pos: number): number {
+  let i = pos;
+  while (i < buf.length && /\s/.test(buf[i])) i++;
+  return i - pos;
+}
+
+function formatScanfValue(value: number, spec: '%d' | '%c'): string {
+  switch (spec) {
+    case '%d': return `Read int: ${value}`;
+    case '%c': {
+      if (value === 10) return `Read char: '\\n'`;
+      if (value === 9) return `Read char: '\\t'`;
+      return `Read char: '${String.fromCharCode(value)}'`;
+    }
   }
 }
 
@@ -343,7 +594,7 @@ export function valueToBytes(value: number, type: CTypeName): number[] {
     return [value & 0xff];
   }
 
-  if (type === 'int') {
+  if (type === 'int' || type === 'pointer') {
     return [
       (value >>> 24) & 0xff,
       (value >>> 16) & 0xff,

@@ -291,7 +291,7 @@
    * Declare a variable: allocate bytes on the stack, show garbage.
    * Promise resolves after the annotation fade-in animation.
    */
-  export async function declareVar(type: CTypeName, name: string): Promise<void> {
+  export async function declareVar(type: CTypeName, name: string, targetType?: CTypeName): Promise<void> {
     const gen = generation;
     const size = C_TYPE_SIZES[type];
     stackPointer -= size;
@@ -299,7 +299,7 @@
 
     variables = [
       ...variables,
-      { name, type, address: stackPointer, size, color, value: null },
+      { name, type, address: stackPointer, size, color, value: null, ...(targetType ? { targetType } : {}) },
     ];
 
     await tick();
@@ -373,6 +373,20 @@
     return variables.find((v) => v.name === name);
   }
 
+  /** Get the hex address string for a variable (e.g., "0x011C"). */
+  export function getAddress(name: string): string | null {
+    const v = variables.find((vr) => vr.name === name);
+    if (!v) return null;
+    return toHex(v.address, 4);
+  }
+
+  /** Get the raw numeric address for a variable. */
+  export function getAddressRaw(name: string): number | null {
+    const v = variables.find((vr) => vr.name === name);
+    if (!v) return null;
+    return v.address;
+  }
+
   /** Reset program state: cancel animations, clear variables, reinitialize garbage.
    *  Preserves viewMode and tableUnlocked (user preferences, not program state). */
   export function reset() {
@@ -407,7 +421,25 @@
       const ch = String.fromCharCode(v.value);
       return `'${ch}' (${v.value})`;
     }
+    if (v.type === 'pointer') {
+      return toHex(v.value, 4);
+    }
     return String(v.value);
+  }
+
+  /** For pointer variables, find the target variable whose address matches the stored value. */
+  function getPointerTargetColor(ptrVar: CVariable): string | null {
+    if (ptrVar.type !== 'pointer' || ptrVar.value === null) return null;
+    const target = variables.find((v) => v.address === ptrVar.value);
+    return target?.color ?? null;
+  }
+
+  /** Format the type name for display (e.g., "int *" for pointer-to-int). */
+  function formatTypeName(v: CVariable): string {
+    if (v.type === 'pointer' && v.targetType) {
+      return `${v.targetType} *`;
+    }
+    return v.type;
   }
 </script>
 
@@ -463,11 +495,12 @@
               <span class="bits">
                 {#each Array(8) as _, bitIdx (bitIdx)}
                   {@const globalIdx = row.bitOffset + bitIdx}
+                  {@const ptrColor = row.variable ? getPointerTargetColor(row.variable) : null}
                   <BitCell
                     bit={bits[globalIdx] ?? 0}
                     glowing={glowingCells.has(globalIdx)}
                     highlightColor={row.variable
-                      ? (row.variable.value === null ? UNINITIALIZED_TINT : row.variable.color)
+                      ? (row.variable.value === null ? UNINITIALIZED_TINT : (ptrColor ?? row.variable.color))
                       : undefined}
                     dimmed={!row.isAllocated}
                     onglowend={() => handleGlowEnd(globalIdx)}
@@ -501,7 +534,7 @@
         {#each variables as v (v.name)}
           {@const trRhColor = highlightedVars.get(v.name)}
           <tr class:read-highlight={!!trRhColor} style:--rh-color={trRhColor}>
-            <td class="type">{v.type}</td>
+            <td class="type">{formatTypeName(v)}</td>
             <td class="name" style="color: {v.color.replace('0.35', '1')}">{v.name}</td>
             <td
               class="value"
