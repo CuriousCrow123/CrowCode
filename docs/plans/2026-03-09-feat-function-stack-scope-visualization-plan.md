@@ -1,7 +1,7 @@
 ---
 title: "feat: Function, Stack Frame, and Scope Visualization"
 type: feat
-status: active
+status: completed
 date: 2026-03-09
 deepened: 2026-03-10
 origin: docs/brainstorms/2026-03-09-functions-stack-scope-brainstorm.md
@@ -723,28 +723,28 @@ CodePanel gains three new optional props (`codeLines`, `callStack`, `functionBou
 
 ### Functional Requirements
 
-- [ ] `pushFrame(name)` adds a labeled frame divider to the memory grid and begins a new scope
-- [ ] `popFrame()` removes the top frame's variables, restores stack pointer, and plays collapse animation
-- [ ] Variables with the same name in different frames are independently accessible (scope isolation)
-- [ ] `getVariable`, `assignVar`, `highlightVar`, `getAddress` all use reverse-search (innermost scope first)
-- [ ] Frame dividers appear in both bits view and table view
-- [ ] CodePanel renders `codeLines` when provided, with `currentLine` indexing into `codeLines`
-- [ ] Call stack breadcrumb shows the current call chain (e.g., `main > factorial > factorial`)
-- [ ] Tab 1 (double): demonstrates frame push, argument copy, return value assignment, frame pop
-- [ ] Tab 2 (setX): demonstrates same-named variables in different scopes don't interfere
-- [ ] Tab 3 (broken swap): demonstrates pass-by-value — caller's variables unchanged after swap returns
-- [ ] Tab 4 (factorial): demonstrates 3 recursive frames stacking and unwinding
-- [ ] All 4 tabs fit within 32-byte memory limit at peak
-- [ ] Step backward (Prev) works correctly across frame boundaries via reset+replay
-- [ ] Tab switching cancels in-flight animations and resets cleanly
-- [ ] `reset()` clears frame stack and poppingFrame state
+- [x] `pushFrame(name)` adds a labeled frame divider to the memory grid and begins a new scope
+- [x] `popFrame()` removes the top frame's variables, restores stack pointer, and plays collapse animation
+- [x] Variables with the same name in different frames are independently accessible (scope isolation)
+- [x] `getVariable`, `assignVar`, `highlightVar`, `getAddress` all use reverse-search (innermost scope first)
+- [x] Frame dividers appear in both bits view and table view
+- [x] CodePanel renders `codeLines` when provided, with `currentLine` indexing into `codeLines`
+- [x] Call stack breadcrumb shows the current call chain (e.g., `main > factorial > factorial`)
+- [x] Tab 1 (double): demonstrates frame push, argument copy, return value assignment, frame pop
+- [x] Tab 2 (setX): demonstrates same-named variables in different scopes don't interfere
+- [x] Tab 3 (broken swap): demonstrates pass-by-value — caller's variables unchanged after swap returns
+- [x] Tab 4 (factorial): demonstrates 3 recursive frames stacking and unwinding
+- [x] All 4 tabs fit within 32-byte memory limit at peak
+- [x] Step backward (Prev) works correctly across frame boundaries via reset+replay
+- [x] Tab switching cancels in-flight animations and resets cleanly
+- [x] `reset()` clears frame stack and poppingFrame state
 
 ### Non-Functional Requirements
 
-- [ ] Collapse animation respects `prefers-reduced-motion` (instant removal)
-- [ ] pushFrame/popFrame follow synchronous-first async pattern (replay-safe)
-- [ ] No regressions in existing demos (CMemoryViewDemo, CPointerDemo, CSwapDemo, CPrintfDemo, CScanfDemo)
-- [ ] Sandbox page accessible at `/sandbox/c-function`
+- [x] Collapse animation respects `prefers-reduced-motion` (instant removal)
+- [x] pushFrame/popFrame follow synchronous-first async pattern (replay-safe)
+- [x] No regressions in existing demos (CMemoryViewDemo, CPointerDemo, CSwapDemo, CPrintfDemo, CScanfDemo)
+- [x] Sandbox page accessible at `/sandbox/c-function`
 
 ## Dependencies & Risks
 
