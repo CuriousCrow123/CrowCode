@@ -101,6 +101,9 @@
   }
 
   async function executeSubStep(step: CSubStep & { instrIdx: number }) {
+    // Clear any previous read highlights before executing the new step
+    memoryView.clearHighlights();
+
     if (!step.action) {
       // Compute step — no memory change, brief pause for comprehension.
       await new Promise((r) => setTimeout(r, 400));
@@ -114,12 +117,13 @@
         await memoryView.assignVar(step.action.varName, step.action.value);
         break;
       case 'highlightVar':
-        await memoryView.highlightVar(step.action.varName);
+        // Sustained highlight — stays on until next step clears it
+        memoryView.highlightVar(step.action.varName);
         break;
     }
   }
 
-  function replaySubStep(step: CSubStep & { instrIdx: number }) {
+  function replaySubStep(step: CSubStep & { instrIdx: number }, isLast: boolean) {
     // Fire-and-forget: synchronous state mutations run before first await.
     // Generation counter in CMemoryView ensures orphaned async continuations bail out.
     if (!step.action) return;
@@ -131,7 +135,9 @@
         void memoryView.assignVar(step.action.varName, step.action.value);
         break;
       case 'highlightVar':
-        break; // transient visual, skip during replay
+        // Only show read highlight if this is the final (current) step
+        if (isLast) memoryView.highlightVar(step.action.varName);
+        break;
     }
   }
 
@@ -150,7 +156,7 @@
 
     memoryView.reset();
     for (let i = 0; i <= pc; i++) {
-      replaySubStep(executed[i]);
+      replaySubStep(executed[i], i === pc);
     }
   }
 
@@ -160,6 +166,7 @@
     cachedSubSteps.clear();
     executed = [];
     memoryView.reset();
+    memoryView.setViewMode('bits'); // full reset returns to bits view
   }
 </script>
 
@@ -187,12 +194,6 @@
   </button>
   <button onclick={handleReset} disabled={isAnimating}>
     Reset
-  </button>
-  <button onclick={() => memoryView.setViewMode('table')} disabled={pc < 0}>
-    Table view
-  </button>
-  <button onclick={() => memoryView.setViewMode('bits')}>
-    Bits view
   </button>
 </div>
 

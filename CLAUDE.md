@@ -35,6 +35,13 @@ Visual essay template built with Astro 5 + Svelte 5. All source lives in `site/`
 6. Export methods via `export function` for prose control
 7. Create `site/src/pages/sandbox/my-widget.astro` using `SandboxLayout` for isolated development
 
+### Widget visual feedback patterns
+
+- **Sustained highlight** (read steps): `highlightVar(name)` adds to a reactive Set; `clearHighlights()` clears it. The highlight persists until the orchestrator explicitly clears it (typically at the start of the next step). No timers — the user controls pacing.
+- **Glow animation** (assign steps): CSS `@keyframes` with `onanimationend` callback to clean up state (e.g., remove from `glowingVarNames` Set after animation completes).
+- **Svelte 5 Set reactivity**: Always reassign the full Set (`highlightedVars = new Set([...highlightedVars, name])`) — never use `.add()`/`.delete()` mutations, which don't trigger Svelte 5 reactivity.
+- **Generation counter for async cancellation**: `reset()` increments a monotonic counter; async methods capture it before each `await` and bail if it changed. Replaces error-prone `cancelled` boolean pattern.
+
 ### Component patterns
 
 - **Widgets** (`components/widgets/`) are self-contained, expose imperative APIs via `export function`

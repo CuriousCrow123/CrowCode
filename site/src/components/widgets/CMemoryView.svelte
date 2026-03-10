@@ -44,14 +44,16 @@
   let variables: CVariable[] = $state([]);
   let stackPointer = $state(BASE_ADDRESS + TOTAL_BYTES); // starts at top, grows down
   let viewMode: 'bits' | 'table' = $state('bits');
-  let tableUnlocked = $state(false); // becomes true after first prose-driven transition
 
   // Glow tracking (same pattern as MemoryTable)
   let glowingCells: Set<number> = $state(new Set());
   let prevBits = new Uint8Array(0);
 
-  // Read-pulse highlight tracking
+  // Read highlight tracking (sustained, cleared by clearHighlights)
   let highlightedVars: Set<string> = $state(new Set());
+
+  // Table view: track which variables just had their value assigned (for glow animation)
+  let glowingVarNames: Set<string> = $state(new Set());
 
   // Generation counter for async chain cancellation.
   // Every reset() increments this; async methods capture it at start and bail
@@ -130,6 +132,10 @@
 
   function handleGlowEnd(index: number) {
     glowingCells.delete(index);
+  }
+
+  function handleTableGlowEnd(varName: string) {
+    glowingVarNames = new Set([...glowingVarNames].filter((n) => n !== varName));
   }
 
   // --- Derived values ---
@@ -271,18 +277,11 @@
     });
   }
 
-  /** Animate a read-pulse on a variable's bytes. */
-  function animateReadPulse(varName: string, gen: number): Promise<void> {
-    if (reducedMotion || generation !== gen) return Promise.resolve();
-    highlightedVars.add(varName);
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        if (generation === gen) {
-          highlightedVars.delete(varName);
-        }
-        resolve();
-      }, values.glowDuration);
-    });
+  /** Clear all read highlights. Call before each new step. */
+  export function clearHighlights() {
+    if (highlightedVars.size > 0) {
+      highlightedVars = new Set();
+    }
   }
 
   // --- Imperative API (Promise-based for animation sequencing) ---
@@ -328,6 +327,9 @@
       vr.name === name ? { ...vr, value } : vr,
     );
 
+    // Track for table view value-glow animation
+    glowingVarNames = new Set([...glowingVarNames, name]);
+
     await tick();
     if (generation !== gen) return;
     scrollToAddress(v.address);
@@ -350,20 +352,18 @@
   }
 
   /**
-   * Highlight a variable's bytes with a read-pulse animation.
-   * Used by section to visualize "reading" a value during evaluation.
+   * Highlight a variable's bytes with a sustained read-highlight.
+   * Stays visible until clearHighlights() is called (typically at the next step).
    */
-  export function highlightVar(name: string): Promise<void> {
-    const gen = generation;
+  export function highlightVar(name: string) {
     const v = variables.find((vr) => vr.name === name);
-    if (v && generation === gen) scrollToAddress(v.address);
-    return animateReadPulse(name, gen);
+    if (v) scrollToAddress(v.address);
+    highlightedVars = new Set([...highlightedVars, name]);
   }
 
   /** Switch between bits view and simplified table view. */
   export function setViewMode(mode: 'bits' | 'table') {
     viewMode = mode;
-    if (mode === 'table') tableUnlocked = true;
   }
 
   /** Get a declared variable by name. */
@@ -371,14 +371,15 @@
     return variables.find((v) => v.name === name);
   }
 
-  /** Reset all state: cancel animations, clear variables, reinitialize garbage. */
+  /** Reset program state: cancel animations, clear variables, reinitialize garbage.
+   *  Preserves viewMode and tableUnlocked (user preferences, not program state). */
   export function reset() {
     generation++; // invalidate all outstanding async chains
     variables = [];
     stackPointer = BASE_ADDRESS + TOTAL_BYTES;
-    viewMode = 'bits';
     glowingCells = new Set();
     highlightedVars = new Set();
+    glowingVarNames = new Set();
     bits = initBits();
     prevBits = new Uint8Array(bits);
     rowElMap.clear();
@@ -396,10 +397,6 @@
 
   function getByteHex(bitOffset: number): string {
     return toHex(readUint(bits, bitOffset, 8), 2);
-  }
-
-  function isVarHighlighted(varName: string | null): boolean {
-    return varName !== null && highlightedVars.has(varName);
   }
 
   function formatTableValue(v: CVariable): string {
@@ -440,11 +437,9 @@
       {#each collapsedDisplayRows as item (item.kind === 'row' ? item.row.address : `ellipsis-${item.startAddress}`)}
         {#if item.kind === 'row'}
           {@const row = item.row}
-          {@const isHighlighted = isVarHighlighted(row.variable?.name ?? null)}
           <div
             class="byte-row"
             class:allocated={row.isAllocated}
-            class:read-pulse={isHighlighted}
             use:registerRow={row.address}
           >
             <span class="address">{toHex(row.address, 4)}</span>
@@ -458,22 +453,27 @@
               {/if}
             </span>
 
-            <span class="bits">
-              {#each Array(8) as _, bitIdx (bitIdx)}
-                {@const globalIdx = row.bitOffset + bitIdx}
-                <BitCell
-                  bit={bits[globalIdx] ?? 0}
-                  glowing={glowingCells.has(globalIdx)}
-                  highlightColor={row.variable
-                    ? (row.variable.value === null ? UNINITIALIZED_TINT : row.variable.color)
-                    : undefined}
-                  dimmed={!row.isAllocated}
-                  onglowend={() => handleGlowEnd(globalIdx)}
-                />
-              {/each}
-            </span>
+            <span
+              class="byte-data"
+              class:read-highlight={row.variable !== null && highlightedVars.has(row.variable.name)}
+            >
+              <span class="bits">
+                {#each Array(8) as _, bitIdx (bitIdx)}
+                  {@const globalIdx = row.bitOffset + bitIdx}
+                  <BitCell
+                    bit={bits[globalIdx] ?? 0}
+                    glowing={glowingCells.has(globalIdx)}
+                    highlightColor={row.variable
+                      ? (row.variable.value === null ? UNINITIALIZED_TINT : row.variable.color)
+                      : undefined}
+                    dimmed={!row.isAllocated}
+                    onglowend={() => handleGlowEnd(globalIdx)}
+                  />
+                {/each}
+              </span>
 
-            <span class="hex" class:dimmed={!row.isAllocated}>{getByteHex(row.bitOffset)}</span>
+              <span class="hex" class:dimmed={!row.isAllocated}>{getByteHex(row.bitOffset)}</span>
+            </span>
           </div>
         {:else}
           <div class="ellipsis-row">
@@ -484,7 +484,7 @@
     </div>
   </div>
 {:else}
-  <div class="cmv-table">
+  <div class="cmv-table" style="--bit-cell-glow-duration: {values.glowDuration}ms;">
     <table>
       <thead>
         <tr>
@@ -496,10 +496,17 @@
       </thead>
       <tbody>
         {#each variables as v (v.name)}
-          <tr>
+          <tr class:read-highlight={highlightedVars.has(v.name)}>
             <td class="type">{v.type}</td>
             <td class="name" style="color: {v.color.replace('0.35', '1')}">{v.name}</td>
-            <td class="value">{v.value !== null ? formatTableValue(v) : '???'}</td>
+            <td
+              class="value"
+              class:uninitialized={v.value === null}
+              class:value-glow={glowingVarNames.has(v.name)}
+              onanimationend={() => handleTableGlowEnd(v.name)}
+            >
+              {v.value !== null ? formatTableValue(v) : '???'}
+            </td>
             <td class="addr">{toHex(v.address, 4)}</td>
           </tr>
         {/each}
@@ -508,7 +515,7 @@
   </div>
 {/if}
 
-{#if tableUnlocked}
+{#if variables.length > 0}
   <button class="view-toggle" onclick={() => setViewMode(viewMode === 'bits' ? 'table' : 'bits')}>
     {viewMode === 'bits' ? 'Show table' : 'Show bits'}
   </button>
@@ -611,6 +618,12 @@
     font-weight: 600;
   }
 
+  .byte-data {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
   .bits {
     display: flex;
     gap: var(--cmv-cell-gap, 2px);
@@ -643,24 +656,13 @@
     user-select: none;
   }
 
-  /* Read-pulse animation on the whole row.
-     Uses outline (not background) because child elements cover the row's background. */
-  @keyframes read-pulse {
-    0% {
-      outline-color: rgba(99, 102, 241, 0.6);
-      background: rgba(99, 102, 241, 0.08);
-    }
-    100% {
-      outline-color: transparent;
-      background: transparent;
-    }
-  }
-
-  .byte-row.read-pulse {
-    outline: 1.5px solid rgba(99, 102, 241, 0.6);
+  /* Sustained read-highlight: visible while the "read" step is active.
+     Scoped to .byte-data (bits + hex) so it doesn't extend to address/annotation. */
+  .byte-data.read-highlight {
+    outline: 1.5px solid rgba(99, 102, 241, 0.5);
     outline-offset: -1px;
     border-radius: 3px;
-    animation: read-pulse var(--bit-cell-glow-duration, 400ms) ease-out forwards;
+    background: rgba(99, 102, 241, 0.10);
   }
 
   /* Simplified table view */
@@ -699,6 +701,35 @@
 
   .cmv-table .value {
     color: var(--color-text);
+  }
+
+  /* Table row fade-in when new variable is declared */
+  .cmv-table tbody tr {
+    animation: table-row-in 300ms ease-out;
+  }
+
+  @keyframes table-row-in {
+    from { opacity: 0; transform: translateY(-4px); }
+  }
+
+  /* Table read highlight — matches bits view indigo tint */
+  .cmv-table tr.read-highlight {
+    background: rgba(99, 102, 241, 0.10);
+  }
+
+  /* Table uninitialized value — red tint matching bits view */
+  .cmv-table .value.uninitialized {
+    color: rgba(239, 68, 68, 0.7);
+  }
+
+  /* Table assign glow — value cell pulses on assignment */
+  .cmv-table .value.value-glow {
+    animation: table-value-glow var(--bit-cell-glow-duration, 400ms) ease-out;
+  }
+
+  @keyframes table-value-glow {
+    0% { color: var(--color-accent, #6366f1); text-shadow: 0 0 6px var(--color-accent, #6366f1); }
+    100% { color: var(--color-text); text-shadow: none; }
   }
 
   .cmv-table .addr {

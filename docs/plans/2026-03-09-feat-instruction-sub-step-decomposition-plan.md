@@ -442,7 +442,7 @@ User steps through 8 "Next" clicks instead of 4 — each with a distinct code hi
 - [x] Sub-expression overlay highlights the relevant code portion per sub-step
 - [x] Status label updates per sub-step
 - [x] `declare` sub-step shows red-tinted garbage bytes
-- [x] `read` sub-step pulses source variable (existing highlightVar animation)
+- [x] `read` sub-step shows sustained highlight on source variable (outline + indigo tint, cleared on next step)
 - [x] `compute` sub-step shows label only, brief pause, no memory change
 - [x] `assign` sub-step writes bytes with glow animation
 - [x] Reset clears sub-step cache and returns to initial state
@@ -468,7 +468,7 @@ User steps through 8 "Next" clicks instead of 4 — each with a distinct code hi
 
 ## Edge Cases (from SpecFlow analysis + agent reviews)
 
-- **Table view during sub-steps**: Sub-step animations (red tint, glow-pulse, read-pulse) are bits-view only. If the user toggles to table view mid-instruction, the current state is shown statically. Switching back to bits view shows the current sub-step state. No special handling needed — the table view already ignores animation state.
+- **Table view during sub-steps**: Table view now has parallel animations — row fade-in on declare, indigo tint on read (sustained highlight), value glow on assign, red "???" for uninitialized. Both views stay in sync via shared `highlightedVars` and `glowingVarNames` state.
 - **Replay safety**: The reset-and-replay approach works for sub-steps because CMemoryView's state mutations (`stackPointer`, `variables`, `bits[]`) happen synchronously within `declareVar`/`assignVar` *before* the first `await`. The generation counter ensures orphaned async continuations (scroll, glow, waitForGlow RAF polling) bail out after `reset()`. (Performance Oracle, Frontend Races)
 - **Multi-source `eval-assign`**: If `sources: ['x', 'y']`, each source gets its own `read` sub-step in left-to-right order. The sub-step count varies by instruction — the orchestrator handles this via the flat `allSubSteps` array.
 - **Stale cache on backward-then-forward navigation**: If the user goes back and the program allowed variable modification (future feature), cached sub-steps for instructions after the current `pc` could contain stale labels. The `executePrev` function clears cache entries beyond the new position. (Architecture Strategist)
