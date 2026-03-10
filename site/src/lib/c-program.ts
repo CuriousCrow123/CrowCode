@@ -268,7 +268,8 @@ export function countSubSteps(instr: CInstruction): number {
     case 'pointer-arith-deref': return 4;      // declare + compute + read/highlight + assign
     case 'call': {
       const reads = instr.args.filter(a => a.argSource).length;
-      return reads + 1 + 2 * instr.args.length; // reads + push-frame + (declare + assign) per arg
+      const declareReturn = instr.returnTarget ? 1 : 0;
+      return declareReturn + reads + 1 + 2 * instr.args.length; // declare-return? + reads + push-frame + (declare + assign) per arg
     }
     case 'return':
       return (instr.valueSource ? 1 : 0) + 1 + (instr.returnToVar ? 1 : 0); // read? + pop-frame + assign-return?
@@ -722,6 +723,17 @@ export function decomposeInstruction(
 
     case 'call': {
       const steps: CSubStep[] = [];
+
+      // 0. Declare return target variable in caller scope (e.g., "int b" from "int b = double(a)")
+      if (instr.returnTarget) {
+        const sizeBytes = C_TYPE_SIZES[instr.returnTarget.type];
+        steps.push({
+          kind: 'declare',
+          highlight: `${instr.returnTarget.type} ${instr.returnTarget.name}`,
+          label: `Declare ${instr.returnTarget.type} ${instr.returnTarget.name} (${sizeBytes} byte${sizeBytes !== 1 ? 's' : ''})`,
+          action: { kind: 'declareVar', typeName: instr.returnTarget.type, varName: instr.returnTarget.name },
+        });
+      }
 
       // Pre-compute highlight offsets for args (walk sequentially to avoid indexOf collisions)
       let argOffset = instr.code.indexOf('(') + 1;
