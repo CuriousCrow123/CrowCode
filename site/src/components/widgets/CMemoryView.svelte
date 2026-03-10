@@ -455,11 +455,10 @@
               {/if}
             </span>
 
-            {@const rhColor = row.variable ? highlightedVars.get(row.variable.name) : undefined}
             <span
               class="byte-data"
-              class:read-highlight={!!rhColor}
-              style:--rh-color={rhColor}
+              class:read-highlight={row.variable !== null && highlightedVars.has(row.variable.name)}
+              style:--rh-color={row.variable ? highlightedVars.get(row.variable.name) : undefined}
             >
               <span class="bits">
                 {#each Array(8) as _, bitIdx (bitIdx)}
