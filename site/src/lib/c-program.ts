@@ -37,7 +37,8 @@ export type CInstruction =
       target: { name: string; type?: CTypeName };
       sources: string[];
       value: number;
-    };
+    }
+  | { kind: 'printf'; code: string; format: string; sources: string[] };
 
 // --- Runtime state ---
 
@@ -52,7 +53,8 @@ export interface CVariable {
 
 // --- Sub-step decomposition ---
 
-export type CSubStepKind = 'declare' | 'read' | 'compute' | 'assign';
+export type CSubStepKind = 'declare' | 'read' | 'compute' | 'assign'
+  | 'printf-literal' | 'printf-placeholder';
 
 export interface CSubStep {
   kind: CSubStepKind;
@@ -60,12 +62,99 @@ export interface CSubStep {
   highlight: string;
   /** Human-readable status label */
   label: string;
+  /** Pre-computed character offset for highlight positioning (skips indexOf if set) */
+  highlightOffset?: number;
   /** Action to perform on the memory view, or null for compute (no memory change) */
   action:
     | { kind: 'declareVar'; typeName: CTypeName; varName: string }
     | { kind: 'assignVar'; varName: string; value: number }
     | { kind: 'highlightVar'; varName: string }
+    | { kind: 'appendStdout'; text: string; raw?: string }
     | null;
+}
+
+// --- Format string parser ---
+
+export type FormatSegment =
+  | { kind: 'literal'; text: string }
+  | { kind: 'specifier'; spec: '%d' | '%c' | '%f' | '%s' | '%%'; argIndex: number }
+  | { kind: 'escape'; raw: string; rendered: string };
+
+/**
+ * Parse a C format string into typed segments for per-placeholder stepping.
+ *
+ * Scans left-to-right, splitting into literal text, format specifiers (%d, %c, %f),
+ * and escape sequences (\n, \t). Unknown specifiers and trailing special chars
+ * are emitted as literals (defense-in-depth).
+ */
+export function parseFormatString(format: string): FormatSegment[] {
+  const segments: FormatSegment[] = [];
+  let i = 0;
+  let literalBuf = '';
+  let argIndex = 0;
+
+  const flushLiteral = () => {
+    if (literalBuf.length > 0) {
+      segments.push({ kind: 'literal', text: literalBuf });
+      literalBuf = '';
+    }
+  };
+
+  while (i < format.length) {
+    const ch = format[i];
+
+    if (ch === '%' && i + 1 < format.length) {
+      const next = format[i + 1];
+      if (next === 'd' || next === 'c' || next === 'f') {
+        flushLiteral();
+        segments.push({ kind: 'specifier', spec: `%${next}` as '%d' | '%c' | '%f', argIndex });
+        argIndex++;
+        i += 2;
+        continue;
+      }
+      if (next === '%') {
+        // %% → literal %
+        literalBuf += '%';
+        i += 2;
+        continue;
+      }
+      // Unknown specifier: emit as literal
+      literalBuf += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === '\\' && i + 1 < format.length) {
+      const next = format[i + 1];
+      const escapeMap: Record<string, string> = { n: '\n', t: '\t', '\\': '\\', '0': '\0' };
+      if (next in escapeMap) {
+        flushLiteral();
+        segments.push({ kind: 'escape', raw: `\\${next}`, rendered: escapeMap[next] });
+        i += 2;
+        continue;
+      }
+      // Unknown escape: emit backslash as literal
+      literalBuf += ch;
+      i++;
+      continue;
+    }
+
+    literalBuf += ch;
+    i++;
+  }
+
+  flushLiteral();
+  return segments;
+}
+
+/** Format a numeric value according to a printf specifier. */
+export function formatValue(value: number, spec: '%d' | '%c' | '%f' | '%s' | '%%'): string {
+  switch (spec) {
+    case '%d': return String(Math.trunc(value));
+    case '%c': return String.fromCharCode(value);
+    case '%f': return value.toFixed(6);
+    default: return String(value);
+  }
 }
 
 /**
@@ -81,6 +170,7 @@ export interface CSubStep {
 export function decomposeInstruction(
   instr: CInstruction,
   getVarValue?: (name: string) => number | null,
+  getVarColor?: (name: string) => string | null,
 ): CSubStep[] {
   switch (instr.kind) {
     case 'declare':
@@ -171,6 +261,57 @@ export function decomposeInstruction(
         label: `Assign ${instr.target.name} = ${instr.value}`,
         action: { kind: 'assignVar', varName: instr.target.name, value: instr.value },
       });
+
+      return steps;
+    }
+
+    case 'printf': {
+      const steps: CSubStep[] = [];
+      const segments = parseFormatString(instr.format);
+
+      // Find where the format string starts in the code (after the opening quote)
+      const fmtStart = instr.code.indexOf('"') + 1;
+
+      // Walk format string to compute source-code offsets for each segment
+      let fmtOffset = 0; // offset within the format string content
+      let sourceIdx = 0; // index into instr.sources
+
+      for (const seg of segments) {
+        if (seg.kind === 'literal') {
+          steps.push({
+            kind: 'printf-literal',
+            highlight: seg.text,
+            highlightOffset: fmtStart + fmtOffset,
+            label: `Output "${seg.text}"`,
+            action: { kind: 'appendStdout', text: seg.text },
+          });
+          fmtOffset += seg.text.length;
+        } else if (seg.kind === 'escape') {
+          steps.push({
+            kind: 'printf-literal',
+            highlight: seg.raw,
+            highlightOffset: fmtStart + fmtOffset,
+            label: `Output ${seg.raw}`,
+            action: { kind: 'appendStdout', text: seg.rendered, raw: seg.raw },
+          });
+          fmtOffset += seg.raw.length; // \n is 2 chars in source
+        } else {
+          // specifier
+          const varName = instr.sources[sourceIdx];
+          const val = getVarValue?.(varName);
+          const formatted = val != null ? formatValue(val, seg.spec) : '?';
+
+          steps.push({
+            kind: 'printf-placeholder',
+            highlight: seg.spec,
+            highlightOffset: fmtStart + fmtOffset,
+            label: val != null ? `${seg.spec} → ${varName} → ${formatted}` : `${seg.spec} → ${varName}`,
+            action: { kind: 'appendStdout', text: formatted },
+          });
+          fmtOffset += seg.spec.length; // %d is 2 chars in source
+          sourceIdx++;
+        }
+      }
 
       return steps;
     }
