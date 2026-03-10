@@ -32,18 +32,27 @@
 
   // --- Constants ---
 
-  const TOTAL_BYTES = 32;
+  const TOTAL_BYTES = 64;
   const BASE_ADDRESS = 0x0100;
   const SEED = 42;
 
+  // --- Stack frame tracking ---
+
+  interface StackFrame {
+    name: string;
+    baseAddress: number;      // stackPointer when frame was pushed
+    varCountAtPush: number;   // variables.length when frame was pushed
+  }
+
   // --- State ---
 
-  // Bits array: 32 bytes × 8 bits = 256 elements. Use $state (not $state.raw)
+  // Bits array: 64 bytes × 8 bits = 512 elements. Use $state (not $state.raw)
   // because BitCell reads individual bits reactively.
   let bits: number[] = $state([]);
   let variables: CVariable[] = $state([]);
   let stackPointer = $state(BASE_ADDRESS + TOTAL_BYTES); // starts at top, grows down
   let viewMode: 'bits' | 'table' = $state('bits');
+  let frameStack: StackFrame[] = $state([]);
 
   // Glow tracking (same pattern as MemoryTable)
   let glowingCells: Set<number> = $state(new Set());
@@ -55,6 +64,12 @@
 
   // Table view: track which variables just had their value assigned (for glow animation)
   let glowingVarNames: Set<string> = $state(new Set());
+
+  // Array element highlight (sustained, cleared by clearHighlights)
+  let highlightedElement: { arrayName: string; index: number; color: string } | null = $state(null);
+
+  // Out-of-bounds highlight (red tint for OOB access past array end)
+  let oobHighlight: { arrayName: string; index: number } | null = $state(null);
 
   // Generation counter for async chain cancellation.
   // Every reset() increments this; async methods capture it at start and bail
@@ -78,6 +93,22 @@
     if (!el || !scrollAreaEl) return;
     const targetTop = el.offsetTop - scrollAreaEl.offsetTop - (scrollAreaEl.clientHeight / 2) + (el.offsetHeight / 2);
     scrollAreaEl.scrollTo({ top: targetTop, behavior: reducedMotion ? 'auto' : 'smooth' });
+  }
+
+  // --- Scope-aware variable lookup (reverse search = innermost scope first) ---
+
+  function findVar(name: string): CVariable | undefined {
+    for (let i = variables.length - 1; i >= 0; i--) {
+      if (variables[i].name === name) return variables[i];
+    }
+    return undefined;
+  }
+
+  function findVarIndex(name: string): number {
+    for (let i = variables.length - 1; i >= 0; i--) {
+      if (variables[i].name === name) return i;
+    }
+    return -1;
   }
 
   // --- Reduced motion ---
@@ -123,16 +154,14 @@
     }
 
     if (changed.length > 0) {
-      for (const idx of changed) {
-        glowingCells.add(idx);
-      }
+      glowingCells = new Set([...glowingCells, ...changed]);
     }
 
     prevBits = new Uint8Array(currentBits);
   });
 
   function handleGlowEnd(index: number) {
-    glowingCells.delete(index);
+    glowingCells = new Set([...glowingCells].filter((i) => i !== index));
   }
 
   function handleTableGlowEnd(varName: string) {
@@ -186,7 +215,8 @@
 
   type DisplayItem =
     | { kind: 'row'; row: (typeof displayRows)[number] }
-    | { kind: 'ellipsis'; startAddress: number; endAddress: number; count: number };
+    | { kind: 'ellipsis'; startAddress: number; endAddress: number; count: number }
+    | { kind: 'frame-divider'; name: string; address: number };
 
   let collapsedDisplayRows: DisplayItem[] = $derived.by(() => {
     // No variables → show all rows (all dimmed, establishes "memory exists")
@@ -206,9 +236,25 @@
       }
     }
 
+    // Ensure rows around frame boundaries are visible
+    for (const frame of frameStack) {
+      const byteIdx = frame.baseAddress - BASE_ADDRESS;
+      if (byteIdx >= 0 && byteIdx < TOTAL_BYTES) keepSet.add(byteIdx);
+      if (byteIdx - 1 >= 0 && byteIdx - 1 < TOTAL_BYTES) keepSet.add(byteIdx - 1);
+    }
+
+    // Build collapsed rows
     const result: DisplayItem[] = [];
     let collapseStart: number | null = null;
     let collapseCount = 0;
+
+    // Collect frame boundary addresses within grid range
+    const frameBoundaries = new Map<number, string>();
+    for (const frame of frameStack) {
+      if (frame.baseAddress >= BASE_ADDRESS && frame.baseAddress < BASE_ADDRESS + TOTAL_BYTES) {
+        frameBoundaries.set(frame.baseAddress, frame.name);
+      }
+    }
 
     for (const row of displayRows) {
       if (keepSet.has(row.byteIndex)) {
@@ -222,6 +268,13 @@
           collapseStart = null;
           collapseCount = 0;
         }
+
+        // Insert frame divider before the row at a frame boundary
+        const frameName = frameBoundaries.get(row.address);
+        if (frameName) {
+          result.push({ kind: 'frame-divider', name: frameName, address: row.address });
+        }
+
         result.push({ kind: 'row', row });
       } else {
         if (collapseStart === null) collapseStart = row.byteIndex;
@@ -283,6 +336,8 @@
     if (highlightedVars.size > 0) {
       highlightedVars = new Map();
     }
+    highlightedElement = null;
+    oobHighlight = null;
   }
 
   // --- Imperative API (Promise-based for animation sequencing) ---
@@ -318,14 +373,15 @@
    */
   export async function assignVar(name: string, value: number): Promise<void> {
     const gen = generation;
-    const v = variables.find((v) => v.name === name);
-    if (!v) return;
+    const vIdx = findVarIndex(name);
+    if (vIdx === -1) return;
+    const v = variables[vIdx];
 
     const bytes = valueToBytes(value, v.type);
     writeBytesToMemory(v.address, bytes);
 
-    variables = variables.map((vr) =>
-      vr.name === name ? { ...vr, value } : vr,
+    variables = variables.map((vr, i) =>
+      i === vIdx ? { ...vr, value } : vr,
     );
 
     // Track for table view value-glow animation
@@ -357,7 +413,7 @@
    * Stays visible until clearHighlights() is called (typically at the next step).
    */
   export function highlightVar(name: string, color?: string) {
-    const v = variables.find((vr) => vr.name === name);
+    const v = findVar(name);
     if (v) scrollToAddress(v.address);
     const hlColor = color ?? v?.color ?? 'rgba(99, 102, 241, 0.35)';
     highlightedVars = new Map([...highlightedVars, [name, hlColor]]);
@@ -368,23 +424,196 @@
     viewMode = mode;
   }
 
-  /** Get a declared variable by name. */
+  /** Get a declared variable by name (innermost scope first). */
   export function getVariable(name: string): CVariable | undefined {
-    return variables.find((v) => v.name === name);
+    return findVar(name);
   }
 
   /** Get the hex address string for a variable (e.g., "0x011C"). */
   export function getAddress(name: string): string | null {
-    const v = variables.find((vr) => vr.name === name);
+    const v = findVar(name);
     if (!v) return null;
     return toHex(v.address, 4);
   }
 
   /** Get the raw numeric address for a variable. */
   export function getAddressRaw(name: string): number | null {
-    const v = variables.find((vr) => vr.name === name);
+    const v = findVar(name);
     if (!v) return null;
     return v.address;
+  }
+
+  // --- Array imperative API ---
+
+  /**
+   * Allocate an array block (count * elementSize bytes) on the stack.
+   * Promise resolves after the glow animation.
+   */
+  export async function declareArray(
+    elementType: CTypeName, name: string, count: number
+  ): Promise<void> {
+    const gen = generation;
+    const elementSize = C_TYPE_SIZES[elementType];
+    const totalSize = count * elementSize;
+    stackPointer -= totalSize;
+    const address = stackPointer;
+
+    const v: CVariable = {
+      name,
+      type: elementType,
+      address,
+      size: totalSize,
+      color: VAR_COLORS[variables.length % VAR_COLORS.length],
+      value: null,
+      arrayElements: count,
+      elementValues: new Array(count).fill(null),
+    };
+    variables = [...variables, v];
+
+    // Glow effect for new bytes
+    const changed: number[] = [];
+    for (let i = 0; i < totalSize; i++) {
+      changed.push(address - BASE_ADDRESS + i);
+    }
+    glowingCells = new Set([...glowingCells, ...changed]);
+
+    await tick();
+    if (generation !== gen) return;
+    scrollToAddress(address);
+
+    await new Promise<void>((r) => setTimeout(r, 400));
+    if (gen !== generation) return;
+  }
+
+  /**
+   * Assign one array element (writes bytes at base + index * elementSize).
+   * Promise resolves after the glow animation.
+   */
+  export async function assignArrayElement(
+    name: string, index: number, value: number
+  ): Promise<void> {
+    const gen = generation;
+    const v = findVar(name);
+    if (!v || !v.arrayElements) return;
+
+    const elementSize = C_TYPE_SIZES[v.type];
+    const byteOffset = v.address - BASE_ADDRESS + index * elementSize;
+    const newBytes = valueToBytes(value, v.type);
+
+    // Update bits
+    const newBits = [...bits];
+    for (let i = 0; i < elementSize; i++) {
+      writeUint(newBits, (byteOffset + i) * 8, newBytes[i], 8);
+    }
+    bits = newBits;
+
+    // Update elementValues
+    const updatedVars = variables.map((variable) => {
+      if (variable.name === name && variable.elementValues) {
+        const newEV = [...variable.elementValues];
+        newEV[index] = value;
+        return { ...variable, elementValues: newEV };
+      }
+      return variable;
+    });
+    variables = updatedVars;
+
+    // Glow effect
+    const changed: number[] = [];
+    for (let i = 0; i < elementSize; i++) {
+      changed.push(byteOffset + i);
+    }
+    glowingCells = new Set([...glowingCells, ...changed]);
+
+    // Track for table view glow
+    glowingVarNames = new Set([...glowingVarNames, `${name}[${index}]`]);
+
+    await tick();
+    if (generation !== gen) return;
+    scrollToAddress(v.address + index * elementSize);
+    await waitForGlow(gen);
+  }
+
+  /** Highlight a specific array element's bytes (sustained until clearHighlights). */
+  export function highlightArrayElement(
+    name: string, index: number, color?: string
+  ): void {
+    const v = findVar(name);
+    if (!v) return;
+    highlightedElement = {
+      arrayName: name,
+      index,
+      color: color || v.color,
+    };
+    // Scroll to the element's first byte
+    const elementSize = C_TYPE_SIZES[v.type];
+    scrollToAddress(v.address + index * elementSize);
+  }
+
+  /** Highlight an out-of-bounds access (past array end — red/danger styling). */
+  export function highlightOob(name: string, index: number): void {
+    oobHighlight = { arrayName: name, index };
+  }
+
+  // --- Frame management API ---
+
+  /**
+   * Push a new stack frame. Records the current stack pointer as the frame boundary.
+   * All subsequent declareVar calls allocate within this frame.
+   */
+  export async function pushFrame(name: string): Promise<void> {
+    const gen = generation;
+    frameStack = [...frameStack, {
+      name,
+      baseAddress: stackPointer,
+      varCountAtPush: variables.length,
+    }];
+
+    await tick();
+    if (generation !== gen) return;
+
+    if (!reducedMotion) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
+  /**
+   * Pop the top stack frame. Removes its variables, restores stack pointer,
+   * and fills freed bytes with garbage.
+   * @param skipAnimation — true during replay (fire-and-forget)
+   */
+  export async function popFrame(skipAnimation = false): Promise<void> {
+    const gen = generation;
+    const frame = frameStack[frameStack.length - 1];
+    if (!frame) return;
+
+    // Capture freed range BEFORE restoring stack pointer
+    const freedStart = stackPointer;
+    const freedEnd = frame.baseAddress;
+
+    // Synchronous mutations (safe for replay)
+    variables = variables.slice(0, frame.varCountAtPush);
+    stackPointer = frame.baseAddress;
+    frameStack = frameStack.slice(0, -1);
+
+    // Restore garbage bytes for freed range
+    const newBits = [...bits];
+    for (let i = freedStart; i < freedEnd; i++) {
+      const byteIdx = i - BASE_ADDRESS;
+      const garbageByte = garbageBytes(i, 1, SEED)[0];
+      for (let bit = 0; bit < 8; bit++) {
+        newBits[byteIdx * 8 + bit] = (garbageByte >> (7 - bit)) & 1;
+      }
+    }
+    bits = newBits;
+    prevBits = new Uint8Array(bits); // prevent glow on garbage restore
+
+    await tick();
+    if (generation !== gen) return;
+
+    if (!skipAnimation && !reducedMotion) {
+      await new Promise(r => setTimeout(r, 300));
+    }
   }
 
   /** Reset program state: cancel animations, clear variables, reinitialize garbage.
@@ -392,10 +621,13 @@
   export function reset() {
     generation++; // invalidate all outstanding async chains
     variables = [];
+    frameStack = [];
     stackPointer = BASE_ADDRESS + TOTAL_BYTES;
     glowingCells = new Set();
     highlightedVars = new Map();
     glowingVarNames = new Set();
+    highlightedElement = null;
+    oobHighlight = null;
     bits = initBits();
     prevBits = new Uint8Array(bits);
     rowElMap.clear();
@@ -439,7 +671,66 @@
     if (v.type === 'pointer' && v.targetType) {
       return `${v.targetType} *`;
     }
+    if (v.arrayElements != null) {
+      return `${v.type}[${v.arrayElements}]`;
+    }
     return v.type;
+  }
+
+  /**
+   * For an array variable, compute the element label for a byte address.
+   * Returns e.g. "arr[0]" if this address is the first byte of element 0,
+   * or null if it's not the first byte of any element.
+   */
+  function getArrayElementLabel(v: CVariable, address: number): string | null {
+    if (!v.arrayElements) return null;
+    const elementSize = C_TYPE_SIZES[v.type];
+    const offset = address - v.address;
+    if (offset % elementSize !== 0) return null;
+    const idx = offset / elementSize;
+    if (idx < 0 || idx >= v.arrayElements) return null;
+    return `${v.name}[${idx}]`;
+  }
+
+  /**
+   * Check if a byte address falls within the highlighted array element's range.
+   * Returns the highlight color or null.
+   */
+  function getElementHighlightColor(address: number): string | null {
+    if (!highlightedElement) return null;
+    const v = variables.find((v) => v.name === highlightedElement!.arrayName);
+    if (!v || !v.arrayElements) return null;
+    const elementSize = C_TYPE_SIZES[v.type];
+    const elemStart = v.address + highlightedElement.index * elementSize;
+    const elemEnd = elemStart + elementSize;
+    if (address >= elemStart && address < elemEnd) {
+      return highlightedElement.color;
+    }
+    return null;
+  }
+
+  /**
+   * Check if a byte address falls within the OOB highlighted range.
+   * Returns true if it does.
+   */
+  function isOobAddress(address: number): boolean {
+    if (!oobHighlight) return false;
+    const v = variables.find((v) => v.name === oobHighlight!.arrayName);
+    if (!v || !v.arrayElements) return false;
+    const elementSize = C_TYPE_SIZES[v.type];
+    const oobStart = v.address + oobHighlight.index * elementSize;
+    const oobEnd = oobStart + elementSize;
+    return address >= oobStart && address < oobEnd;
+  }
+
+  /** Format a single array element value for display. */
+  function formatElementValue(value: number | null, type: CTypeName): string {
+    if (value === null) return '???';
+    if (type === 'char') {
+      const ch = String.fromCharCode(value);
+      return `'${ch}' (${value})`;
+    }
+    return String(value);
   }
 </script>
 
@@ -468,12 +759,20 @@
       bind:this={scrollAreaEl}
       style="max-height: {values.visibleRows * (values.cellSize + values.rowGap)}px;"
     >
-      {#each collapsedDisplayRows as item (item.kind === 'row' ? item.row.address : `ellipsis-${item.startAddress}`)}
-        {#if item.kind === 'row'}
+      {#each collapsedDisplayRows as item (item.kind === 'row' ? item.row.address : item.kind === 'frame-divider' ? `divider-${item.address}` : `ellipsis-${item.startAddress}`)}
+        {#if item.kind === 'frame-divider'}
+          <div class="frame-divider">
+            <span class="frame-label">{item.name}()</span>
+          </div>
+        {:else if item.kind === 'row'}
           {@const row = item.row}
+          {@const elemLabel = row.variable ? getArrayElementLabel(row.variable, row.address) : null}
+          {@const elemHlColor = getElementHighlightColor(row.address)}
+          {@const isOob = isOobAddress(row.address)}
           <div
             class="byte-row"
             class:allocated={row.isAllocated}
+            class:oob-row={isOob}
             use:registerRow={row.address}
           >
             <span class="address">{toHex(row.address, 4)}</span>
@@ -482,7 +781,9 @@
               class="annotation"
               style={row.variable ? `border-left-color: ${row.variable.color}; background: ${row.variable.color};` : ''}
             >
-              {#if row.isFirstByte && row.variable}
+              {#if row.variable?.arrayElements && elemLabel}
+                <span class="var-name">{elemLabel}</span>
+              {:else if row.isFirstByte && row.variable}
                 <span class="var-name">{row.variable.name}</span>
               {/if}
             </span>
@@ -490,7 +791,8 @@
             <span
               class="byte-data"
               class:read-highlight={row.variable !== null && highlightedVars.has(row.variable.name)}
-              style:--rh-color={row.variable ? highlightedVars.get(row.variable.name) : undefined}
+              class:element-highlight={elemHlColor !== null}
+              style:--rh-color={elemHlColor ?? (row.variable ? highlightedVars.get(row.variable.name) : undefined)}
             >
               <span class="bits">
                 {#each Array(8) as _, bitIdx (bitIdx)}
@@ -499,9 +801,11 @@
                   <BitCell
                     bit={bits[globalIdx] ?? 0}
                     glowing={glowingCells.has(globalIdx)}
-                    highlightColor={row.variable
-                      ? (row.variable.value === null ? UNINITIALIZED_TINT : (ptrColor ?? row.variable.color))
-                      : undefined}
+                    highlightColor={isOob
+                      ? 'rgba(239, 68, 68, 0.35)'
+                      : row.variable
+                        ? (row.variable.value === null && !row.variable.arrayElements ? UNINITIALIZED_TINT : (ptrColor ?? row.variable.color))
+                        : undefined}
                     dimmed={!row.isAllocated}
                     onglowend={() => handleGlowEnd(globalIdx)}
                   />
@@ -531,21 +835,69 @@
         </tr>
       </thead>
       <tbody>
-        {#each variables as v (v.name)}
-          {@const trRhColor = highlightedVars.get(v.name)}
-          <tr class:read-highlight={!!trRhColor} style:--rh-color={trRhColor}>
-            <td class="type">{formatTypeName(v)}</td>
-            <td class="name" style="color: {v.color.replace('0.35', '1')}">{v.name}</td>
-            <td
-              class="value"
-              class:uninitialized={v.value === null}
-              class:value-glow={glowingVarNames.has(v.name)}
-              onanimationend={() => handleTableGlowEnd(v.name)}
-            >
-              {v.value !== null ? formatTableValue(v) : '???'}
-            </td>
-            <td class="addr">{toHex(v.address, 4)}</td>
-          </tr>
+        {#each variables as v, vIdx (`${v.name}-${v.address}`)}
+          {#if frameStack.some(f => f.varCountAtPush === vIdx && f.baseAddress < BASE_ADDRESS + TOTAL_BYTES)}
+            {@const frame = frameStack.find(f => f.varCountAtPush === vIdx)}
+            <tr class="frame-header">
+              <td colspan="4">{frame?.name}()</td>
+            </tr>
+          {/if}
+          {#if v.arrayElements && v.elementValues}
+            <!-- Array variable: render one row per element -->
+            {#each { length: v.arrayElements } as _, elIdx (elIdx)}
+              {@const elementSize = C_TYPE_SIZES[v.type]}
+              {@const elAddr = v.address + elIdx * elementSize}
+              {@const elKey = `${v.name}[${elIdx}]`}
+              {@const isElHighlighted = highlightedElement?.arrayName === v.name && highlightedElement.index === elIdx}
+              {@const isElOob = oobHighlight?.arrayName === v.name && oobHighlight.index === elIdx}
+              {@const trRhColor = isElHighlighted ? highlightedElement!.color : highlightedVars.get(v.name)}
+              <tr
+                class:read-highlight={!!trRhColor}
+                class:element-highlight={isElHighlighted}
+                class:oob-row={isElOob}
+                style:--rh-color={trRhColor}
+              >
+                <td class="type">{elIdx === 0 ? formatTypeName(v) : ''}</td>
+                <td class="name" style="color: {v.color.replace('0.35', '1')}">{elKey}</td>
+                <td
+                  class="value"
+                  class:uninitialized={v.elementValues[elIdx] === null}
+                  class:value-glow={glowingVarNames.has(elKey)}
+                  onanimationend={() => handleTableGlowEnd(elKey)}
+                >
+                  {formatElementValue(v.elementValues[elIdx], v.type)}
+                </td>
+                <td class="addr">{toHex(elAddr, 4)}</td>
+              </tr>
+            {/each}
+            <!-- OOB row if highlighting past the array end -->
+            {#if oobHighlight?.arrayName === v.name && oobHighlight.index >= v.arrayElements}
+              {@const elementSize = C_TYPE_SIZES[v.type]}
+              {@const oobAddr = v.address + oobHighlight.index * elementSize}
+              <tr class="oob-row">
+                <td class="type"></td>
+                <td class="name oob-name">{v.name}[{oobHighlight.index}]</td>
+                <td class="value oob-value">OUT OF BOUNDS</td>
+                <td class="addr">{toHex(oobAddr, 4)}</td>
+              </tr>
+            {/if}
+          {:else}
+            <!-- Regular (non-array) variable -->
+            {@const trRhColor = highlightedVars.get(v.name)}
+            <tr class:read-highlight={!!trRhColor} style:--rh-color={trRhColor}>
+              <td class="type">{formatTypeName(v)}</td>
+              <td class="name" style="color: {v.color.replace('0.35', '1')}">{v.name}</td>
+              <td
+                class="value"
+                class:uninitialized={v.value === null}
+                class:value-glow={glowingVarNames.has(v.name)}
+                onanimationend={() => handleTableGlowEnd(v.name)}
+              >
+                {v.value !== null ? formatTableValue(v) : '???'}
+              </td>
+              <td class="addr">{toHex(v.address, 4)}</td>
+            </tr>
+          {/if}
         {/each}
       </tbody>
     </table>
@@ -596,7 +948,7 @@
   }
 
   .var-label {
-    width: 2.5rem;
+    width: 3.5rem;
     text-align: center;
     flex-shrink: 0;
     font-size: 0.65rem;
@@ -639,7 +991,7 @@
   }
 
   .annotation {
-    width: 2.5rem;
+    width: 3.5rem;
     min-height: var(--bit-cell-size, 16px);
     display: flex;
     align-items: center;
@@ -691,6 +1043,41 @@
     opacity: 0.3;
     font-style: italic;
     user-select: none;
+  }
+
+  /* Frame divider bar between stack frames */
+  .frame-divider {
+    display: flex;
+    align-items: center;
+    padding: 2px 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.04);
+    animation: divider-slide-in 200ms ease-out;
+  }
+
+  .frame-label {
+    font-size: 0.55rem;
+    color: var(--color-text-muted);
+    opacity: 0.7;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    user-select: none;
+  }
+
+  @keyframes divider-slide-in {
+    from { opacity: 0; transform: translateY(-4px); }
+  }
+
+  /* Table view frame section header */
+  .cmv-table tr.frame-header td {
+    font-size: 0.6rem;
+    color: var(--color-text-muted);
+    opacity: 0.7;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.5rem 0.75rem 0.2rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    font-weight: 500;
   }
 
   /* Sustained read-highlight: visible while the "read" step is active.
@@ -792,4 +1179,38 @@
     color: var(--color-text);
     border-color: var(--color-text-muted);
   }
+
+  /* Array element highlight in bits view */
+  .byte-data.element-highlight {
+    outline: 1.5px solid var(--rh-color, rgba(99, 102, 241, 0.5));
+    outline-offset: -1px;
+    border-radius: 3px;
+    background: var(--rh-color, rgba(99, 102, 241, 0.10));
+  }
+
+  /* Array element highlight in table view */
+  .cmv-table tr.element-highlight {
+    background: var(--rh-color, rgba(99, 102, 241, 0.10));
+  }
+
+  /* OOB (out-of-bounds) row styling — bits and table views */
+  .byte-row.oob-row {
+    background: rgba(239, 68, 68, 0.08);
+  }
+
+  .cmv-table tr.oob-row {
+    background: rgba(239, 68, 68, 0.12);
+  }
+
+  .cmv-table .oob-name {
+    color: rgba(239, 68, 68, 0.9);
+  }
+
+  .cmv-table .oob-value {
+    color: rgba(239, 68, 68, 0.8);
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+  }
+
 </style>
