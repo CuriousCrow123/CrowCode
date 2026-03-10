@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import CMemoryView from '../widgets/CMemoryView.svelte';
   import CodePanel from '../widgets/shared/CodePanel.svelte';
   import type { SubHighlightSegment } from '../widgets/shared/CodePanel.svelte';
@@ -6,7 +7,6 @@
     type CInstruction,
     type CSubStep,
     type CSubStepKind,
-    type CallArg,
     C_TYPE_SIZES,
     countSubSteps,
     decomposeInstruction,
@@ -26,23 +26,23 @@
   // --- Programs ---
 
   const programs: FunctionProgram[] = [
-    // Tab 1 — Simple function call (double)
+    // Tab 1 — Simple function call (twice)
     {
       label: 'Simple Call',
       codeLines: [
-        'int double(int x) {',
+        'int twice(int x) {',
         '    int result = x * 2;',
         '    return result;',
         '}',
         '',
         'int main() {',
         '    int a = 5;',
-        '    int b = double(a);',
+        '    int b = twice(a);',
         '}',
       ],
       instructions: [
         { kind: 'declare-assign', code: 'int a = 5;', varName: 'a', type: 'int', value: 5, sourceLine: 6 },
-        { kind: 'call', code: 'int b = double(a);', functionName: 'double',
+        { kind: 'call', code: 'int b = twice(a);', functionName: 'twice',
           args: [{ paramName: 'x', paramType: 'int', argSource: 'a' }],
           returnTarget: { name: 'b', type: 'int' }, sourceLine: 7 },
         { kind: 'eval-assign', code: 'int result = x * 2;',
@@ -390,7 +390,8 @@
   $effect(() => {
     if (memoryView) {
       memoryView.setViewMode('bits');
-      void memoryView.pushFrame('main');
+      // Defer pushFrame to avoid mutating reactive state during effect
+      tick().then(() => memoryView.pushFrame('main'));
     }
   });
 </script>
