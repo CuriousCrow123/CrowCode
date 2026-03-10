@@ -25,6 +25,12 @@
     subHighlights?: SubHighlightSegment[];
     /** Status label below step controls */
     statusLabel?: string;
+    /** If provided, render these lines instead of instructions[].code */
+    codeLines?: string[];
+    /** Call stack breadcrumb, e.g. ['main', 'double'] → "main › double" */
+    callStack?: string[];
+    /** Line indices after which to show a visual separator */
+    functionBoundaries?: number[];
   }
 
   let {
@@ -37,7 +43,13 @@
     onprev,
     subHighlights,
     statusLabel,
+    codeLines,
+    callStack,
+    functionBoundaries,
   }: CodePanelProps = $props();
+
+  /** Lines to render: codeLines if provided, otherwise instruction codes */
+  let lines = $derived(codeLines ?? instructions.map(i => i.code));
 
   // --- Syntax highlighting ---
 
@@ -58,7 +70,7 @@
    */
   function highlightSyntax(code: string): string {
     const TOKEN_RE =
-      /\b(int|char|float|double)\b|\b(printf|scanf)\b|"[^"]*"|'.'|\b\d+(?:\.\d+)?\b|[+\-*/=;,()&\[\]{}]/g;
+      /\b(int|char|float|double|void)\b|\b(printf|scanf)\b|\b(return|if)\b|"[^"]*"|'.'|\b\d+(?:\.\d+)?\b|<=|>=|!=|==|[+\-*/=;,()&\[\]{}<>!]/g;
 
     let result = '';
     let lastIndex = 0;
@@ -77,8 +89,11 @@
         // Type keyword (captured group 1)
         result += `<span class="hl-type">${escaped}</span>`;
       } else if (match[2]) {
-        // Function name (captured group 2: printf)
+        // Function name (captured group 2: printf, scanf)
         result += `<span class="hl-fn">${escaped}</span>`;
+      } else if (match[3]) {
+        // Control keyword (captured group 3: return, if)
+        result += `<span class="hl-keyword">${escaped}</span>`;
       } else if (token.startsWith('"')) {
         // String literal
         result += `<span class="hl-string">${escaped}</span>`;
@@ -109,12 +124,24 @@
 </script>
 
 <div class="code-panel">
+  {#if callStack}
+    <div class="call-stack-breadcrumb">
+      {#each callStack as fn, i}
+        {#if i > 0}<span class="breadcrumb-sep">›</span>{/if}
+        <span class:breadcrumb-active={i === callStack.length - 1}>{fn}()</span>
+      {/each}
+    </div>
+  {/if}
   <div class="code-lines">
-    {#each instructions as instr, idx (idx)}
-      <div class="code-line" class:active={idx === currentLine}>
+    {#each lines as line, idx (idx)}
+      <div
+        class="code-line"
+        class:active={idx === currentLine}
+        class:fn-boundary={functionBoundaries?.includes(idx)}
+      >
         <span class="line-number">{idx + 1}</span>
         <code>
-          {@html highlightSyntax(instr.code)}
+          {@html highlightSyntax(line)}
           {#if idx === currentLine && subHighlights}
             {#each subHighlights as seg (seg.start)}
               <span
@@ -226,6 +253,38 @@
 
   code :global(.hl-op) {
     color: #89ddff;
+  }
+
+  code :global(.hl-keyword) {
+    color: #c792ea;
+    font-style: italic;
+  }
+
+  /* Call stack breadcrumb */
+  .call-stack-breadcrumb {
+    font-size: 0.65rem;
+    color: var(--color-text-muted);
+    padding: 0.25rem 0.75rem 0.4rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    margin-bottom: 0.25rem;
+    opacity: 0.8;
+  }
+
+  .breadcrumb-sep {
+    margin: 0 0.3em;
+    opacity: 0.4;
+  }
+
+  .breadcrumb-active {
+    color: var(--color-text);
+    opacity: 1;
+  }
+
+  /* Function boundary separator */
+  .code-line.fn-boundary {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 2px;
+    padding-bottom: 0.35rem;
   }
 
   /* Step controls */
