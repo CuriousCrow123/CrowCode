@@ -40,12 +40,56 @@ export type CInstruction =
       value: number;
     }
   | { kind: 'printf'; code: string; format: string; sources: string[] }
-  | { kind: 'scanf'; code: string; format: string; targets: string[]; inputValues: number[]; inputBuffer: string }
+  | { kind: 'scanf'; code: string; format: string; targets: string[]; inputValues: number[]; inputBuffer: string; userInput?: string }
   | { kind: 'declare-pointer-assign'; code: string; varName: string; targetType: CTypeName; targetName: string }
   | { kind: 'pointer-assign'; code: string; ptrName: string; targetName: string }
   | { kind: 'deref-write'; code: string; ptrName: string; targetName: string; value: number }
   | { kind: 'deref-read-assign'; code: string; varName: string; type: CTypeName; ptrName: string; targetName: string }
-  | { kind: 'comment'; code: string; label: string };
+  | { kind: 'address-of'; code: string; varName: string }
+  | { kind: 'comment'; code: string; label: string }
+  | {
+      kind: 'declare-array';
+      code: string;
+      varName: string;
+      elementType: CTypeName;
+      values: number[];
+    }
+  | {
+      kind: 'array-index-read';
+      code: string;
+      varName: string;
+      type: CTypeName;
+      arrayName: string;
+      index: number;
+    }
+  | {
+      kind: 'pointer-arith-deref';
+      code: string;
+      varName: string;
+      type: CTypeName;
+      ptrName: string;
+      offset: number;
+      arrayName: string;
+      elementType: CTypeName;
+    }
+  | {
+      kind: 'call';
+      code: string;
+      functionName: string;
+      args: CallArg[];
+      returnTarget?: { name: string; type: CTypeName };
+      sourceLine: number;
+    }
+  | {
+      kind: 'return';
+      code: string;
+      valueSource?: string;       // variable to read return value from (callee scope)
+      returnValue?: number;       // pre-computed return value
+      returnToVar?: string;       // caller's variable to assign to
+      returnToType?: CTypeName;   // type of caller's variable
+      returnSourceLine?: number;  // caller's source line for assign-return highlight
+      sourceLine: number;
+    };
 
 // --- Runtime state ---
 
@@ -57,6 +101,17 @@ export interface CVariable {
   size: number; // C_TYPE_SIZES[type]
   color: string; // annotation overlay color
   value: number | null; // null = uninitialized (garbage displayed)
+  arrayElements?: number; // number of elements (only set for arrays)
+  elementValues?: (number | null)[]; // per-element values for table view
+}
+
+// --- Function call support ---
+
+export interface CallArg {
+  paramName: string;
+  paramType: CTypeName;
+  argSource?: string;   // variable to read from caller scope (null for literals)
+  argValue?: number;    // pre-computed value (required when argSource is null)
 }
 
 // --- Sub-step decomposition ---
@@ -64,7 +119,8 @@ export interface CVariable {
 export type CSubStepKind = 'declare' | 'read' | 'compute' | 'assign'
   | 'printf-literal' | 'printf-placeholder'
   | 'scanf-address' | 'scanf-consume' | 'scanf-skip'
-  | 'deref-read' | 'deref-write' | 'pointer-assign';
+  | 'deref-read' | 'deref-write' | 'pointer-assign'
+  | 'push-frame' | 'copy-arg' | 'pop-frame' | 'assign-return';
 
 export interface CSubStep {
   kind: CSubStepKind;
@@ -74,6 +130,8 @@ export interface CSubStep {
   label: string;
   /** Pre-computed character offset for highlight positioning (skips indexOf if set) */
   highlightOffset?: number;
+  /** Override source line for CodePanel highlight (used by assign-return to jump to caller's line) */
+  sourceLine?: number;
   /** Action to perform on the memory view, or null for compute (no memory change) */
   action:
     | { kind: 'declareVar'; typeName: CTypeName; varName: string; targetType?: CTypeName }
@@ -82,6 +140,11 @@ export interface CSubStep {
     | { kind: 'appendStdout'; text: string; raw?: string }
     | { kind: 'scanfRead'; varName: string; value: number; specifier: '%d' | '%c'; chars: number }
     | { kind: 'scanfSkip'; chars: number }
+    | { kind: 'declareArray'; elementType: CTypeName; varName: string; count: number }
+    | { kind: 'assignArrayElement'; arrayName: string; index: number; value: number }
+    | { kind: 'highlightArrayElement'; arrayName: string; index: number }
+    | { kind: 'pushFrame'; name: string }
+    | { kind: 'popFrame' }
     | null;
 }
 
@@ -198,7 +261,17 @@ export function countSubSteps(instr: CInstruction): number {
     case 'pointer-assign': return 2;          // read(&) + pointer-assign
     case 'deref-write': return 2;             // deref-read + deref-write
     case 'deref-read-assign': return 3;       // declare + deref-read + assign
+    case 'address-of': return 1;                // standalone &x expression
     case 'comment': return 1;                  // single pause step
+    case 'declare-array': return 1 + instr.values.length; // 1 declare + N element assignments
+    case 'array-index-read': return 3;         // declare + read/highlight + assign
+    case 'pointer-arith-deref': return 4;      // declare + compute + read/highlight + assign
+    case 'call': {
+      const reads = instr.args.filter(a => a.argSource).length;
+      return reads + 1 + 2 * instr.args.length; // reads + push-frame + (declare + assign) per arg
+    }
+    case 'return':
+      return (instr.valueSource ? 1 : 0) + 1 + (instr.returnToVar ? 1 : 0); // read? + pop-frame + assign-return?
   }
 }
 
@@ -551,6 +624,17 @@ export function decomposeInstruction(
       ];
     }
 
+    case 'address-of': {
+      // Standalone &x expression — highlight variable, show its address
+      const address = getVarAddress?.(instr.varName);
+      return [{
+        kind: 'read',
+        highlight: instr.code.replace(';', '').trim(),
+        label: address ? `&${instr.varName} → ${address}` : `&${instr.varName}`,
+        action: { kind: 'highlightVar', varName: instr.varName },
+      }];
+    }
+
     case 'comment': {
       // Pause step — no action, just a status label
       return [{
@@ -559,6 +643,174 @@ export function decomposeInstruction(
         label: instr.label,
         action: null,
       }];
+    }
+
+    case 'declare-array': {
+      const steps: CSubStep[] = [];
+      // Step 1: declare the array
+      steps.push({
+        kind: 'declare',
+        highlight: instr.code.replace(';', '').trim(),
+        label: `Declare ${instr.elementType} ${instr.varName}[${instr.values.length}] (${instr.values.length * C_TYPE_SIZES[instr.elementType]} bytes)`,
+        action: { kind: 'declareArray', elementType: instr.elementType, varName: instr.varName, count: instr.values.length },
+      });
+      // Steps 2..N+1: assign each element
+      for (let i = 0; i < instr.values.length; i++) {
+        steps.push({
+          kind: 'assign',
+          highlight: String(instr.values[i]),
+          label: `${instr.varName}[${i}] = ${instr.values[i]}`,
+          action: { kind: 'assignArrayElement', arrayName: instr.varName, index: i, value: instr.values[i] },
+        });
+      }
+      return steps;
+    }
+
+    case 'array-index-read': {
+      return [
+        {
+          kind: 'declare',
+          highlight: `${instr.type} ${instr.varName}`,
+          label: `Declare ${instr.type} ${instr.varName} (${C_TYPE_SIZES[instr.type]} byte${C_TYPE_SIZES[instr.type] !== 1 ? 's' : ''})`,
+          action: { kind: 'declareVar', typeName: instr.type, varName: instr.varName },
+        },
+        {
+          kind: 'read',
+          highlight: `${instr.arrayName}[${instr.index}]`,
+          label: `Read ${instr.arrayName}[${instr.index}]`,
+          action: { kind: 'highlightArrayElement', arrayName: instr.arrayName, index: instr.index },
+        },
+        {
+          kind: 'assign',
+          highlight: `${instr.varName} = ${instr.arrayName}[${instr.index}]`,
+          label: `Assign ${instr.varName} = ${instr.arrayName}[${instr.index}]`,
+          action: { kind: 'assignVar', varName: instr.varName, value: 0 }, // value resolved at execute time by orchestrator
+        },
+      ];
+    }
+
+    case 'pointer-arith-deref': {
+      return [
+        {
+          kind: 'declare',
+          highlight: `${instr.type} ${instr.varName}`,
+          label: `Declare ${instr.type} ${instr.varName} (${C_TYPE_SIZES[instr.type]} byte${C_TYPE_SIZES[instr.type] !== 1 ? 's' : ''})`,
+          action: { kind: 'declareVar', typeName: instr.type, varName: instr.varName },
+        },
+        {
+          kind: 'compute',
+          highlight: instr.offset === 0 ? `*${instr.ptrName}` : `*(${instr.ptrName} + ${instr.offset})`,
+          label: instr.offset === 0
+            ? `Dereference ${instr.ptrName}`
+            : `Compute ${instr.ptrName} + ${instr.offset} * sizeof(${instr.elementType})`,
+          action: null, // orchestrator handles arrow slide + math display
+        },
+        {
+          kind: 'read',
+          highlight: instr.offset === 0 ? `*${instr.ptrName}` : `*(${instr.ptrName} + ${instr.offset})`,
+          label: `Read from ${instr.arrayName}`,
+          action: { kind: 'highlightArrayElement', arrayName: instr.arrayName, index: 0 }, // index resolved at execute time
+        },
+        {
+          kind: 'assign',
+          highlight: `${instr.varName} = ${instr.offset === 0 ? `*${instr.ptrName}` : `*(${instr.ptrName} + ${instr.offset})`}`,
+          label: `Assign ${instr.varName}`,
+          action: { kind: 'assignVar', varName: instr.varName, value: 0 }, // value resolved at execute time
+        },
+      ];
+    }
+
+    case 'call': {
+      const steps: CSubStep[] = [];
+
+      // Pre-compute highlight offsets for args (walk sequentially to avoid indexOf collisions)
+      let argOffset = instr.code.indexOf('(') + 1;
+
+      // 1. Read each arg source from caller scope
+      for (const arg of instr.args) {
+        if (arg.argSource) {
+          const val = getVarValue?.(arg.argSource);
+          const argStart = instr.code.indexOf(arg.argSource, argOffset);
+          steps.push({
+            kind: 'read',
+            highlight: arg.argSource,
+            highlightOffset: argStart >= 0 ? argStart : undefined,
+            label: val != null ? `Read ${arg.argSource} → ${val}` : `Read ${arg.argSource}`,
+            action: { kind: 'highlightVar', varName: arg.argSource },
+          });
+          if (argStart >= 0) argOffset = argStart + arg.argSource.length;
+        }
+      }
+
+      // 2. Push frame
+      const callExpr = `${instr.functionName}(`;
+      const callStart = instr.code.indexOf(callExpr);
+      steps.push({
+        kind: 'push-frame',
+        highlight: instr.code.slice(callStart >= 0 ? callStart : 0).replace(';', '').replace(/^\s*\w+\s+\w+\s*=\s*/, '').trim(),
+        highlightOffset: callStart >= 0 ? callStart : undefined,
+        label: `Call ${instr.functionName}()`,
+        action: { kind: 'pushFrame', name: instr.functionName },
+      });
+
+      // 3. Copy args into callee scope (interleaved declare + assign)
+      for (const arg of instr.args) {
+        const sizeBytes = C_TYPE_SIZES[arg.paramType];
+        const value = arg.argValue ?? (arg.argSource ? getVarValue?.(arg.argSource) ?? 0 : 0);
+
+        steps.push({
+          kind: 'copy-arg',
+          highlight: arg.paramName,
+          label: `Declare ${arg.paramType} ${arg.paramName} (${sizeBytes} byte${sizeBytes !== 1 ? 's' : ''})`,
+          action: { kind: 'declareVar', typeName: arg.paramType, varName: arg.paramName },
+        });
+        steps.push({
+          kind: 'copy-arg',
+          highlight: arg.paramName,
+          label: arg.argSource
+            ? `Copy ${arg.argSource} → ${arg.paramName} = ${value}`
+            : `Set ${arg.paramName} = ${value}`,
+          action: { kind: 'assignVar', varName: arg.paramName, value },
+        });
+      }
+
+      return steps;
+    }
+
+    case 'return': {
+      const steps: CSubStep[] = [];
+
+      // 1. Read return value source (if from a variable)
+      if (instr.valueSource) {
+        const val = getVarValue?.(instr.valueSource);
+        steps.push({
+          kind: 'read',
+          highlight: instr.valueSource,
+          label: val != null ? `Read ${instr.valueSource} → ${val}` : `Read ${instr.valueSource}`,
+          action: { kind: 'highlightVar', varName: instr.valueSource },
+        });
+      }
+
+      // 2. Pop frame
+      steps.push({
+        kind: 'pop-frame',
+        highlight: instr.code.replace(';', '').trim(),
+        label: 'Return — pop stack frame',
+        action: { kind: 'popFrame' },
+      });
+
+      // 3. Assign return value to caller's variable (if applicable)
+      if (instr.returnToVar) {
+        steps.push({
+          kind: 'assign-return',
+          highlight: instr.returnToVar,
+          label: `Assign ${instr.returnToVar} = ${instr.returnValue ?? '?'}`,
+          action: { kind: 'assignVar', varName: instr.returnToVar, value: instr.returnValue ?? 0 },
+          sourceLine: instr.returnSourceLine,
+        });
+      }
+
+      return steps;
     }
   }
 }
