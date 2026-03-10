@@ -6,7 +6,18 @@
     type CSubStep,
     type CSubStepKind,
     decomposeInstruction,
+    parseFormatString,
   } from '../../lib/c-program';
+
+  /** Map sub-step kinds to highlight colors (replaces kind-based CSS classes). */
+  const SUB_STEP_COLORS: Record<CSubStepKind, string> = {
+    declare:             'rgba(239, 68, 68, 0.15)',
+    read:                'rgba(99, 102, 241, 0.15)',
+    compute:             'rgba(234, 179, 8, 0.15)',
+    assign:              'rgba(34, 197, 94, 0.15)',
+    'printf-literal':    'rgba(195, 232, 141, 0.15)',
+    'printf-placeholder':'rgba(130, 170, 255, 0.15)',
+  };
 
   // --- Demo program ---
 
@@ -48,6 +59,7 @@
       case 'assign': return 1;
       case 'declare-assign': return 2;
       case 'eval-assign': return (instr.target.type ? 1 : 0) + instr.sources.length + 1 + 1;
+      case 'printf': return parseFormatString(instr.format).length;
     }
   }
   const totalSubSteps = program.reduce((sum, instr) => sum + countSubSteps(instr), 0);
@@ -57,12 +69,12 @@
   let currentStep = $derived(pc >= 0 && pc < executed.length ? executed[pc] : null);
   let currentInstrIdx = $derived(currentStep?.instrIdx ?? -1);
 
-  let subHighlight = $derived.by(() => {
+  let subHighlights = $derived.by(() => {
     if (!currentStep) return undefined;
     const code = program[currentStep.instrIdx].code;
-    const start = code.indexOf(currentStep.highlight);
+    const start = currentStep.highlightOffset ?? code.indexOf(currentStep.highlight);
     if (start === -1) return undefined;
-    return { start, end: start + currentStep.highlight.length, kind: currentStep.kind as CSubStepKind };
+    return [{ start, end: start + currentStep.highlight.length, color: SUB_STEP_COLORS[currentStep.kind] }];
   });
 
   let statusLabel = $derived(currentStep?.label);
@@ -179,7 +191,7 @@
     canNext={pc < totalSubSteps - 1 && !isAnimating}
     onnext={executeNext}
     onprev={executePrev}
-    {subHighlight}
+    {subHighlights}
     {statusLabel}
   />
   <CMemoryView bind:this={memoryView} />

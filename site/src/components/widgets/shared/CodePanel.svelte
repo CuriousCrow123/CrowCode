@@ -5,7 +5,13 @@
    * No WIDGET_ID, no paramDefs — receives all data via props.
    * Follows the shared component pattern (like BitCell, ScrubSlider).
    */
-  import type { CInstruction, CSubStepKind } from '../../../lib/c-program';
+  import type { CInstruction } from '../../../lib/c-program';
+
+  export interface SubHighlightSegment {
+    start: number;
+    end: number;
+    color: string;
+  }
 
   interface CodePanelProps {
     instructions: CInstruction[];
@@ -15,8 +21,8 @@
     canNext?: boolean;
     onnext?: () => void;
     onprev?: () => void;
-    /** Character range within active line to highlight */
-    subHighlight?: { start: number; end: number; kind: CSubStepKind };
+    /** Character ranges within active line to highlight (always an array) */
+    subHighlights?: SubHighlightSegment[];
     /** Status label below step controls */
     statusLabel?: string;
   }
@@ -29,7 +35,7 @@
     canNext = false,
     onnext,
     onprev,
-    subHighlight,
+    subHighlights,
     statusLabel,
   }: CodePanelProps = $props();
 
@@ -52,7 +58,7 @@
    */
   function highlightSyntax(code: string): string {
     const TOKEN_RE =
-      /\b(int|char|float|double)\b|'.'|\b\d+(?:\.\d+)?\b|[+\-*/=;]/g;
+      /\b(int|char|float|double)\b|\b(printf)\b|"[^"]*"|'.'|\b\d+(?:\.\d+)?\b|[+\-*/=;,()&]/g;
 
     let result = '';
     let lastIndex = 0;
@@ -70,6 +76,12 @@
       if (match[1]) {
         // Type keyword (captured group 1)
         result += `<span class="hl-type">${escaped}</span>`;
+      } else if (match[2]) {
+        // Function name (captured group 2: printf)
+        result += `<span class="hl-fn">${escaped}</span>`;
+      } else if (token.startsWith('"')) {
+        // String literal
+        result += `<span class="hl-string">${escaped}</span>`;
       } else if (token.startsWith("'")) {
         // Char literal
         result += `<span class="hl-literal">${escaped}</span>`;
@@ -80,7 +92,7 @@
         // Operator
         result += `<span class="hl-op">${escaped}</span>`;
       } else {
-        // Punctuation (;) — no special styling
+        // Punctuation (;,()&) — no special styling
         result += escaped;
       }
 
@@ -103,11 +115,13 @@
         <span class="line-number">{idx + 1}</span>
         <code>
           {@html highlightSyntax(instr.code)}
-          {#if idx === currentLine && subHighlight}
-            <span
-              class="sub-highlight sub-highlight--{subHighlight.kind}"
-              style="left: {subHighlight.start}ch; width: {subHighlight.end - subHighlight.start}ch"
-            ></span>
+          {#if idx === currentLine && subHighlights}
+            {#each subHighlights as seg (seg.start)}
+              <span
+                class="sub-highlight"
+                style="left: {seg.start}ch; width: {seg.end - seg.start}ch; background: {seg.color}"
+              ></span>
+            {/each}
           {/if}
         </code>
       </div>
@@ -193,11 +207,6 @@
     transition: left 0.15s ease, width 0.15s ease, background 0.15s ease;
   }
 
-  .sub-highlight--declare { background: rgba(239, 68, 68, 0.15); }
-  .sub-highlight--read    { background: rgba(99, 102, 241, 0.15); }
-  .sub-highlight--compute { background: rgba(234, 179, 8, 0.15); }
-  .sub-highlight--assign  { background: rgba(34, 197, 94, 0.15); }
-
   /* Syntax highlighting classes */
   code :global(.hl-type) {
     color: #c792ea;
@@ -205,6 +214,14 @@
 
   code :global(.hl-literal) {
     color: #f78c6c;
+  }
+
+  code :global(.hl-string) {
+    color: #c3e88d;
+  }
+
+  code :global(.hl-fn) {
+    color: #82aaff;
   }
 
   code :global(.hl-op) {
