@@ -181,7 +181,6 @@
     cachedSubSteps.clear();
     executed = [];
     memoryView.reset();
-    memoryView.setViewMode('table');
   }
 
   function switchTab(tab: 'naive' | 'correct') {
