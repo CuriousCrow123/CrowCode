@@ -157,6 +157,21 @@ export function formatValue(value: number, spec: '%d' | '%c' | '%f' | '%s' | '%%
   }
 }
 
+/** Count the total sub-steps an instruction produces (without needing runtime state). */
+export function countSubSteps(instr: CInstruction): number {
+  switch (instr.kind) {
+    case 'declare': return 1;
+    case 'assign': return 1;
+    case 'declare-assign': return 2;
+    case 'eval-assign': {
+      const expr = instr.code.slice(instr.code.indexOf('=') + 1).replace(';', '').trim();
+      const isSimpleCopy = instr.sources.length === 1 && expr === instr.sources[0];
+      return (instr.target.type ? 1 : 0) + instr.sources.length + (isSimpleCopy ? 0 : 1) + 1;
+    }
+    case 'printf': return parseFormatString(instr.format).length;
+  }
+}
+
 /**
  * Decompose a C instruction into ordered sub-steps for visual stepping.
  *
@@ -234,25 +249,27 @@ export function decomposeInstruction(
         });
       }
 
-      // Compute expression
+      // Compute expression (skip for simple variable-to-variable copies like "a = b")
       const exprParts = instr.code.slice(instr.code.indexOf('=') + 1).replace(';', '').trim();
-      // Build a substituted expression like "10 + 32 = 42"
-      let substituted = exprParts;
-      let allKnown = true;
-      for (const src of instr.sources) {
-        const val = getVarValue?.(src);
-        if (val != null) {
-          substituted = substituted.replace(src, String(val));
-        } else {
-          allKnown = false;
+      const isSimpleCopy = instr.sources.length === 1 && exprParts === instr.sources[0];
+      if (!isSimpleCopy) {
+        let substituted = exprParts;
+        let allKnown = true;
+        for (const src of instr.sources) {
+          const val = getVarValue?.(src);
+          if (val != null) {
+            substituted = substituted.replace(src, String(val));
+          } else {
+            allKnown = false;
+          }
         }
+        steps.push({
+          kind: 'compute',
+          highlight: exprParts,
+          label: allKnown ? `${substituted} = ${instr.value}` : `Compute ${exprParts}`,
+          action: null,
+        });
       }
-      steps.push({
-        kind: 'compute',
-        highlight: exprParts,
-        label: allKnown ? `${substituted} = ${instr.value}` : `Compute ${exprParts}`,
-        action: null,
-      });
 
       // Assign result
       steps.push({

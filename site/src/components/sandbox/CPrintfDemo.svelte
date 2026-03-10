@@ -9,6 +9,7 @@
     type CSubStep,
     type CSubStepKind,
     type CVariable,
+    countSubSteps,
     decomposeInstruction,
     parseFormatString,
   } from '../../lib/c-program';
@@ -57,16 +58,6 @@
   // Flat array of all executed sub-steps
   let executed: (CSubStep & { instrIdx: number })[] = $state([]);
 
-  // Total sub-step count
-  function countSubSteps(instr: CInstruction): number {
-    switch (instr.kind) {
-      case 'declare': return 1;
-      case 'assign': return 1;
-      case 'declare-assign': return 2;
-      case 'eval-assign': return (instr.target.type ? 1 : 0) + instr.sources.length + 1 + 1;
-      case 'printf': return parseFormatString(instr.format).length;
-    }
-  }
   const totalSubSteps = program.reduce((sum, instr) => sum + countSubSteps(instr), 0);
 
   // --- Stdout state ---
