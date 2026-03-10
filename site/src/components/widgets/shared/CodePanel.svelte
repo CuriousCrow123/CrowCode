@@ -58,7 +58,7 @@
    */
   function highlightSyntax(code: string): string {
     const TOKEN_RE =
-      /\b(int|char|float|double)\b|\b(printf)\b|"[^"]*"|'.'|\b\d+(?:\.\d+)?\b|[+\-*/=;,()&]/g;
+      /\b(int|char|float|double)\b|\b(printf|scanf)\b|"[^"]*"|'.'|\b\d+(?:\.\d+)?\b|[+\-*/=;,()&\[\]{}]/g;
 
     let result = '';
     let lastIndex = 0;

@@ -1,0 +1,7 @@
+---
+import SandboxLayout from '../../layouts/SandboxLayout.astro';
+import CArrayDemo from '../../components/sandbox/CArrayDemo.svelte';
+---
+<SandboxLayout title="C Arrays" description="Visualizes array memory layout, indexing, and pointer arithmetic equivalence — showing how arr[i] and *(arr+i) access the same bytes.">
+  <CArrayDemo client:load />
+</SandboxLayout>
