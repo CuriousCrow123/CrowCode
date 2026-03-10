@@ -1,0 +1,8 @@
+---
+import SandboxLayout from '../../layouts/SandboxLayout.astro';
+import MemoryTable from '../../components/widgets/MemoryTable.svelte';
+---
+
+<SandboxLayout title="Memory Table" description="Byte-addressable RAM visualization with hex addresses, memory sections, and collapse/expand.">
+  <MemoryTable client:load />
+</SandboxLayout>

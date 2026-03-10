@@ -23,6 +23,11 @@ export function readUint(bits: number[], offset: number, numBits: number): numbe
   return val;
 }
 
+/** Format an integer as a hex string, zero-padded to `digits` and prefixed with `0x`. */
+export function toHex(value: number, digits: number): string {
+  return '0x' + value.toString(16).toUpperCase().padStart(digits, '0');
+}
+
 /** Format an integer as a binary string, zero-padded to numBits. */
 export function toBinary(value: number, numBits: number): string {
   return value.toString(2).padStart(numBits, '0');
