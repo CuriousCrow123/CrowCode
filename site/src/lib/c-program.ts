@@ -50,6 +50,133 @@ export interface CVariable {
   value: number | null; // null = uninitialized (garbage displayed)
 }
 
+// --- Sub-step decomposition ---
+
+export type CSubStepKind = 'declare' | 'read' | 'compute' | 'assign';
+
+export interface CSubStep {
+  kind: CSubStepKind;
+  /** Substring of the instruction's `code` to highlight (found via indexOf) */
+  highlight: string;
+  /** Human-readable status label */
+  label: string;
+  /** Action to perform on the memory view, or null for compute (no memory change) */
+  action:
+    | { kind: 'declareVar'; typeName: CTypeName; varName: string }
+    | { kind: 'assignVar'; varName: string; value: number }
+    | { kind: 'highlightVar'; varName: string }
+    | null;
+}
+
+/**
+ * Decompose a C instruction into ordered sub-steps for visual stepping.
+ *
+ * Each sub-step maps to one visual beat: a code highlight, a status label,
+ * and optionally a CMemoryView imperative call.
+ *
+ * @param getVarValue Optional callback to read current variable values for
+ *   labels (e.g., "Read x → 10"). When omitted, labels show without values.
+ *   The highlight substring must appear exactly once in instr.code.
+ */
+export function decomposeInstruction(
+  instr: CInstruction,
+  getVarValue?: (name: string) => number | null,
+): CSubStep[] {
+  switch (instr.kind) {
+    case 'declare':
+      return [{
+        kind: 'declare',
+        highlight: `${instr.type} ${instr.varName}`,
+        label: `Declare ${instr.varName} (${C_TYPE_SIZES[instr.type]} byte${C_TYPE_SIZES[instr.type] !== 1 ? 's' : ''}, uninitialized)`,
+        action: { kind: 'declareVar', typeName: instr.type, varName: instr.varName },
+      }];
+
+    case 'assign': {
+      const assignExpr = instr.code.replace(';', '').trim();
+      return [{
+        kind: 'assign',
+        highlight: assignExpr,
+        label: `Assign ${assignExpr}`,
+        action: { kind: 'assignVar', varName: instr.varName, value: instr.value },
+      }];
+    }
+
+    case 'declare-assign': {
+      // Extract the RHS of the assignment for the highlight (e.g., "'A'" from "char c = 'A';")
+      const rhs = instr.code.slice(instr.code.indexOf('=') + 1).replace(';', '').trim();
+      return [
+        {
+          kind: 'declare',
+          highlight: `${instr.type} ${instr.varName}`,
+          label: `Declare ${instr.varName} (${C_TYPE_SIZES[instr.type]} byte${C_TYPE_SIZES[instr.type] !== 1 ? 's' : ''}, uninitialized)`,
+          action: { kind: 'declareVar', typeName: instr.type, varName: instr.varName },
+        },
+        {
+          kind: 'assign',
+          highlight: `${instr.varName} = ${rhs}`,
+          label: `Assign ${instr.varName} = ${instr.value}`,
+          action: { kind: 'assignVar', varName: instr.varName, value: instr.value },
+        },
+      ];
+    }
+
+    case 'eval-assign': {
+      const steps: CSubStep[] = [];
+
+      // Declare target if it has a type (new variable)
+      if (instr.target.type) {
+        steps.push({
+          kind: 'declare',
+          highlight: `${instr.target.type} ${instr.target.name}`,
+          label: `Declare ${instr.target.name} (${C_TYPE_SIZES[instr.target.type]} byte${C_TYPE_SIZES[instr.target.type] !== 1 ? 's' : ''}, uninitialized)`,
+          action: { kind: 'declareVar', typeName: instr.target.type, varName: instr.target.name },
+        });
+      }
+
+      // Read each source variable
+      for (const src of instr.sources) {
+        const val = getVarValue?.(src);
+        steps.push({
+          kind: 'read',
+          highlight: src,
+          label: val != null ? `Read ${src} → ${val}` : `Read ${src}`,
+          action: { kind: 'highlightVar', varName: src },
+        });
+      }
+
+      // Compute expression
+      const exprParts = instr.code.slice(instr.code.indexOf('=') + 1).replace(';', '').trim();
+      // Build a substituted expression like "10 + 32 = 42"
+      let substituted = exprParts;
+      let allKnown = true;
+      for (const src of instr.sources) {
+        const val = getVarValue?.(src);
+        if (val != null) {
+          substituted = substituted.replace(src, String(val));
+        } else {
+          allKnown = false;
+        }
+      }
+      steps.push({
+        kind: 'compute',
+        highlight: exprParts,
+        label: allKnown ? `${substituted} = ${instr.value}` : `Compute ${exprParts}`,
+        action: null,
+      });
+
+      // Assign result
+      steps.push({
+        kind: 'assign',
+        highlight: `${instr.target.name} = ${exprParts}`,
+        label: `Assign ${instr.target.name} = ${instr.value}`,
+        action: { kind: 'assignVar', varName: instr.target.name, value: instr.value },
+      });
+
+      return steps;
+    }
+  }
+}
+
 // --- Byte encoding ---
 
 /** Convert a value to big-endian byte array for a given type. */

@@ -5,7 +5,7 @@
    * No WIDGET_ID, no paramDefs — receives all data via props.
    * Follows the shared component pattern (like BitCell, ScrubSlider).
    */
-  import type { CInstruction } from '../../../lib/c-program';
+  import type { CInstruction, CSubStepKind } from '../../../lib/c-program';
 
   interface CodePanelProps {
     instructions: CInstruction[];
@@ -15,6 +15,10 @@
     canNext?: boolean;
     onnext?: () => void;
     onprev?: () => void;
+    /** Character range within active line to highlight */
+    subHighlight?: { start: number; end: number; kind: CSubStepKind };
+    /** Status label below step controls */
+    statusLabel?: string;
   }
 
   let {
@@ -25,6 +29,8 @@
     canNext = false,
     onnext,
     onprev,
+    subHighlight,
+    statusLabel,
   }: CodePanelProps = $props();
 
   // --- Syntax highlighting ---
@@ -95,19 +101,33 @@
     {#each instructions as instr, idx (idx)}
       <div class="code-line" class:active={idx === currentLine}>
         <span class="line-number">{idx + 1}</span>
-        <code>{@html highlightSyntax(instr.code)}</code>
+        <code>
+          {@html highlightSyntax(instr.code)}
+          {#if idx === currentLine && subHighlight}
+            <span
+              class="sub-highlight sub-highlight--{subHighlight.kind}"
+              style="left: {subHighlight.start}ch; width: {subHighlight.end - subHighlight.start}ch"
+            ></span>
+          {/if}
+        </code>
       </div>
     {/each}
   </div>
 
   {#if showControls}
     <div class="step-controls">
-      <button onclick={onprev} disabled={!canPrev} aria-label="Previous instruction">
+      <button onclick={onprev} disabled={!canPrev} aria-label="Previous step">
         Prev
       </button>
-      <button onclick={onnext} disabled={!canNext} aria-label="Next instruction">
+      <button onclick={onnext} disabled={!canNext} aria-label="Next step">
         Next
       </button>
+    </div>
+  {/if}
+
+  {#if statusLabel}
+    <div class="status-label">
+      <span class="status-arrow">▸</span> {statusLabel}
     </div>
   {/if}
 </div>
@@ -154,7 +174,29 @@
 
   code {
     white-space: pre;
+    position: relative;
   }
+
+  /* Defensive: prevent syntax-highlighted spans from drifting ch-unit overlay */
+  code :global(span) {
+    letter-spacing: normal;
+    padding: 0;
+  }
+
+  /* Sub-expression highlight overlay (ch-unit positioned within <code>) */
+  .sub-highlight {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    border-radius: 2px;
+    pointer-events: none;
+    transition: left 0.15s ease, width 0.15s ease, background 0.15s ease;
+  }
+
+  .sub-highlight--declare { background: rgba(239, 68, 68, 0.15); }
+  .sub-highlight--read    { background: rgba(99, 102, 241, 0.15); }
+  .sub-highlight--compute { background: rgba(234, 179, 8, 0.15); }
+  .sub-highlight--assign  { background: rgba(34, 197, 94, 0.15); }
 
   /* Syntax highlighting classes */
   code :global(.hl-type) {
@@ -198,5 +240,17 @@
   .step-controls button:disabled {
     opacity: 0.3;
     cursor: not-allowed;
+  }
+
+  /* Status label */
+  .status-label {
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+    padding: 0.4rem 0.75rem;
+    font-style: italic;
+  }
+
+  .status-arrow {
+    opacity: 0.5;
   }
 </style>

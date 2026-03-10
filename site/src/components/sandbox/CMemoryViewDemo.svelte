@@ -1,7 +1,12 @@
 <script lang="ts">
   import CMemoryView from '../widgets/CMemoryView.svelte';
   import CodePanel from '../widgets/shared/CodePanel.svelte';
-  import type { CInstruction } from '../../lib/c-program';
+  import {
+    type CInstruction,
+    type CSubStep,
+    type CSubStepKind,
+    decomposeInstruction,
+  } from '../../lib/c-program';
 
   // --- Demo program ---
 
@@ -15,78 +20,145 @@
   // --- State ---
 
   let memoryView: ReturnType<typeof CMemoryView>;
-  let pc = $state(-1);
+  let pc = $state(-1); // global sub-step index into allSubSteps
   let isAnimating = $state(false);
+
+  // Sub-step cache: computed once per instruction when first reached, cleared on reset.
+  // Imperative (not $state) to avoid reactive re-derivation.
+  let cachedSubSteps = new Map<number, (CSubStep & { instrIdx: number })[]>();
+
+  function getSubSteps(instrIdx: number): (CSubStep & { instrIdx: number })[] {
+    if (!cachedSubSteps.has(instrIdx)) {
+      const steps = decomposeInstruction(
+        program[instrIdx],
+        (name) => memoryView?.getVariable(name)?.value ?? null,
+      ).map((step) => ({ ...step, instrIdx }));
+      cachedSubSteps.set(instrIdx, steps);
+    }
+    return cachedSubSteps.get(instrIdx)!;
+  }
+
+  // Flat array of all executed sub-steps (built incrementally as user steps forward)
+  let executed: (CSubStep & { instrIdx: number })[] = $state([]);
+
+  // Total sub-step count (computable from program structure alone)
+  function countSubSteps(instr: CInstruction): number {
+    switch (instr.kind) {
+      case 'declare': return 1;
+      case 'assign': return 1;
+      case 'declare-assign': return 2;
+      case 'eval-assign': return (instr.target.type ? 1 : 0) + instr.sources.length + 1 + 1;
+    }
+  }
+  const totalSubSteps = program.reduce((sum, instr) => sum + countSubSteps(instr), 0);
+
+  // --- Derived display state ---
+
+  let currentStep = $derived(pc >= 0 && pc < executed.length ? executed[pc] : null);
+  let currentInstrIdx = $derived(currentStep?.instrIdx ?? -1);
+
+  let subHighlight = $derived.by(() => {
+    if (!currentStep) return undefined;
+    const code = program[currentStep.instrIdx].code;
+    const start = code.indexOf(currentStep.highlight);
+    if (start === -1) return undefined;
+    return { start, end: start + currentStep.highlight.length, kind: currentStep.kind as CSubStepKind };
+  });
+
+  let statusLabel = $derived(currentStep?.label);
 
   // --- Orchestration ---
 
   async function executeNext() {
-    if (isAnimating || pc >= program.length - 1) return;
-    pc++;
-    isAnimating = true;
+    const nextPc = pc + 1;
+    if (isAnimating || nextPc >= totalSubSteps) return;
 
-    const instr = program[pc];
-    switch (instr.kind) {
-      case 'declare':
-        await memoryView.declareVar(instr.type, instr.varName);
-        break;
-      case 'assign':
-        await memoryView.assignVar(instr.varName, instr.value);
-        break;
-      case 'declare-assign':
-        await memoryView.declareAssignVar(instr.type, instr.varName, instr.value);
-        break;
-      case 'eval-assign': {
-        for (const src of instr.sources) {
-          await memoryView.highlightVar(src);
-        }
-        if (instr.target.type) {
-          await memoryView.declareAssignVar(instr.target.type, instr.target.name, instr.value);
-        } else {
-          await memoryView.assignVar(instr.target.name, instr.value);
-        }
-        break;
+    // Expand sub-steps if needed
+    if (nextPc >= executed.length) {
+      // Find the next instruction to decompose
+      const prevInstrIdx = executed.length > 0 ? executed[executed.length - 1].instrIdx : -1;
+      const prevInstrSteps = prevInstrIdx >= 0 ? getSubSteps(prevInstrIdx) : [];
+      const countForPrevInstr = executed.filter((s) => s.instrIdx === prevInstrIdx).length;
+
+      if (prevInstrIdx >= 0 && countForPrevInstr < prevInstrSteps.length) {
+        // More sub-steps in the current instruction
+        executed = [...executed, prevInstrSteps[countForPrevInstr]];
+      } else {
+        // Move to next instruction
+        const nextInstrIdx = prevInstrIdx + 1;
+        const steps = getSubSteps(nextInstrIdx);
+        executed = [...executed, steps[0]];
       }
     }
+
+    pc = nextPc;
+    const step = executed[pc];
+    isAnimating = true;
+
+    await executeSubStep(step);
 
     isAnimating = false;
   }
 
-  function replayInstruction(instr: CInstruction) {
-    // Instant replay: call sync methods directly (no animation)
-    switch (instr.kind) {
-      case 'declare':
-        memoryView.declareVar(instr.type, instr.varName);
+  async function executeSubStep(step: CSubStep & { instrIdx: number }) {
+    if (!step.action) {
+      // Compute step — no memory change, brief pause for comprehension.
+      await new Promise((r) => setTimeout(r, 400));
+      return;
+    }
+    switch (step.action.kind) {
+      case 'declareVar':
+        await memoryView.declareVar(step.action.typeName, step.action.varName);
         break;
-      case 'assign':
-        memoryView.assignVar(instr.varName, instr.value);
+      case 'assignVar':
+        await memoryView.assignVar(step.action.varName, step.action.value);
         break;
-      case 'declare-assign':
-        memoryView.declareAssignVar(instr.type, instr.varName, instr.value);
+      case 'highlightVar':
+        await memoryView.highlightVar(step.action.varName);
         break;
-      case 'eval-assign':
-        if (instr.target.type) {
-          memoryView.declareAssignVar(instr.target.type, instr.target.name, instr.value);
-        } else {
-          memoryView.assignVar(instr.target.name, instr.value);
-        }
+    }
+  }
+
+  function replaySubStep(step: CSubStep & { instrIdx: number }) {
+    // Fire-and-forget: synchronous state mutations run before first await.
+    // Generation counter in CMemoryView ensures orphaned async continuations bail out.
+    if (!step.action) return;
+    switch (step.action.kind) {
+      case 'declareVar':
+        void memoryView.declareVar(step.action.typeName, step.action.varName);
         break;
+      case 'assignVar':
+        void memoryView.assignVar(step.action.varName, step.action.value);
+        break;
+      case 'highlightVar':
+        break; // transient visual, skip during replay
     }
   }
 
   function executePrev() {
     if (isAnimating || pc < 0) return;
     pc--;
+
+    // Clear cache entries for instructions beyond current position
+    // to prevent stale labels on re-forward navigation
+    const currentIdx = pc >= 0 ? executed[pc].instrIdx : -1;
+    for (const key of cachedSubSteps.keys()) {
+      if (key > currentIdx) cachedSubSteps.delete(key);
+    }
+    // Trim executed array to discard future sub-steps
+    executed = executed.slice(0, pc + 1);
+
     memoryView.reset();
-    // Replay instructions 0..pc instantly
     for (let i = 0; i <= pc; i++) {
-      replayInstruction(program[i]);
+      replaySubStep(executed[i]);
     }
   }
 
   function handleReset() {
     pc = -1;
     isAnimating = false;
+    cachedSubSteps.clear();
+    executed = [];
     memoryView.reset();
   }
 </script>
@@ -94,18 +166,20 @@
 <div class="demo-layout">
   <CodePanel
     instructions={program}
-    currentLine={pc}
+    currentLine={currentInstrIdx}
     showControls={true}
     canPrev={pc >= 0 && !isAnimating}
-    canNext={pc < program.length - 1 && !isAnimating}
+    canNext={pc < totalSubSteps - 1 && !isAnimating}
     onnext={executeNext}
     onprev={executePrev}
+    {subHighlight}
+    {statusLabel}
   />
   <CMemoryView bind:this={memoryView} />
 </div>
 
 <div class="demo-controls">
-  <button onclick={executeNext} disabled={isAnimating || pc >= program.length - 1}>
+  <button onclick={executeNext} disabled={isAnimating || pc >= totalSubSteps - 1}>
     Step
   </button>
   <button onclick={executePrev} disabled={isAnimating || pc < 0}>

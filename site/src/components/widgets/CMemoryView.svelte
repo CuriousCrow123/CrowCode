@@ -53,8 +53,13 @@
   // Read-pulse highlight tracking
   let highlightedVars: Set<string> = $state(new Set());
 
-  // Cancellation token for async animation chains
-  let cancelled = false;
+  // Generation counter for async chain cancellation.
+  // Every reset() increments this; async methods capture it at start and bail
+  // if it has changed by the time they resume after an await.
+  let generation = 0;
+
+  // Red tint for uninitialized (declared but not assigned) variable bytes
+  const UNINITIALIZED_TINT = 'rgba(239, 68, 68, 0.20)';
 
   // Scroll container and row element refs
   let scrollAreaEl: HTMLDivElement | undefined = $state(undefined);
@@ -243,15 +248,21 @@
   // --- Animation helpers ---
 
   /** Wait for glow to finish on a set of bit indices. */
-  function waitForGlow(): Promise<void> {
-    if (reducedMotion || cancelled) return Promise.resolve();
+  function waitForGlow(gen: number): Promise<void> {
+    if (reducedMotion || generation !== gen) return Promise.resolve();
     return new Promise<void>((resolve) => {
-      const timeout = setTimeout(resolve, values.glowDuration * 2);
-      // Poll for glow completion (simpler than tracking individual animationend events)
+      let resolved = false;
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeout);
+        resolve();
+      };
+      const timeout = setTimeout(done, values.glowDuration * 2);
       const check = () => {
-        if (cancelled || glowingCells.size === 0) {
-          clearTimeout(timeout);
-          resolve();
+        if (resolved) return;
+        if (generation !== gen || glowingCells.size === 0) {
+          done();
         } else {
           requestAnimationFrame(check);
         }
@@ -261,12 +272,14 @@
   }
 
   /** Animate a read-pulse on a variable's bytes. */
-  function animateReadPulse(varName: string): Promise<void> {
-    if (reducedMotion || cancelled) return Promise.resolve();
+  function animateReadPulse(varName: string, gen: number): Promise<void> {
+    if (reducedMotion || generation !== gen) return Promise.resolve();
     highlightedVars.add(varName);
     return new Promise<void>((resolve) => {
       setTimeout(() => {
-        highlightedVars.delete(varName);
+        if (generation === gen) {
+          highlightedVars.delete(varName);
+        }
         resolve();
       }, values.glowDuration);
     });
@@ -279,6 +292,7 @@
    * Promise resolves after the annotation fade-in animation.
    */
   export async function declareVar(type: CTypeName, name: string): Promise<void> {
+    const gen = generation;
     const size = C_TYPE_SIZES[type];
     stackPointer -= size;
     const color = VAR_COLORS[variables.length % VAR_COLORS.length];
@@ -289,10 +303,10 @@
     ];
 
     await tick();
+    if (generation !== gen) return;
     scrollToAddress(stackPointer);
 
-    if (reducedMotion || cancelled) return;
-    // Wait a beat for the annotation to visually appear
+    if (reducedMotion || generation !== gen) return;
     await new Promise<void>((resolve) => {
       setTimeout(resolve, values.glowDuration);
     });
@@ -303,20 +317,21 @@
    * Promise resolves after the glow animation completes.
    */
   export async function assignVar(name: string, value: number): Promise<void> {
+    const gen = generation;
     const v = variables.find((v) => v.name === name);
     if (!v) return;
 
     const bytes = valueToBytes(value, v.type);
     writeBytesToMemory(v.address, bytes);
 
-    // Update the variable's value
     variables = variables.map((vr) =>
       vr.name === name ? { ...vr, value } : vr,
     );
 
     await tick();
+    if (generation !== gen) return;
     scrollToAddress(v.address);
-    await waitForGlow();
+    await waitForGlow(gen);
   }
 
   /**
@@ -328,8 +343,9 @@
     name: string,
     value: number,
   ): Promise<void> {
+    const gen = generation;
     await declareVar(type, name);
-    if (cancelled) return;
+    if (generation !== gen) return;
     await assignVar(name, value);
   }
 
@@ -338,9 +354,10 @@
    * Used by section to visualize "reading" a value during evaluation.
    */
   export function highlightVar(name: string): Promise<void> {
+    const gen = generation;
     const v = variables.find((vr) => vr.name === name);
-    if (v) scrollToAddress(v.address);
-    return animateReadPulse(name);
+    if (v && generation === gen) scrollToAddress(v.address);
+    return animateReadPulse(name, gen);
   }
 
   /** Switch between bits view and simplified table view. */
@@ -356,7 +373,7 @@
 
   /** Reset all state: cancel animations, clear variables, reinitialize garbage. */
   export function reset() {
-    cancelled = true;
+    generation++; // invalidate all outstanding async chains
     variables = [];
     stackPointer = BASE_ADDRESS + TOTAL_BYTES;
     viewMode = 'bits';
@@ -366,14 +383,12 @@
     prevBits = new Uint8Array(bits);
     rowElMap.clear();
     if (scrollAreaEl) scrollAreaEl.scrollTop = 0;
-    // Re-enable for next chain
-    cancelled = false;
   }
 
-  // Cleanup on destroy
+  // Cleanup on destroy — invalidate all outstanding async chains
   $effect(() => {
     return () => {
-      cancelled = true;
+      generation++;
     };
   });
 
@@ -449,7 +464,9 @@
                 <BitCell
                   bit={bits[globalIdx] ?? 0}
                   glowing={glowingCells.has(globalIdx)}
-                  highlightColor={row.variable?.color}
+                  highlightColor={row.variable
+                    ? (row.variable.value === null ? UNINITIALIZED_TINT : row.variable.color)
+                    : undefined}
                   dimmed={!row.isAllocated}
                   onglowend={() => handleGlowEnd(globalIdx)}
                 />
