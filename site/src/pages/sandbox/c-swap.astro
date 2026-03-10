@@ -1,0 +1,8 @@
+---
+import SandboxLayout from '../../layouts/SandboxLayout.astro';
+import CSwapDemo from '../../components/sandbox/CSwapDemo.svelte';
+---
+
+<SandboxLayout title="C Swap" description="Demonstrates the swap algorithm — why temporary variables are necessary to exchange two values without data loss.">
+  <CSwapDemo client:load />
+</SandboxLayout>
