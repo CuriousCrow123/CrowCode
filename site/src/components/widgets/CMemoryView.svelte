@@ -643,13 +643,23 @@
     user-select: none;
   }
 
-  /* Read-pulse animation on the whole row */
+  /* Read-pulse animation on the whole row.
+     Uses outline (not background) because child elements cover the row's background. */
   @keyframes read-pulse {
-    0% { background: rgba(99, 102, 241, 0.15); }
-    100% { background: transparent; }
+    0% {
+      outline-color: rgba(99, 102, 241, 0.6);
+      background: rgba(99, 102, 241, 0.08);
+    }
+    100% {
+      outline-color: transparent;
+      background: transparent;
+    }
   }
 
   .byte-row.read-pulse {
+    outline: 1.5px solid rgba(99, 102, 241, 0.6);
+    outline-offset: -1px;
+    border-radius: 3px;
     animation: read-pulse var(--bit-cell-glow-duration, 400ms) ease-out forwards;
   }
 
