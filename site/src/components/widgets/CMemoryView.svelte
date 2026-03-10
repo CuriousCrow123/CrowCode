@@ -50,7 +50,8 @@
   let prevBits = new Uint8Array(0);
 
   // Read highlight tracking (sustained, cleared by clearHighlights)
-  let highlightedVars: Set<string> = $state(new Set());
+  // Maps variable name → highlight color override (or variable's own color as fallback)
+  let highlightedVars: Map<string, string> = $state(new Map());
 
   // Table view: track which variables just had their value assigned (for glow animation)
   let glowingVarNames: Set<string> = $state(new Set());
@@ -280,7 +281,7 @@
   /** Clear all read highlights. Call before each new step. */
   export function clearHighlights() {
     if (highlightedVars.size > 0) {
-      highlightedVars = new Set();
+      highlightedVars = new Map();
     }
   }
 
@@ -355,10 +356,11 @@
    * Highlight a variable's bytes with a sustained read-highlight.
    * Stays visible until clearHighlights() is called (typically at the next step).
    */
-  export function highlightVar(name: string) {
+  export function highlightVar(name: string, color?: string) {
     const v = variables.find((vr) => vr.name === name);
     if (v) scrollToAddress(v.address);
-    highlightedVars = new Set([...highlightedVars, name]);
+    const hlColor = color ?? v?.color ?? 'rgba(99, 102, 241, 0.35)';
+    highlightedVars = new Map([...highlightedVars, [name, hlColor]]);
   }
 
   /** Switch between bits view and simplified table view. */
@@ -378,7 +380,7 @@
     variables = [];
     stackPointer = BASE_ADDRESS + TOTAL_BYTES;
     glowingCells = new Set();
-    highlightedVars = new Set();
+    highlightedVars = new Map();
     glowingVarNames = new Set();
     bits = initBits();
     prevBits = new Uint8Array(bits);
@@ -453,9 +455,11 @@
               {/if}
             </span>
 
+            {@const rhColor = row.variable ? highlightedVars.get(row.variable.name) : undefined}
             <span
               class="byte-data"
-              class:read-highlight={row.variable !== null && highlightedVars.has(row.variable.name)}
+              class:read-highlight={!!rhColor}
+              style:--rh-color={rhColor}
             >
               <span class="bits">
                 {#each Array(8) as _, bitIdx (bitIdx)}
@@ -496,7 +500,8 @@
       </thead>
       <tbody>
         {#each variables as v (v.name)}
-          <tr class:read-highlight={highlightedVars.has(v.name)}>
+          {@const trRhColor = highlightedVars.get(v.name)}
+          <tr class:read-highlight={!!trRhColor} style:--rh-color={trRhColor}>
             <td class="type">{v.type}</td>
             <td class="name" style="color: {v.color.replace('0.35', '1')}">{v.name}</td>
             <td
@@ -659,10 +664,10 @@
   /* Sustained read-highlight: visible while the "read" step is active.
      Scoped to .byte-data (bits + hex) so it doesn't extend to address/annotation. */
   .byte-data.read-highlight {
-    outline: 1.5px solid rgba(99, 102, 241, 0.5);
+    outline: 1.5px solid var(--rh-color, rgba(99, 102, 241, 0.5));
     outline-offset: -1px;
     border-radius: 3px;
-    background: rgba(99, 102, 241, 0.10);
+    background: var(--rh-color, rgba(99, 102, 241, 0.10));
   }
 
   /* Simplified table view */
@@ -712,9 +717,9 @@
     from { opacity: 0; transform: translateY(-4px); }
   }
 
-  /* Table read highlight — matches bits view indigo tint */
+  /* Table read highlight — uses variable-specific color */
   .cmv-table tr.read-highlight {
-    background: rgba(99, 102, 241, 0.10);
+    background: var(--rh-color, rgba(99, 102, 241, 0.10));
   }
 
   /* Table uninitialized value — red tint matching bits view */
