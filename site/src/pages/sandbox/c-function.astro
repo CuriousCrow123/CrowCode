@@ -1,0 +1,7 @@
+---
+import SandboxLayout from '../../layouts/SandboxLayout.astro';
+import CFunctionDemo from '../../components/sandbox/CFunctionDemo.svelte';
+---
+<SandboxLayout title="C Functions" description="Stack frames, scope isolation, and pass-by-value — see why values don't change when passed to functions.">
+  <CFunctionDemo client:load />
+</SandboxLayout>
