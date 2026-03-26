@@ -42,6 +42,9 @@ export class Interpreter {
 	// Value tracking for heap/array elements (address → numeric value)
 	private memoryValues = new Map<number, number>();
 
+	// Context for function calls initiated from declarations (e.g., int d = distance(...))
+	private callDeclContext: { varName: string; colStart?: number; colEnd?: number } | null = null;
+
 	// Control flow signals
 	private breakFlag = false;
 	private continueFlag = false;
@@ -287,8 +290,14 @@ export class Interpreter {
 			return { handled };
 		}
 
-		// Regular function call — evaluate once and return the value
+		// Regular function call — set context so callFunction can produce better descriptions
+		this.callDeclContext = {
+			varName: node.name,
+			colStart: (call as any).colStart,
+			colEnd: (call as any).colEnd,
+		};
 		const result = this.evaluator.eval(call);
+		this.callDeclContext = null;
 		if (result.error) this.errors.push(result.error);
 		return { handled: false, value: result.value.data };
 	}
@@ -1061,9 +1070,11 @@ export class Interpreter {
 			};
 		});
 
-		// Emit call step
+		// Emit call step (with column highlighting if available)
+		const callColStart = this.callDeclContext?.colStart;
+		const callColEnd = this.callDeclContext?.colEnd;
 		this.emitter.beginStep(
-			{ line },
+			{ line, colStart: callColStart, colEnd: callColEnd },
 			`Call ${fn.name}(${params.map((p) => p.name).join(', ')}) — push stack frame`,
 		);
 		this.stepCount++;
@@ -1087,10 +1098,11 @@ export class Interpreter {
 		this.returnValue = null;
 
 		// Emit return step (pop frame)
-		this.emitter.beginStep(
-			{ line },
-			`${fn.name}() returns ${retVal.data ?? 0}`,
-		);
+		const declVar = this.callDeclContext?.varName;
+		const retDesc = declVar
+			? `${fn.name}() returns ${retVal.data ?? 0}, assign to ${declVar}`
+			: `${fn.name}() returns ${retVal.data ?? 0}`;
+		this.emitter.beginStep({ line }, retDesc);
 		this.stepCount++;
 		this.emitter.exitFunction(fn.name);
 
@@ -1113,7 +1125,14 @@ export class Interpreter {
 			return r.value;
 		});
 
+		// Set column context for highlighting the call expression
+		this.callDeclContext = {
+			varName: '',
+			colStart: (call as any).colStart,
+			colEnd: (call as any).colEnd,
+		};
 		const result = this.callFunction(fn, args, line);
+		this.callDeclContext = null;
 		if (result.error) this.errors.push(result.error);
 	}
 
