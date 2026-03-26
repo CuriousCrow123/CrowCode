@@ -248,6 +248,11 @@ export class Interpreter {
 			let initData: number | null = 0;
 			let initWasFunctionCall = false;
 			if (node.initializer) {
+				// Handle string literals: char *s = "hello"
+				if (node.initializer.type === 'string_literal' && isPointerType(type)) {
+					this.executeStringLiteralDecl(node, node.initializer, type, sharesStep);
+					return;
+				}
 				// Handle call expressions that return heap pointers or function calls
 				if (node.initializer.type === 'call_expression') {
 					const callResult = this.evaluateCallForDecl(node, type);
@@ -407,6 +412,69 @@ export class Interpreter {
 		);
 
 		return true;
+	}
+
+	private executeStringLiteralDecl(
+		decl: ASTNode & { type: 'declaration' },
+		literal: ASTNode & { type: 'string_literal' },
+		declType: CType,
+		sharesStep: boolean,
+	): void {
+		const str = literal.value;
+		const size = str.length + 1; // Include null terminator
+
+		// Allocate heap block for the string
+		const { address, error } = this.env.malloc(size, 'string_literal', decl.line);
+		if (error) {
+			this.errors.push(error);
+			return;
+		}
+
+		// Set heap block type as char array
+		const heapType = arrayType(primitiveType('char'), size);
+		this.env.setHeapBlockType(address, heapType);
+
+		// Store char codes in memoryValues
+		for (let i = 0; i < str.length; i++) {
+			this.memoryValues.set(address + i, str.charCodeAt(i));
+		}
+		this.memoryValues.set(address + str.length, 0); // null terminator
+
+		// Declare the pointer variable
+		const ptrValue = this.env.declareVariable(decl.name, declType, address);
+
+		// Build char children for visualization
+		const charValues = str.split('').map((c) => {
+			const code = c.charCodeAt(0);
+			return code >= 32 && code <= 126 ? `'${c}'` : String(code);
+		});
+		charValues.push(`'\\0'`);
+		const heapChildren = buildArrayChildSpecs(primitiveType('char'), size, charValues);
+
+		// Emit step
+		if (!sharesStep) {
+			this.emitter.beginStep({ line: decl.line }, `char *${decl.name} = "${str}"`);
+			this.stepCount++;
+		}
+
+		// Emit heap allocation
+		this.emitter.allocHeapWithAddress(
+			decl.name,
+			heapType,
+			size,
+			'string_literal',
+			{ line: decl.line },
+			address,
+			heapChildren,
+		);
+
+		// Emit pointer variable
+		this.emitter.declareVariableWithAddress(
+			decl.name,
+			declType,
+			formatAddress(address),
+			ptrValue.address,
+		);
 	}
 
 	private executeMallocAssign(

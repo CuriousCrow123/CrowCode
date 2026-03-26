@@ -1094,6 +1094,35 @@ describe('previously planned spec constructs', () => {
 		expect(findEntry(last, 'x')?.value).toBe('30');
 	});
 
+	it('string literal assigns heap address to pointer', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *s = "hi";
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		// s should be a pointer (hex address, not '0' or 'NULL')
+		const sEntry = findEntry(last, 's');
+		expect(sEntry?.value).not.toBe('0');
+		expect(sEntry?.value).not.toBe('NULL');
+		expect(sEntry?.value?.startsWith('0x')).toBe(true);
+	});
+
+	it('two identical string literals get separate allocations', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *a = "hi";
+	char *b = "hi";
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		const aVal = findEntry(last, 'a')?.value;
+		const bVal = findEntry(last, 'b')?.value;
+		// Both should be hex addresses
+		expect(aVal?.startsWith('0x')).toBe(true);
+		expect(bVal?.startsWith('0x')).toBe(true);
+		// But different addresses (no string interning)
+		expect(aVal).not.toBe(bVal);
+	});
+
 	it('short-circuit && skips right side when left is false', () => {
 		const { snapshots } = interpretAndBuild(`int main() {
 	int x = 0;
