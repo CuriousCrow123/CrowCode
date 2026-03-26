@@ -1,6 +1,6 @@
 # CrowTools Architecture
 
-CrowTools is an interactive C memory visualizer. Users step through pre-authored C programs and see the memory layout change at each instruction — stack frames, local variables, heap allocations, and scope lifecycle.
+CrowTools is an interactive C memory visualizer. Users step through C programs and see the memory layout change at each instruction — stack frames, local variables, heap allocations, and scope lifecycle. Programs can be pre-authored (TypeScript) or written live in the Custom tab (parsed and interpreted via tree-sitter).
 
 ## Principles
 
@@ -13,24 +13,30 @@ CrowTools is an interactive C memory visualizer. Users step through pre-authored
 ## System Overview
 
 ```
-Program (source + steps with ops)
-        │
-        ▼
-   buildSnapshots()          ← runs once on load
-        │
-        ▼
-   MemoryEntry[][]           ← pre-computed, O(1) access
-        │
-   ┌────┴────┐
-   ▼         ▼
-CodeEditor  MemoryView       ← independent views
-   ▲         ▲
-   │         │
-   └────┬────┘
-        │
-  ProgramStepper             ← orchestrator, owns navigation state
-        │
-  StepControls               ← prev/next/play/speed/sub-step toggle
+┌─────────────────────┐     ┌─────────────────────────────┐
+│  Pre-authored        │     │  Custom Tab                  │
+│  (basics.ts,         │     │  C source → tree-sitter      │
+│   loops.ts)          │     │  → AST → Interpreter         │
+│  → Program           │     │  → Program                   │
+└────────┬────────────┘     └──────────┬──────────────────┘
+         │                             │
+         └──────────┬──────────────────┘
+                    ▼
+             buildSnapshots()          ← runs once on load
+                    │
+                    ▼
+             MemoryEntry[][]           ← pre-computed, O(1) access
+                    │
+              ┌─────┴─────┐
+              ▼           ▼
+         CodeEditor   MemoryView       ← independent views
+              ▲           ▲
+              │           │
+              └─────┬─────┘
+                    │
+              ProgramStepper           ← orchestrator, owns navigation state
+                    │
+              StepControls             ← prev/next/play/speed/sub-step toggle
 ```
 
 ## Directory Structure
@@ -55,6 +61,26 @@ src/lib/
 │   ├── substep.test.ts             Sub-step snapshot correctness, navigation, diffing, scope lifecycle
 │   ├── integration.test.ts         Real programs build, snapshot isolation, scope lifecycle
 │   └── bugs.test.ts                Regression: visiblePosition = -1
+├── interpreter/
+│   ├── parser.ts                   tree-sitter C → AST conversion
+│   ├── evaluator.ts                Expression evaluation (arithmetic, pointers, casts)
+│   ├── interpreter.ts              Statement execution, control flow, memory management
+│   ├── emitter.ts                  Step/op emission, ID generation, path resolution
+│   ├── environment.ts              Scope chain, stack/heap allocation, function table
+│   ├── types.ts                    AST node types, interpreter options
+│   ├── types-c.ts                  C type system (primitives, pointers, arrays, structs)
+│   ├── stdlib.ts                   Standard library functions (malloc, calloc, free, etc.)
+│   ├── worker.ts                   Web Worker entry for async interpretation
+│   ├── index.ts                    Barrel export (interpretSync, resetParserCache)
+│   ├── parser.test.ts              AST conversion for all node types
+│   ├── evaluator.test.ts           Expression evaluation, operators, 32-bit semantics
+│   ├── interpreter.test.ts         Statement handling, stdlib, validation, integration
+│   ├── environment.test.ts         Scope chain, stack/heap allocation
+│   ├── types-c.test.ts             Type sizes, alignment, struct layout
+│   ├── emitter.test.ts             Op emission, ID generation, path resolution
+│   ├── worker.test.ts              Worker message contract
+│   ├── value-correctness.test.ts   Value assertions across all features (~130 tests)
+│   └── manual-programs.test.ts     Full-program integration (38 programs, 60 tests)
 ├── programs/
 │   ├── basics.ts                   Sample: structs, pointers, malloc/free, function calls
 │   ├── loops.ts                    Sample: for-loops with sub-step granularity
@@ -68,11 +94,88 @@ src/lib/
 │   ├── ScopeCard.svelte            Stack frame card with variable table
 │   ├── HeapCard.svelte             Heap allocation table with status coloring
 │   ├── MemoryRow.svelte            Single variable row (name, type, value, address)
-│   └── DrilldownModal.svelte       Modal for navigating into nested structs/arrays
+│   ├── DrilldownModal.svelte       Modal for navigating into nested structs/arrays
+│   └── CustomEditor.svelte         C code editor with test program dropdown and Run button
+├── test-programs.ts                26 test programs for Custom tab dropdown
 ├── summary.ts                      Computes display summaries for nested values
 ├── summary.test.ts                 Leaf/struct/array/pointer/nested summarization
 └── types.ts                        Re-exports from api/types.ts
 ```
+
+## C Interpreter Pipeline
+
+The interpreter converts C source code into a `Program` (the same type used by pre-authored programs). This happens in the Custom tab when the user clicks Run.
+
+```
+C source string
+      │
+      ▼
+  tree-sitter WASM parser          ← tokenizes + builds CST
+      │
+      ▼
+  parser.ts: parseSource()         ← CST → AST conversion
+      │
+      ▼
+  AST (ASTNode tree)
+      │
+      ▼
+  interpreter.ts: interpretAST()   ← walks AST, executes statements
+      │
+      ├── evaluator.ts             ← evaluates expressions (arithmetic, pointers)
+      ├── emitter.ts               ← emits steps and ops (addEntry, setValue, etc.)
+      ├── environment.ts           ← tracks scopes, variables, stack/heap addresses
+      ├── types-c.ts               ← C type system (sizeof, alignment, struct layout)
+      └── stdlib.ts                ← malloc, calloc, free, sprintf
+      │
+      ▼
+  Program { name, source, steps }  ← same type as pre-authored programs
+      │
+      ▼
+  buildSnapshots() → UI            ← standard pipeline from here
+```
+
+### Interpreter Components
+
+**Parser** (`parser.ts`): Converts tree-sitter's concrete syntax tree to a simplified AST. Handles: function/struct definitions, declarations, assignments, expressions (binary, unary, call, member, subscript, cast, sizeof, ternary, comma), control flow (if/else, for, while, do-while, break, continue, return). Stores column ranges for condition highlighting.
+
+**Evaluator** (`evaluator.ts`): Pure expression evaluation. Handles all operators (arithmetic, comparison, logical with short-circuit, bitwise), pointer arithmetic with element-size scaling, dereference with memReader, cast truncation (char/short/int), sizeof. Returns `{ value: CValue, error?: string }`.
+
+**Interpreter** (`interpreter.ts`): Statement execution engine. Walks the AST top-down, calling evaluator for expressions and emitter for visualization steps. Handles: declarations (scalar, struct, array), assignments (variable, field, element, dereference), control flow with sub-steps, function calls with stack frames, malloc/calloc/free with heap tracking, sprintf string formatting, bounds checking, leak detection.
+
+**Emitter** (`emitter.ts`): Converts interpreter actions into `ProgramStep`s with `SnapshotOp`s. Manages: scope stack, variable→ID mapping, pointer→heap-block mapping, child registration, path resolution through pointers. Generates deterministic IDs like `main-x`, `heap-p-pos-x`, `for1-i`.
+
+**Environment** (`environment.ts`): Runtime memory model. Stack grows downward from `0x7FFC0000`, heap grows upward from `0x55A00000` with 16-byte alignment. Manages: scope chain with variable shadowing, function table, heap block metadata (address, size, status, allocator, type).
+
+**Type System** (`types-c.ts`): 32-bit ILP32 model. Primitives (char=1, short=2, int=4, long=8, float=4, double=8, void=0), pointers (4 bytes), arrays (N × element), structs (fields with alignment padding). TypeRegistry resolves parser type specs to runtime types.
+
+### Sub-step Generation
+
+Control flow constructs emit sub-steps for condition evaluation:
+
+| Construct | Sub-steps generated |
+|-----------|-------------------|
+| `for` | Init, condition check (→ true/false), update (→ new value) |
+| `while` | Condition check per iteration (→ true), exit (→ false) |
+| `do-while` | Condition check after body (→ true), exit (→ false) |
+| `if/else` | Condition check (→ true/false) — regular step, not sub-step |
+
+### Memory Safety Checks
+
+| Check | Where | Behavior |
+|-------|-------|----------|
+| Stack array bounds (read) | `evaluator.ts` evalSubscript | Error if index < 0 or >= size |
+| Stack array bounds (write) | `interpreter.ts` executeAssignment | Error if index < 0 or >= size |
+| Heap array bounds (write) | `interpreter.ts` executeAssignment | "Heap buffer overflow" error |
+| Null pointer dereference | `evaluator.ts` evalUnary `*` | Error on `*NULL` |
+| Division by zero | `evaluator.ts` evalBinary `/` `%` | Error with line number |
+| Double free | `environment.ts` free() | Error returned |
+| Stack overflow | `interpreter.ts` callFunction | Error at maxFrames (256) |
+| Memory leak | `interpreter.ts` detectLeaks | Marks unfreed blocks as "leaked" |
+| Syntax errors | `parser.ts` collectDeepErrors | Recursively scans tree-sitter ERROR nodes |
+
+### Supported C Features
+
+See [interpreter-status.md](interpreter-status.md) for the complete feature matrix with test coverage.
 
 ## Data Model
 
@@ -215,6 +318,16 @@ CodeMirror 6 wrapper. Props: `source` (fixed) and `location` (reactive).
 - Scrolls active line into view on change
 - Cleans up `EditorView` on unmount
 
+### CustomEditor
+
+C code editor with interpretation. Features:
+
+- Textarea for editing C source code
+- **Test program dropdown** — 26 programs across 11 categories (Scalars, Structs, Arrays, Heap, Struct+Pointer, Functions, Control Flow, Scope, Strings, Errors, Integration)
+- Run button — loads tree-sitter WASM, parses source, runs interpreter, passes `Program` to ProgramStepper
+- Error display for syntax/runtime errors
+- Lazy-loaded (only imported when Custom tab is active)
+
 ### MemoryView
 
 Takes `MemoryEntry[]`, flattens scopes into a linear stack, separates heap entries. Renders `ScopeCard` for each scope, `HeapCard` for each heap container.
@@ -239,7 +352,11 @@ Single table row for a variable. Shows name, type, value, address. Clickable if 
 
 ## Authoring Programs
 
-Programs are TypeScript files in `src/lib/programs/`. Use the builder helpers:
+Programs can be created two ways:
+
+### 1. Pre-authored (TypeScript)
+
+TypeScript files in `src/lib/programs/`. Use the builder helpers:
 
 ```ts
 import { scope, variable, heapBlock, addScope, addVar, set, alloc, free, remove } from '$lib/engine';
@@ -261,6 +378,10 @@ export const myProgram: Program = {
 };
 ```
 
+### 2. Custom (C interpreter)
+
+Users write C code in the Custom tab. The interpreter generates the same `Program` type automatically. See [interpreter-status.md](interpreter-status.md) for supported C features.
+
 ### Sub-steps
 
 Mark steps with `subStep: true` for fine-grained visibility (e.g., for-loop init/check/increment). The last step for a line should be an anchor (`subStep` omitted or `false`).
@@ -269,15 +390,17 @@ Sub-steps are only visible when the user enables sub-step mode. In line mode, th
 
 **When to use sub-steps:**
 - For-loop mechanics: init (`int i = 0`), condition check (`i < 4`), increment (`i++`)
+- While/do-while condition checks (`while: check n > 0 → true`)
 - Function call breakdown: evaluate args → push frame → execute → return
 - Short-circuit evaluation: `ptr && ptr->valid`
 
 **When NOT to use sub-steps:**
 - Compound initialization (`struct Point p = {0, 0}`, `int arr[4] = {1,2,3,4}`). These are compile-time operations with no meaningful intermediate state — use a single step.
+- if/else condition checks — these are the main event on the if-line and must be anchor steps.
 
 **Anchor rule**: If all steps for a given line are `subStep: true`, validation warns that the last should be promoted to an anchor. Without an anchor, that line is invisible in line mode.
 
-**Column ranges**: Sub-steps can include `colStart`/`colEnd` on the location to highlight specific characters within a line (e.g., the `i++` part of a for-loop header). In line mode, column ranges are automatically stripped — the editor always shows full-line highlights.
+**Column ranges**: Sub-steps can include `colStart`/`colEnd` on the location to highlight specific characters within a line (e.g., the `i++` part of a for-loop header, or the condition in a while statement). In line mode, column ranges are automatically stripped — the editor always shows full-line highlights.
 
 ### Line numbers
 
@@ -290,38 +413,39 @@ npm test          # run all tests
 npm run test:watch # watch mode
 ```
 
-144 tests across 11 test files:
+562 tests across 20 test files:
 
-### Engine unit tests
+### Engine tests (11 files, ~143 tests)
 
-- **snapshot.test.ts** (11) — Core `applyOps` and `buildSnapshots`: add/remove/set, error reporting, immutability, intra-step op targeting
-- **snapshot-edge-cases.test.ts** (22) — `setHeapStatus` (freed/leaked/errors/immutability), deep nesting (4 levels: set/remove/add), multi-op interactions (add+set, add+remove, remove+set-error, parent-removes-children), empty/edge states, scope lifecycle, heap lifecycle
-- **diff.test.ts** (6) — Added/removed/changed detection, nested entries, empty snapshots, first-step-from-empty
-- **navigation.test.ts** (6) — Visible indices filtering (sub-step/line/all-anchor/empty), nearest index mapping, empty case
-- **validate.test.ts** (8) — Empty program, valid program, duplicate ids, missing addresses, scope address exemption, subStep anchor rule, mixed sub/anchor lines, cross-step validation
-- **builders.test.ts** (18) — All entry builders (scope with/without opts, heapContainer default/custom id, variable with/without children, heapBlock with/without children) and all op builders (addScope, addVar, addChild, alloc, set, free, leak, remove)
+- **snapshot.test.ts** — Core `applyOps` and `buildSnapshots`: add/remove/set, error reporting, immutability
+- **snapshot-edge-cases.test.ts** — `setHeapStatus`, deep nesting, multi-op interactions, empty/edge states
+- **diff.test.ts** — Added/removed/changed detection, nested entries, empty snapshots
+- **navigation.test.ts** — Visible indices filtering, nearest index mapping
+- **validate.test.ts** — Duplicate ids, missing addresses, subStep anchor rule
+- **builders.test.ts** — All entry and op builder functions
+- **substep.test.ts** — Sub-step snapshot correctness, navigation, diffing, scope lifecycle
+- **integration.test.ts** — Real programs build, snapshot isolation, scope lifecycle
+- **bugs.test.ts** — Regression tests
+- **programs.test.ts** — Per-program validation (13 checks per program)
+- **summary.test.ts** — Display summary computation
 
-### Sub-step tests
+### Interpreter tests (9 files, ~419 tests)
 
-- **substep.test.ts** (15) — The most critical test file. Covers:
-  - **Snapshot correctness**: anchor includes all prior sub-step ops, incremental state visible in sub-step mode, anchor with no ops, ops compound across for-loop iterations, line-mode jump reflects sub-step mutations
-  - **Navigation edge cases**: all-substep program (empty line mode), no-substep program (modes identical), sub-step as first/last step, toggle at every position in 10-step mix, nearest-picks-closest
-  - **Diffing**: incremental diff between sub-steps, line-mode diff skips intermediate states
-  - **Scope lifecycle**: for-loop scope appears/disappears across sub-steps, loop variable visibility in line mode
-
-### Integration and regression tests
-
-- **integration.test.ts** (11) — Both real programs build without engine errors, first/last snapshot correctness, for-scope appears/disappears, snapshot isolation under mutation, diff validity across all steps, first-step-from-empty diff
-- **programs.test.ts** (26) — Per-program validation suite (runs for basics + loops): has steps/source/name, builds without errors, passes validation, all line numbers in source range, all column ranges within line length, unique ids per snapshot, snapshot isolation, line/sub-step mode coverage, first step creates entries
-- **bugs.test.ts** (4) — Regression: `visiblePosition = -1` when `indexOf` misses sub-step indices, demonstrating wrong next/prev behavior and the fix via `nearestVisibleIndex`
-
-### Utility tests
-
-- **summary.test.ts** (9) — Leaf values, empty children, struct summary (`{...}`), array previews (<=3, ==3, >3 elements with "...N more"), recursive struct-array, pointer types, struct-array type detection
+- **parser.test.ts** (35) — AST conversion for all node types
+- **evaluator.test.ts** (60) — Expression evaluation, operators, 32-bit wrapping, pointer scaling
+- **interpreter.test.ts** (35) — Statement handling, stdlib, validation, integration pipelines
+- **environment.test.ts** (27) — Scope chain, stack/heap allocation, double-free detection
+- **types-c.test.ts** (32) — Type sizes, alignment, struct layout, TypeRegistry
+- **emitter.test.ts** (34) — Op emission, ID generation, path resolution
+- **worker.test.ts** (6) — Worker message contract
+- **value-correctness.test.ts** (~130) — Value assertions: scalars, structs, arrays, pointers, functions, control flow, sprintf, bounds checking, sub-steps, edge cases
+- **manual-programs.test.ts** (60) — 38 full C programs run through complete pipeline (parse → interpret → validate → buildSnapshots → verify values)
 
 ### Adding tests for new programs
 
 When adding a new program to `src/lib/programs/`, add it to the `programs.test.ts` file by calling `testProgram('name', myProgram)`. This automatically runs 13 validation checks against it.
+
+For interpreter tests, use the `interpretAndBuild()` helper in `value-correctness.test.ts` which runs the full pipeline with guards: no interpreter errors, validateProgram passes, no buildSnapshots warnings.
 
 ## Known Edge Cases and Design Decisions
 
