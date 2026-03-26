@@ -992,8 +992,8 @@ describe('bounds checking', () => {
 		expectValid(program);
 	});
 
-	it.skip('detects heap buffer overflow through struct pointer', () => {
-		const src = `
+	it('detects heap buffer overflow through struct pointer', () => {
+		const src = `#include <stdlib.h>
 struct Player { int id; int *scores; };
 int main() {
 	struct Player *p = malloc(sizeof(struct Player));

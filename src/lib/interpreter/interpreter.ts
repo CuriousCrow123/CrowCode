@@ -583,6 +583,8 @@ export class Interpreter {
 			return;
 		}
 
+		this.env.setHeapBlockType(address, heapType);
+
 		let heapChildren: ChildSpec[] | undefined;
 		if (isStructType(heapType)) {
 			heapChildren = buildStructChildSpecs(heapType);
