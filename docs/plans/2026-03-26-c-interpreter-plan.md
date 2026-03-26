@@ -886,12 +886,12 @@ All 10 steps implemented on branch `feat/c-interpreter` (10 commits).
 | `parser.test.ts` | 35 | ~27 |
 | `types-c.test.ts` | 32 | ~18 |
 | `environment.test.ts` | 27 | ~20 |
-| `evaluator.test.ts` | 47 | ~32 |
+| `evaluator.test.ts` | 60 | ~32 |
 | `emitter.test.ts` | 34 | ~72 |
-| `interpreter.test.ts` | 32 | ~48 (7a-d) + ~17 (8) |
+| `interpreter.test.ts` | 35 | ~48 (7a-d) + ~17 (8) |
 | `worker.test.ts` | 6 | ~6 |
-| **Total new** | **213** | |
-| **Full suite** | **357** | |
+| **Total new** | **229** | |
+| **Full suite** | **373** | |
 
 ### Deviations from plan
 
@@ -906,6 +906,36 @@ All 10 steps implemented on branch `feat/c-interpreter` (10 commits).
 5. **Leak detection stub:** The `detectLeaks()` method exists but doesn't yet emit `setHeapStatus('leaked')` ops for unreleased blocks at program exit. The infrastructure is in place (emitter has `leakHeap()`); the interpreter just needs to map environment heap addresses back to emitter block IDs.
 
 6. **No `testProgram()` integration:** The plan called for running interpreted programs through the existing `testProgram()` 13-check suite from `programs.test.ts`. Instead, integration tests in `interpreter.test.ts` run `validateProgram()` and `buildSnapshots()` directly with the same assertions.
+
+### Post-review fixes (2026-03-26)
+
+A 4-agent review (snapshot contract, C semantics, test adequacy, worker integration) identified 5 critical and ~15 warning-level issues. The following critical issues were fixed:
+
+| ID | Category | Fix |
+|----|----------|-----|
+| C1 | C semantics | Added `toInt32()` wrapping to all arithmetic, unary negation, and `++`/`--`. `INT_MAX + 1` now correctly wraps to `INT_MIN`. |
+| C2 | C semantics | Pointer `++`/`--` now scales by `sizeof(*ptr)`. `int*` advances by 4, `char*` by 1. |
+| C4 | C semantics | Added `&=`, `\|=`, `^=`, `<<=`, `>>=` to `interpreter.ts::applyCompoundOp`. |
+| S3 | Snapshot contract | Replaced string-prefix scope cleanup with explicit per-scope var tracking. Each scope saves the previous `varMap` entry before overwriting, and restores it on exit. Fixes variable shadowing corruption. Also added `env.pushScope`/`popScope` for block scopes in `executeBlock`. |
+| S5 | Snapshot contract | `p = malloc(n)` in assignment expressions (not just declarations) now emits heap block ops via `executeMallocAssign`. |
+
+### Known issues (not yet fixed)
+
+These are edge cases unlikely to be hit by typical educational C programs. The infrastructure supports adding them later without structural changes.
+
+| ID | Category | Issue | Impact | What's needed |
+|----|----------|-------|--------|---------------|
+| C3 | C semantics | `++`/`--` on non-identifier lvalues (`(*p)++`, `arr[i]++`, `s.x++`) silently drops the mutation. | Low — uncommon in intro C code. | Evaluator needs to return an lvalue path; interpreter applies the mutation via emitter. |
+| S1/S2 | Snapshot contract | `declareVariable()` and `allocHeap()` (no-address variants) produce entries with `address: ''`, which would fail `validateProgram()`. | None — dead code paths, never called from interpreter. | Remove from `OpEmitter` interface or mark `@internal`. |
+| S4 | Snapshot contract | `free(p->scores)` (nested pointer through struct) doesn't emit `setHeapStatus` op. The `ptrTargetMap` lookup uses dotted paths that don't match registration keys. | Medium — breaks heap visualization for programs that free struct-member pointers. | Track struct-field pointer-to-heap bindings explicitly. When `p->scores = calloc(...)` is executed, register `'p.scores'` in `ptrTargetMap`. |
+| S-caller | Snapshot contract | `enterFunction` always sets `caller: 'main()'` regardless of actual caller. | Low — display-only inaccuracy for multi-level call chains. | Read actual caller name from scope stack. |
+| S-block-scope | Snapshot contract | Block scopes use `scope: {}` instead of `undefined`. | Cosmetic — no functional impact. | Set `scope: undefined` for block scopes. |
+| W-timeout | Worker integration | No timeout protection on main-thread `interpretSync()` in `CustomEditor.svelte`. `maxSteps: 500` bounds iterations but an interpreter bug could hang the thread. | Low — only triggered by interpreter bugs, not user code. | Wrap in `Promise.race()` with a deadline or move to worker. |
+| W-wasm-versions | Worker integration | `web-tree-sitter@^0.26.7` and `tree-sitter-c@^0.24.1` use different ABI versions. Works now but fragile. | Medium on upgrade — WASM load may fail silently. | Pin exact versions or use `tree-sitter-wasms` package. |
+| T-leaks | Test adequacy | Leak detection (`detectLeaks()`) is a stub — no `setHeapStatus('leaked')` emitted, no tests. | Medium — headline educational feature not working. | Map env heap addresses to emitter block IDs and emit `leakHeap()`. |
+| T-equiv | Test adequacy | No equivalence test against `basics.ts`/`loops.ts` source. | Medium — whole-pipeline regressions could go undetected. | Run `interpretSync(parser, basics.source)`, assert key snapshot states. |
+| T-use-after-free | Test adequacy | No test that reading through a freed pointer shows `(dangling)` in snapshots. | Low — display path works but untested. | Add interpreter test that frees and then reads a pointer. |
+| T-break-continue | Test adequacy | `break`/`continue` inside loops untested at interpreter level. | Low — flag logic is simple but could regress in nested loops. | Add test with `break` inside inner loop. |
 
 ## References
 - [Op generation requirements](../research/op-generation-requirements.md) — full op generation contract
