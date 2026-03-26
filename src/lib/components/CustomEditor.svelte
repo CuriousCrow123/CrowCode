@@ -1,8 +1,11 @@
 <script lang="ts">
 	import type { Program } from '$lib/types';
 	import type { Parser as ParserType } from 'web-tree-sitter';
+	import { testPrograms, getCategories } from '$lib/test-programs';
 
 	let { onProgram }: { onProgram: (program: Program) => void } = $props();
+
+	const categories = getCategories();
 
 	let source = $state(`#include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +31,17 @@ int main() {
     free(scores);
     return 0;
 }`);
+
+	function loadTestProgram(event: Event) {
+		const select = event.target as HTMLSelectElement;
+		const id = select.value;
+		if (!id) return;
+		const prog = testPrograms.find(p => p.id === id);
+		if (prog) {
+			source = prog.source;
+			select.value = '';
+		}
+	}
 
 	let loading = $state(false);
 	let errors = $state<string[]>([]);
@@ -76,14 +90,24 @@ int main() {
 </script>
 
 <div class="flex flex-col gap-3 w-full max-w-2xl">
-	<div class="flex items-center justify-between">
-		<p class="text-xs text-zinc-500">
-			Supports a subset of C for educational visualization
-		</p>
+	<div class="flex items-center justify-between gap-3">
+		<select
+			onchange={loadTestProgram}
+			class="bg-zinc-800 text-zinc-300 text-sm font-mono px-3 py-1.5 rounded border border-zinc-700 focus:border-blue-500/50 focus:outline-none cursor-pointer"
+		>
+			<option value="">Load test program...</option>
+			{#each categories as cat}
+				<optgroup label={cat}>
+					{#each testPrograms.filter(p => p.category === cat) as prog}
+						<option value={prog.id}>{prog.name}</option>
+					{/each}
+				</optgroup>
+			{/each}
+		</select>
 		<button
 			onclick={run}
 			disabled={loading}
-			class="px-4 py-1.5 rounded text-sm font-mono bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+			class="px-4 py-1.5 rounded text-sm font-mono bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
 		>
 			{loading ? 'Running...' : 'Run'}
 		</button>
