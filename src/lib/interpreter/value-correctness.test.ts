@@ -134,12 +134,12 @@ describe('scalar variable values', () => {
 		expect(findEntry(last, 'c')?.value).toBe('65');
 	});
 
-	it('uninitialized variable shows 0', () => {
+	it('uninitialized variable shows (uninit) then value after assignment', () => {
 		const { snapshots } = interpretAndBuild('int main() { int x; x = 5; return 0; }');
 		// Find the snapshot right after declaration (before assignment)
 		const declSnap = snapshots.find((s) => findEntry(s, 'x'));
 		expect(declSnap).toBeDefined();
-		expect(findEntry(declSnap!, 'x')?.value).toBe('0');
+		expect(findEntry(declSnap!, 'x')?.value).toBe('(uninit)');
 		// After assignment
 		const last = snapshots[snapshots.length - 1];
 		expect(findEntry(last, 'x')?.value).toBe('5');
@@ -1196,6 +1196,34 @@ describe('previously planned spec constructs', () => {
 		const last = snapshots[snapshots.length - 1];
 		// break inside switch exits switch only, loop continues: count = 3
 		expect(findEntry(last, 'count')?.value).toBe('3');
+	});
+
+	it('uninitialized variable shows (uninit)', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('(uninit)');
+	});
+
+	it('uninitialized variable becomes initialized after assignment', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x;
+	x = 42;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('42');
+	});
+
+	it('initialized variable does not show (uninit)', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 10;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('10');
 	});
 
 	it('short-circuit && skips right side when left is false', () => {

@@ -12,6 +12,7 @@ export type CValue = {
 	type: CType;
 	data: number | null;
 	address: number;
+	initialized?: boolean;
 };
 
 // === Child Specification (for emitter) ===

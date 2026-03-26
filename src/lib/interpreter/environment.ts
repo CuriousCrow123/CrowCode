@@ -49,7 +49,7 @@ export class Environment {
 		this.stackPointer = alignDown(this.stackPointer - size, alignment);
 		const address = this.stackPointer;
 
-		const value: CValue = { type, data: data ?? defaultValue(type), address };
+		const value: CValue = { type, data: data ?? defaultValue(type), address, initialized: data !== null };
 		scope.symbols.set(name, value);
 		return value;
 	}
@@ -67,6 +67,7 @@ export class Environment {
 			const value = this.scopes[i].symbols.get(name);
 			if (value !== undefined) {
 				value.data = data;
+				value.initialized = true;
 				return;
 			}
 		}

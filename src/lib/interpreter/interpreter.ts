@@ -248,7 +248,7 @@ export class Interpreter {
 			children = buildArrayChildSpecs(type.elementType, type.size, initValues);
 		} else {
 			// Scalar declaration
-			let initData: number | null = 0;
+			let initData: number | null = node.initializer ? 0 : null;
 			let initWasFunctionCall = false;
 			if (node.initializer) {
 				// Handle string literals: char *s = "hello"
@@ -275,7 +275,7 @@ export class Interpreter {
 				}
 			}
 			value = this.env.declareVariable(node.name, type, initData);
-			displayValue = this.formatValue(type, initData);
+			displayValue = this.formatValue(type, initData, initData !== null);
 
 			// If initializer was a function call, the return step is already active —
 			// append the variable declaration ops to it instead of creating a new step
@@ -1389,7 +1389,8 @@ export class Interpreter {
 
 	// === Helpers ===
 
-	private formatValue(type: CType, data: number | null): string {
+	private formatValue(type: CType, data: number | null, initialized = true): string {
+		if (!initialized) return '(uninit)';
 		if (data === null) return '0';
 		if (isPointerType(type)) {
 			if (data === 0) return 'NULL';
