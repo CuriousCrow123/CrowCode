@@ -544,6 +544,10 @@ export class DefaultEmitter implements OpEmitter {
 		this.addOp({ op: 'setValue', id, value });
 	}
 
+	directFreeHeap(blockId: string): void {
+		this.addOp({ op: 'setHeapStatus', id: blockId, status: 'freed' });
+	}
+
 	getVarEntryId(name: string): string | undefined {
 		return this.varMap.get(name);
 	}

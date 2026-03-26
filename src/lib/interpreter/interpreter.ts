@@ -710,16 +710,18 @@ export class Interpreter {
 			this.emitter.assignVariable(varName, '(dangling)');
 		} else {
 			// For p->scores: free the heap block that scores points to
-			const scoreBlockId = this.emitter.resolvePointerPath(argPath);
-			if (scoreBlockId) {
-				// Find which emitter pointer target matches
-				const blockId = this.emitter.getHeapBlockId(argPath.join('.')) ?? this.emitter.getHeapBlockId(argPath[argPath.length - 1]);
-				if (blockId) {
-					this.emitter.freeHeap(argPath.join('.'));
-				}
+			// Try field name, then address-based lookup
+			const fieldName = argPath[argPath.length - 1];
+			const blockId = this.emitter.getHeapBlockId(fieldName)
+				?? this.emitter.getHeapBlockIdByAddress(ptrAddr);
+			if (blockId) {
+				this.emitter.directFreeHeap(blockId);
 			}
 			// Update the pointer field to dangling
-			this.emitter.assignField(argPath, '(dangling)');
+			const entryId = this.emitter.resolvePointerPath(argPath);
+			if (entryId) {
+				this.emitter.directSetValue(entryId, '(dangling)');
+			}
 		}
 	}
 
