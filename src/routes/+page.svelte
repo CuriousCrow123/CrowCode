@@ -97,7 +97,8 @@
 	let subStepMode = $state(false);
 
 	const viewingProgram = $derived(mode.state === 'viewing' ? mode.program : null);
-	const snapshots = $derived(viewingProgram ? buildSnapshots(viewingProgram) : []);
+	// $state.snapshot() strips Svelte proxies so structuredClone inside buildSnapshots works
+	const snapshots = $derived(viewingProgram ? buildSnapshots($state.snapshot(viewingProgram) as Program) : []);
 	const steps = $derived(viewingProgram?.steps ?? []);
 	const visibleIndices = $derived(getVisibleIndices(steps, subStepMode));
 
