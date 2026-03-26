@@ -4,7 +4,7 @@ import { resolve } from 'path';
 import { interpretSync, resetParserCache } from './index';
 import { validateProgram } from '$lib/engine/validate';
 import { buildSnapshots } from '$lib/engine/snapshot';
-import type { Program, ProgramStep } from '$lib/api/types';
+import type { Program, ProgramStep, MemoryEntry } from '$lib/api/types';
 
 let parser: Parser;
 
@@ -44,6 +44,18 @@ function expectNoWarnings(program: Program) {
 	spy.mockRestore();
 }
 
+/** Recursive name-based tree walk for snapshot value assertions. */
+function findEntry(entries: MemoryEntry[], name: string): MemoryEntry | undefined {
+	for (const e of entries) {
+		if (e.name === name) return e;
+		if (e.children) {
+			const found = findEntry(e.children, name);
+			if (found) return found;
+		}
+	}
+	return undefined;
+}
+
 // === Step 7a: Declarations, assignments, returns ===
 
 describe('declarations and assignments', () => {
@@ -52,6 +64,9 @@ describe('declarations and assignments', () => {
 		expect(errors).toHaveLength(0);
 		expect(program.steps.length).toBeGreaterThan(0);
 		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('5');
 	});
 
 	it('declares multiple variables', () => {
@@ -65,11 +80,17 @@ describe('declarations and assignments', () => {
 		expectValid(program);
 		const setOps = program.steps.flatMap((s) => s.ops).filter((o) => o.op === 'setValue');
 		expect(setOps.length).toBeGreaterThan(0);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('42');
 	});
 
 	it('compound assignment +=', () => {
 		const { program } = run('int main() { int x = 10; x += 5; return 0; }');
 		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('15');
 	});
 
 	it('declares struct variable', () => {
@@ -207,7 +228,9 @@ describe('if/else', () => {
 }`;
 		const { program } = run(src);
 		expectValid(program);
-		// x should end up as 20
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('20');
 	});
 
 	it('nested if/else', () => {
@@ -432,6 +455,9 @@ int main() {
 		expect(errors).toHaveLength(0);
 		expectValid(program);
 		expectNoWarnings(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('42');
 	});
 
 	it('empty program (just main returning 0)', () => {
@@ -508,5 +534,8 @@ describe('variable shadowing across scopes', () => {
 		expect(errors).toHaveLength(0);
 		expectValid(program);
 		expectNoWarnings(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('30');
 	});
 });
