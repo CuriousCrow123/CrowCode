@@ -234,14 +234,29 @@ export class Interpreter {
 
 			let initValues: string[] | undefined;
 			if (node.initializer?.type === 'init_list') {
-				initValues = node.initializer.values.map((v, i) => {
-					const result = this.evaluator.eval(v);
-					if (result.error) this.errors.push(result.error);
-					const val = result.value.data ?? 0;
-					// Store in memoryValues so element values can be read back
-					const elemSize = sizeOf(type.elementType);
-					this.memoryValues.set(value.address + i * elemSize, val);
-					return String(val);
+				// Flatten nested init_list for multi-dimensional arrays: {{1,2},{3,4}} → [1,2,3,4]
+				const flatValues: { val: number }[] = [];
+				const flattenInitList = (list: ASTNode[]) => {
+					for (const v of list) {
+						if (v.type === 'init_list') {
+							flattenInitList(v.values);
+						} else {
+							const result = this.evaluator.eval(v);
+							if (result.error) this.errors.push(result.error);
+							flatValues.push({ val: result.value.data ?? 0 });
+						}
+					}
+				};
+				flattenInitList(node.initializer.values);
+
+				// Determine leaf element size for address computation
+				let leafType = type.elementType;
+				while (isArrayType(leafType)) leafType = leafType.elementType;
+				const leafSize = sizeOf(leafType);
+
+				initValues = flatValues.map((fv, i) => {
+					this.memoryValues.set(value.address + i * leafSize, fv.val);
+					return String(fv.val);
 				});
 			}
 
@@ -675,7 +690,60 @@ export class Interpreter {
 				}
 			}
 		} else if (node.target.type === 'subscript_expression') {
-			// Element assignment: arr[i] = val, scores[i] = val
+			// Nested subscript: m[i][j] = val (2D array)
+			if (node.target.object.type === 'subscript_expression') {
+				const innerSub = node.target;       // the [j] part
+				const outerSub = innerSub.object as ASTNode & { type: 'subscript_expression' };
+
+				const outerIdxResult = this.evaluator.eval(outerSub.index);
+				const innerIdxResult = this.evaluator.eval(innerSub.index);
+				if (outerIdxResult.error || innerIdxResult.error) {
+					this.errors.push(outerIdxResult.error ?? innerIdxResult.error ?? 'Index error');
+					return;
+				}
+
+				const outerIdx = outerIdxResult.value.data ?? 0;
+				const innerIdx = innerIdxResult.value.data ?? 0;
+
+				// Get root array name and type for bounds check + flat index
+				const rootName = outerSub.object.type === 'identifier' ? outerSub.object.name : '';
+				const rootVar = rootName ? this.env.lookupVariable(rootName) : undefined;
+
+				let innerDim = 1;
+				if (rootVar && isArrayType(rootVar.type) && isArrayType(rootVar.type.elementType)) {
+					const outerSize = rootVar.type.size;
+					innerDim = rootVar.type.elementType.size;
+
+					// Bounds check
+					if (outerIdx < 0 || outerIdx >= outerSize) {
+						this.errors.push(`Array index ${outerIdx} out of bounds (size ${outerSize}) at line ${node.line}`);
+						return;
+					}
+					if (innerIdx < 0 || innerIdx >= innerDim) {
+						this.errors.push(`Array index ${innerIdx} out of bounds (size ${innerDim}) at line ${node.line}`);
+						return;
+					}
+				}
+
+				const flatIdx = outerIdx * innerDim + innerIdx;
+				const newVal = rhs.value.data ?? 0;
+				const displayVal = String(newVal);
+
+				// Store value in memory
+				const targetEval = this.evaluator.eval(node.target);
+				if (targetEval.value.address) {
+					this.memoryValues.set(targetEval.value.address, newVal);
+				}
+
+				// Emit visualization update using flat index
+				const rootId = this.emitter.resolvePathId([rootName]);
+				if (rootId) {
+					this.emitter.directSetValue(`${rootId}-${flatIdx}`, displayVal);
+				}
+				return;
+			}
+
+			// Single subscript: arr[i] = val, scores[i] = val
 			const objPath = Evaluator.buildAccessPath(node.target.object);
 			const idxResult = this.evaluator.eval(node.target.index);
 			if (idxResult.error) {

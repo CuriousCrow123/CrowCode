@@ -177,10 +177,10 @@ function parseDeclarator(node: Node, baseSpec: CTypeSpec, errors: string[]): { n
 		while (current.type === 'array_declarator') {
 			const sizeNode = current.childForFieldName('size');
 			const arraySize = sizeNode ? parseInt(sizeNode.text) : 0;
-			arraySizes.push(arraySize);
+			arraySizes.unshift(arraySize); // unshift: tree-sitter wraps innermost first
 			current = current.childForFieldName('declarator')!;
 		}
-		// arraySizes is [3, 4] for int arr[3][4] (outermost first)
+		// arraySizes is [3, 4] for int arr[3][4]
 		if (arraySizes.length === 1) {
 			spec = { ...spec, array: arraySizes[0] };
 		} else {

@@ -1255,14 +1255,68 @@ describe('previously planned spec constructs', () => {
 		expect(findEntry(last, 'z')?.value).toBe('3');
 	});
 
-	it('multi-dimensional array type resolves correctly', () => {
-		// 2D array parses and type-resolves without error
-		// Read access works; write via chained subscript is not yet supported
-		const { program } = run(`int main() {
+	it('2D array write and read via chained subscript', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
 	int m[2][3];
+	m[0][2] = 3;
+	m[1][0] = 4;
+	m[1][2] = 6;
+	int a = m[0][2];
+	int b = m[1][0];
+	int c = m[1][2];
 	return 0;
 }`);
-		expect(program.steps.length).toBeGreaterThan(0);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('3');
+		expect(findEntry(last, 'b')?.value).toBe('4');
+		expect(findEntry(last, 'c')?.value).toBe('6');
+	});
+
+	it('2D array initialized with nested init_list', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int m[2][3] = {{1, 2, 3}, {4, 5, 6}};
+	int a = m[0][1];
+	int b = m[1][2];
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('2');
+		expect(findEntry(last, 'b')?.value).toBe('6');
+	});
+
+	it('2D array in nested loop', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int m[2][3];
+	for (int i = 0; i < 2; i++) {
+		for (int j = 0; j < 3; j++) {
+			m[i][j] = i * 10 + j;
+		}
+	}
+	int x = m[1][2];
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('12');
+	});
+
+	it('2D array outer index out of bounds', () => {
+		const { errors } = run(`int main() {
+	int m[2][3];
+	m[2][0] = 1;
+	return 0;
+}`);
+		expect(errors.some(e => e.includes('out of bounds'))).toBe(true);
+	});
+
+	it('1D array still works after multi-dim changes', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int arr[3] = {10, 20, 30};
+	arr[1] = 99;
+	int x = arr[1];
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('99');
 	});
 
 	it('cross-function free does not crash', () => {

@@ -136,8 +136,34 @@ export function buildArrayChildSpecs(
 	size: number,
 	initValues?: string[],
 ): ChildSpec[] {
-	const elemSize = sizeOf(elementType);
 	const specs: ChildSpec[] = [];
+
+	// Multi-dimensional: flatten nested array type into [i][j] children
+	if (isArrayType(elementType)) {
+		const innerSize = elementType.size;
+		const innerElemType = elementType.elementType;
+		const leafSize = sizeOf(innerElemType);
+		const totalChildren = size * innerSize;
+		const maxChildren = Math.min(totalChildren, 20);
+		let flat = 0;
+		for (let i = 0; i < size && flat < maxChildren; i++) {
+			for (let j = 0; j < innerSize && flat < maxChildren; j++) {
+				const value = initValues?.[flat] ?? '0';
+				specs.push({
+					name: String(flat),
+					displayName: `[${i}][${j}]`,
+					type: innerElemType,
+					value,
+					addressOffset: flat * leafSize,
+				});
+				flat++;
+			}
+		}
+		return specs;
+	}
+
+	// Single-dimensional
+	const elemSize = sizeOf(elementType);
 	const maxChildren = Math.min(size, 20); // Cap at 20
 
 	for (let i = 0; i < maxChildren; i++) {
