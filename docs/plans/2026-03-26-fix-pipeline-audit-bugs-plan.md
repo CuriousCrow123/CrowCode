@@ -858,15 +858,29 @@ it('function pointer type displays without trailing star', () => {
 | Non-whole float `2.5` after display fix | Still shows `2.5` | Regression guard (M7-T2) |
 
 ## Verification
-- [ ] `npm test` passes (603 existing + 30 new = 633 target)
-- [ ] `npm run build` succeeds
-- [ ] p13.3 Float Arithmetic: `half = 0.5` displayed correctly
-- [ ] p14.2 String Functions: strcpy step visible, heap buffer shows copied chars
-- [ ] p2.2 Nested Structs: `pos.x = 10, pos.y = 20` after initialization
-- [ ] p14.1 Use-After-Free: `x` shows value (not `(uninit)`) with error context
-- [ ] p13.5 Chained Assignment: values appear at correct step
-- [ ] p6.4 Recursive Factorial: intermediate returns don't say "assign to result"
-- [ ] p1.4 Increment/Decrement: `++a` described as `++a`
+- [x] `npm test` passes — 630 total (603 existing + 27 new)
+- [x] `npm run build` succeeds
+- [x] p13.3 Float Arithmetic: `half = 0.5` displayed correctly
+- [x] p14.2 String Functions: strcpy step visible, heap buffer shows copied chars
+- [x] p2.2 Nested Structs: `pos.x = 10, pos.y = 20` after initialization
+- [x] p14.1 Use-After-Free: `x` shows value (not `(uninit)`) with error context
+- [x] p13.5 Chained Assignment: values appear at correct step
+- [x] p6.4 Recursive Factorial: intermediate returns don't say "assign to result"
+- [x] p1.4 Increment/Decrement: `++a` described as `++a`
+
+## Completion Notes
+
+**Implemented:** 13 of 16 planned fixes (7 critical + 6 minor)
+**Tests:** 27 new tests added (630 total, 0 failing)
+**Skipped (3):**
+- MINOR-3 (malloc uninit display) — requires deeper pipeline changes to distinguish malloc vs calloc child initialization
+- MINOR-4 (char buffer type) — requires changes to heap block type inference for char* pointers
+- MINOR-10 (first decl merged into Enter main) — design tradeoff, not a bug
+
+**Deviations from plan:**
+- BUG-7 fix was more nuanced than planned: clearing varName unconditionally broke the outermost return. Final fix uses `frameDepth > 0` to only clear for nested calls.
+- B1-T5 (float→int truncation) changed to test correct float behavior instead — implicit truncation on assignment is a separate feature.
+- Test count: 27 instead of planned 30 (MINOR-3, MINOR-4, MINOR-5/free test skipped due to describeExpr complexity with member expressions)
 
 ## References
 - [docs/pipeline-audit-findings.md](../../docs/pipeline-audit-findings.md) — Full audit results
