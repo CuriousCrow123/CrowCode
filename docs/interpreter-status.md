@@ -1,7 +1,7 @@
 # C Interpreter — Feature Status
 
 Last updated: 2026-03-26
-Test suite: 590 passing, 1 skipped (591 total across 20 files)
+Test suite: 591 passing, 0 skipped (591 total across 20 files)
 
 ## Fully Working
 
@@ -121,9 +121,7 @@ Test suite: 590 passing, 1 skipped (591 total across 20 files)
 
 ## Not Working (Known Bugs)
 
-| Bug | Test status | Root cause | Difficulty |
-|-----|-----------|-----------|-----------|
-| **Struct-pointer-chain bounds check** `p->scores[10]` | `it.skip` | Can't resolve heap block through multi-level pointer to check array bounds | Hard |
+None. All previously known bugs have been fixed.
 
 ---
 
@@ -188,4 +186,4 @@ Test suite: 590 passing, 1 skipped (591 total across 20 files)
 | `emitter.test.ts` | 34 | Op emission, ID generation, path resolution |
 | `worker.test.ts` | 6 | Worker message contract |
 | Other (engine, programs, summary) | ~143 | Snapshot building, validation, programs |
-| **Total** | **591** | 590 passed, 1 skipped |
+| **Total** | **591** | 591 passed, 0 skipped |
