@@ -177,7 +177,12 @@ function parseDeclarator(node: Node, baseSpec: CTypeSpec, errors: string[]): { n
 		while (current.type === 'array_declarator') {
 			const sizeNode = current.childForFieldName('size');
 			const arraySize = sizeNode ? parseInt(sizeNode.text) : 0;
-			arraySizes.unshift(arraySize); // unshift: tree-sitter wraps innermost first
+			if (isNaN(arraySize)) {
+				errors.push(`Variable-length arrays are not supported (line ${line(current)}). Use a constant size like int arr[5].`);
+				arraySizes.unshift(0);
+			} else {
+				arraySizes.unshift(arraySize);
+			}
 			current = current.childForFieldName('declarator')!;
 		}
 		// arraySizes is [3, 4] for int arr[3][4]
