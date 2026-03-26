@@ -311,7 +311,7 @@ export class Interpreter {
 					if (callResult.handled) return; // malloc/calloc handler already emitted the step
 					if (callResult.value !== undefined) {
 						initData = callResult.value;
-						initWasFunctionCall = true;
+						initWasFunctionCall = !!callResult.isUserFunc;
 					}
 				} else {
 					const result = this.evaluator.eval(node.initializer);
@@ -362,11 +362,12 @@ export class Interpreter {
 
 		// Regular function call — set varName context for return step description
 		// Column info is handled by the onCall handler in the evaluator
+		const isUserFunc = !!this.env.getFunction(call.callee);
 		this.callDeclContext = { varName: node.name };
 		const result = this.evaluator.eval(call);
 		this.callDeclContext = null;
 		if (result.error) this.errors.push(result.error);
-		return { handled: false, value: result.value.data };
+		return { handled: false, value: result.value.data, isUserFunc };
 	}
 
 	private executeMallocDecl(
