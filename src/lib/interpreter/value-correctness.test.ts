@@ -938,6 +938,17 @@ int main() {
 	});
 });
 
+describe('error reporting', () => {
+	it('reports error for missing semicolon', () => {
+		const src = 'int main() { int x = 5 return 0; }';
+		const { program, errors } = run(src);
+		console.log('ERRORS:', JSON.stringify(errors));
+		console.log('STEPS:', program.steps.length);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some(e => e.toLowerCase().includes('syntax') || e.toLowerCase().includes('error'))).toBe(true);
+	});
+});
+
 describe('planned: unimplemented spec constructs', () => {
 	it.todo('chained assignment a = b = c = 0 sets all three');
 	it.todo('short-circuit evaluation ptr && ptr->valid');

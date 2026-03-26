@@ -46,10 +46,34 @@ export function parseSource(parser: ParserType, source: string): ParseResult {
 		if (node) children.push(node);
 	}
 
+	// Scan entire tree for deeply nested errors that error recovery may have buried
+	collectDeepErrors(tree.rootNode, errors);
+
 	return {
 		result: { type: 'translation_unit', children },
 		errors,
 	};
+}
+
+function collectDeepErrors(node: Node, errors: string[]): void {
+	for (let i = 0; i < node.childCount; i++) {
+		const child = node.child(i)!;
+		if (child.type === 'ERROR') {
+			const line = child.startPosition.row + 1;
+			const col = child.startPosition.column + 1;
+			const text = child.text.slice(0, 30).replace(/\n/g, ' ');
+			const msg = `Syntax error at line ${line}, col ${col}: unexpected '${text}'`;
+			if (!errors.includes(msg)) {
+				errors.push(msg);
+			}
+		} else if (child.isMissing) {
+			const line = child.startPosition.row + 1;
+			const col = child.startPosition.column + 1;
+			errors.push(`Syntax error at line ${line}, col ${col}: missing '${child.type}'`);
+		} else {
+			collectDeepErrors(child, errors);
+		}
+	}
 }
 
 function hasError(node: Node): boolean {
