@@ -23,7 +23,7 @@
 		class="w-full flex items-center justify-between px-4 py-2.5 bg-zinc-900/80 border-b border-zinc-800 cursor-pointer hover:bg-zinc-800/80 transition-colors text-left"
 	>
 		<span class="font-mono font-semibold text-blue-400 flex items-center gap-2">
-			<span class="text-zinc-600 text-xs">{collapsed ? '&#9654;' : '&#9660;'}</span>
+			<span class="text-zinc-600 text-xs">{collapsed ? '▶' : '▼'}</span>
 			{entry.name}
 		</span>
 		<div class="flex gap-4 text-xs text-zinc-500 font-mono">
