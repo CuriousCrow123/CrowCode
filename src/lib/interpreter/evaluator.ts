@@ -377,6 +377,10 @@ export class Evaluator {
 		} else if (isArrayType(obj.value.type)) {
 			elemType = obj.value.type.elementType;
 			baseAddr = obj.value.address;
+			// Bounds check for stack arrays
+			if (index < 0 || index >= obj.value.type.size) {
+				return this.err(`Array index ${index} out of bounds (size ${obj.value.type.size}) at line ${node.line}`);
+			}
 		}
 
 		const elemSize = sizeOf(elemType);

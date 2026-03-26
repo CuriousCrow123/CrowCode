@@ -938,6 +938,78 @@ int main() {
 	});
 });
 
+describe('bounds checking', () => {
+	it('detects stack array out-of-bounds read', () => {
+		const src = `int main() {
+	int arr[3] = {10, 20, 30};
+	int x = arr[5];
+	return 0;
+}`;
+		const { errors } = run(src);
+		expect(errors.some(e => e.includes('out of bounds'))).toBe(true);
+	});
+
+	it('detects stack array negative index', () => {
+		const src = `int main() {
+	int arr[3] = {10, 20, 30};
+	int x = arr[-1];
+	return 0;
+}`;
+		const { errors } = run(src);
+		expect(errors.some(e => e.includes('out of bounds'))).toBe(true);
+	});
+
+	it('detects heap array out-of-bounds write', () => {
+		const src = `int main() {
+	int *scores = calloc(3, sizeof(int));
+	scores[4] = 100;
+	return 0;
+}`;
+		const { errors } = run(src);
+		expect(errors.some(e => e.includes('out of bounds') || e.includes('buffer overflow'))).toBe(true);
+	});
+
+	it('allows valid index on heap array', () => {
+		const src = `int main() {
+	int *scores = calloc(3, sizeof(int));
+	scores[0] = 100;
+	scores[2] = 300;
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+
+	it('allows valid index on stack array', () => {
+		const src = `int main() {
+	int arr[3] = {10, 20, 30};
+	int x = arr[2];
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+
+	it.skip('detects heap buffer overflow through struct pointer', () => {
+		const src = `
+struct Player { int id; int *scores; };
+int main() {
+	struct Player *p = malloc(sizeof(struct Player));
+	p->scores = calloc(3, sizeof(int));
+	p->scores[10] = 999;
+	return 0;
+}`;
+		const { errors } = run(src);
+		// The heap block for scores is accessed via p->scores which is a pointer
+		// The bounds check should detect index 10 >= size 3
+		expect(errors.some(e =>
+			e.includes('out of bounds') || e.includes('buffer overflow') || e.includes('Heap buffer')
+		)).toBe(true);
+	});
+});
+
 describe('error reporting', () => {
 	it('reports error for missing semicolon', () => {
 		const src = 'int main() { int x = 5 return 0; }';

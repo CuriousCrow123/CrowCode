@@ -588,6 +588,18 @@ export class Interpreter {
 				return;
 			}
 			const index = idxResult.value.data ?? 0;
+
+			// Bounds check for heap arrays (pointer-based access)
+			const objResult = this.evaluator.eval(node.target.object);
+			if (!objResult.error && isPointerType(objResult.value.type)) {
+				const heapAddr = objResult.value.data ?? 0;
+				const block = this.env.getHeapBlock(heapAddr);
+				if (block && isArrayType(block.type) && (index < 0 || index >= block.type.size)) {
+					this.errors.push(`Heap buffer overflow: index ${index} out of bounds (size ${block.type.size}) at line ${node.line}`);
+					return;
+				}
+			}
+
 			const newVal = rhs.value.data ?? 0;
 			const displayVal = String(newVal);
 
