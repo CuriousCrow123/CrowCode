@@ -93,9 +93,17 @@ export type ASTNode =
 	| { type: 'conditional_expression'; condition: ASTNode; consequent: ASTNode; alternate: ASTNode; line: number }
 	| { type: 'init_list'; values: ASTNode[]; line: number }
 	| { type: 'null_literal'; line: number }
+	| { type: 'switch_statement'; expression: ASTNode; cases: ASTCaseClause[]; line: number }
 	| { type: 'break_statement'; line: number }
 	| { type: 'continue_statement'; line: number }
 	| { type: 'preproc_include'; line: number };
+
+export type ASTCaseClause = {
+	kind: 'case' | 'default';
+	value?: ASTNode;
+	statements: ASTNode[];
+	line: number;
+};
 
 export type CTypeSpec = {
 	base: string;

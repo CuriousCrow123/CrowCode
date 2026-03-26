@@ -184,6 +184,9 @@ export class Interpreter {
 			case 'do_while_statement':
 				this.executeDoWhile(node);
 				break;
+			case 'switch_statement':
+				this.executeSwitch(node);
+				break;
 			case 'compound_statement':
 				this.executeBlock(node);
 				break;
@@ -1168,6 +1171,60 @@ export class Interpreter {
 		if (hasDecls) {
 			this.emitter.exitBlock('');
 		}
+	}
+
+	private executeSwitch(node: ASTNode & { type: 'switch_statement' }): void {
+		// Evaluate switch expression
+		const condResult = this.evaluator.eval(node.expression);
+		if (condResult.error) {
+			this.errors.push(condResult.error);
+			return;
+		}
+
+		const switchValue = condResult.value.data ?? 0;
+		const condText = this.describeExpr(node.expression);
+
+		// Emit anchor step for the switch line
+		this.emitter.beginStep({ line: node.line }, `switch: ${condText} = ${switchValue}`);
+		this.stepCount++;
+
+		// Find matching case
+		let matchIndex = -1;
+		let defaultIndex = -1;
+		for (let i = 0; i < node.cases.length; i++) {
+			const clause = node.cases[i];
+			if (clause.kind === 'default') {
+				defaultIndex = i;
+			} else if (clause.value) {
+				const caseResult = this.evaluator.eval(clause.value);
+				if (!caseResult.error && (caseResult.value.data ?? 0) === switchValue) {
+					matchIndex = i;
+					break;
+				}
+			}
+		}
+
+		const startIndex = matchIndex >= 0 ? matchIndex : defaultIndex;
+		if (startIndex < 0) return; // No match, no default — skip
+
+		// Execute from matching case forward (fall-through)
+		// Save/restore breakFlag to prevent switch-break from escaping to enclosing loop
+		const savedBreak = this.breakFlag;
+		this.breakFlag = false;
+
+		for (let i = startIndex; i < node.cases.length; i++) {
+			const clause = node.cases[i];
+			this.executeStatements(clause.statements);
+
+			if (this.breakFlag) {
+				this.breakFlag = false; // Consume switch-break
+				break;
+			}
+			if (this.returnFlag || this.continueFlag) break; // Propagate
+			if (this.stepCount >= this.maxSteps) break;
+		}
+
+		this.breakFlag = savedBreak; // Restore — loop break not swallowed
 	}
 
 	private executeBlock(node: ASTNode & { type: 'compound_statement' }): void {

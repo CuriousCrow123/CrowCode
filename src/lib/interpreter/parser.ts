@@ -1,5 +1,5 @@
 import type { Node, Parser as ParserType } from 'web-tree-sitter';
-import type { ASTNode, CTypeSpec, ASTParam, ASTStructField } from './types';
+import type { ASTNode, ASTCaseClause, CTypeSpec, ASTParam, ASTStructField } from './types';
 
 let cachedParser: ParserType | null = null;
 
@@ -110,6 +110,8 @@ function convertNode(node: Node, errors: string[]): ASTNode | null {
 			return convertWhile(node, errors);
 		case 'do_statement':
 			return convertDoWhile(node, errors);
+		case 'switch_statement':
+			return convertSwitch(node, errors);
 		case 'break_statement':
 			return { type: 'break_statement', line: line(node) };
 		case 'continue_statement':
@@ -338,6 +340,8 @@ function convertStatementNode(node: Node, errors: string[]): ASTNode | null {
 			return convertWhile(node, errors);
 		case 'do_statement':
 			return convertDoWhile(node, errors);
+		case 'switch_statement':
+			return convertSwitch(node, errors);
 		case 'compound_statement':
 			return convertCompound(node, errors);
 		case 'break_statement':
@@ -462,6 +466,42 @@ function convertDoWhile(node: Node, errors: string[]): ASTNode {
 	result.condColStart = condNode.startPosition.column;
 	result.condColEnd = condNode.endPosition.column;
 	return result;
+}
+
+function convertSwitch(node: Node, errors: string[]): ASTNode {
+	const condNode = node.childForFieldName('condition')!;
+	const condition = convertExpression(condNode, errors)!;
+	const body = node.childForFieldName('body')!;
+
+	const cases: ASTCaseClause[] = [];
+
+	for (let i = 0; i < body.childCount; i++) {
+		const child = body.child(i)!;
+		if (child.type === 'case_statement') {
+			const valueNode = child.childForFieldName('value');
+			const value = valueNode ? convertExpression(valueNode, errors) : undefined;
+			const isDefault = !valueNode;
+
+			const statements: ASTNode[] = [];
+			let afterColon = false;
+			for (let j = 0; j < child.childCount; j++) {
+				const stmtNode = child.child(j)!;
+				if (stmtNode.type === ':') { afterColon = true; continue; }
+				if (!afterColon) continue;
+				const stmt = convertNode(stmtNode, errors) ?? convertStatementNode(stmtNode, errors);
+				if (stmt) statements.push(stmt);
+			}
+
+			cases.push({
+				kind: isDefault ? 'default' : 'case',
+				value: value ?? undefined,
+				statements,
+				line: line(child),
+			});
+		}
+	}
+
+	return { type: 'switch_statement', expression: condition, cases, line: line(node) };
 }
 
 // === Expressions ===

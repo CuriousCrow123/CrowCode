@@ -1123,6 +1123,81 @@ describe('previously planned spec constructs', () => {
 		expect(aVal).not.toBe(bVal);
 	});
 
+	it('switch takes correct case branch', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 2;
+	int r = 0;
+	switch (x) {
+		case 1: r = 10; break;
+		case 2: r = 20; break;
+		case 3: r = 30; break;
+	}
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'r')?.value).toBe('20');
+	});
+
+	it('switch default taken when no case matches', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 99;
+	int r = 0;
+	switch (x) {
+		case 1: r = 10; break;
+		default: r = 42; break;
+	}
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'r')?.value).toBe('42');
+	});
+
+	it('switch fall-through without break', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 1;
+	int r = 0;
+	switch (x) {
+		case 1: r += 10;
+		case 2: r += 20; break;
+		case 3: r += 30; break;
+	}
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		// Fall-through: case 1 (r=10) then case 2 (r=30), break
+		expect(findEntry(last, 'r')?.value).toBe('30');
+	});
+
+	it('switch no match no default skips body', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 99;
+	int r = 5;
+	switch (x) {
+		case 1: r = 10; break;
+		case 2: r = 20; break;
+	}
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'r')?.value).toBe('5');
+	});
+
+	it('switch break does not exit enclosing loop', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int count = 0;
+	for (int i = 0; i < 3; i++) {
+		switch (i) {
+			case 1: break;
+		}
+		count++;
+	}
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		// break inside switch exits switch only, loop continues: count = 3
+		expect(findEntry(last, 'count')?.value).toBe('3');
+	});
+
 	it('short-circuit && skips right side when left is false', () => {
 		const { snapshots } = interpretAndBuild(`int main() {
 	int x = 0;
