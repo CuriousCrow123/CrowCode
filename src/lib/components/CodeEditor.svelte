@@ -1,19 +1,31 @@
 <script lang="ts">
 	import type { SourceLocation } from '$lib/types';
 	import { EditorView, Decoration, type DecorationSet } from '@codemirror/view';
-	import { EditorState, StateField, StateEffect } from '@codemirror/state';
+	import { EditorState, StateField, StateEffect, Compartment } from '@codemirror/state';
 	import { basicSetup } from 'codemirror';
 	import { cpp } from '@codemirror/lang-cpp';
 	import { oneDark } from '@codemirror/theme-one-dark';
 
-	let { source, location }: { source: string; location: SourceLocation } = $props();
+	let {
+		source,
+		location,
+		readOnly = true,
+		onchange,
+	}: {
+		source: string;
+		location?: SourceLocation;
+		readOnly?: boolean;
+		onchange?: (source: string) => void;
+	} = $props();
 
 	let container: HTMLDivElement;
 
 	// NOT $state — plain variable to avoid reactive cycles
 	let view: EditorView | undefined;
+	let editorReady = $state(false);
 
-	const setHighlight = StateEffect.define<SourceLocation>();
+	const readOnlyCompartment = new Compartment();
+	const setHighlight = StateEffect.define<SourceLocation | null>();
 
 	const lineDeco = Decoration.line({ class: 'cm-active-step-line' });
 
@@ -25,6 +37,7 @@
 			for (const effect of tr.effects) {
 				if (effect.is(setHighlight)) {
 					const loc = effect.value;
+					if (!loc) return Decoration.none;
 					const doc = tr.state.doc;
 					if (loc.line < 1 || loc.line > doc.lines) return Decoration.none;
 
@@ -72,6 +85,25 @@
 		},
 	});
 
+	function makeExtensions(isReadOnly: boolean) {
+		const exts = [
+			basicSetup,
+			cpp(),
+			oneDark,
+			crowTheme,
+			readOnlyCompartment.of(EditorState.readOnly.of(isReadOnly)),
+			highlightField,
+		];
+		if (onchange) {
+			exts.push(EditorView.updateListener.of((update) => {
+				if (update.docChanged) {
+					onchange!(update.state.doc.toString());
+				}
+			}));
+		}
+		return exts;
+	}
+
 	// Create editor once container is available
 	$effect(() => {
 		if (!container) return;
@@ -79,40 +111,52 @@
 		view = new EditorView({
 			state: EditorState.create({
 				doc: source,
-				extensions: [
-					basicSetup,
-					cpp(),
-					oneDark,
-					crowTheme,
-					EditorState.readOnly.of(true),
-					highlightField,
-				],
+				extensions: makeExtensions(readOnly),
 			}),
 			parent: container,
 		});
-
-		view.dispatch({
-			effects: setHighlight.of(location),
-		});
+		editorReady = true;
 
 		return () => {
 			view?.destroy();
 			view = undefined;
+			editorReady = false;
 		};
+	});
+
+	// Toggle readOnly when prop changes
+	$effect(() => {
+		if (!editorReady || !view) return;
+		const ro = readOnly;
+		view.dispatch({
+			effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(ro)),
+		});
+	});
+
+	// Sync document when source changes externally (tab switch)
+	$effect(() => {
+		if (!editorReady || !view) return;
+		const src = source;
+		const currentDoc = view.state.doc.toString();
+		if (currentDoc === src) return; // no-op guard to prevent infinite loop
+		// Full state replacement for tab switch
+		view.setState(EditorState.create({
+			doc: src,
+			extensions: makeExtensions(readOnly),
+		}));
 	});
 
 	// Update highlight when location changes
 	$effect(() => {
-		if (!view) return;
-		const loc = location;
+		if (!editorReady || !view) return;
+		const loc = location ?? null;
 
 		view.dispatch({
 			effects: setHighlight.of(loc),
 		});
 
-		const doc = view.state.doc;
-		if (loc.line >= 1 && loc.line <= doc.lines) {
-			const lineObj = doc.line(loc.line);
+		if (loc && loc.line >= 1 && loc.line <= view.state.doc.lines) {
+			const lineObj = view.state.doc.line(loc.line);
 			view.dispatch({
 				effects: EditorView.scrollIntoView(lineObj.from, { y: 'center' }),
 			});
