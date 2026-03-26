@@ -282,39 +282,44 @@
 
 	<!-- Main area: editor + memory view -->
 	<div class="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-4">
-		<!-- Code Editor + Step Controls -->
-		<div class="flex flex-col">
-			<div class="h-[70vh]">
-				<CodeEditor
-					source={store.activeTab.source}
-					location={editorLocation}
-					readOnly={mode.state === 'viewing'}
-					onchange={mode.state === 'editing' ? handleSourceChange : undefined}
-				/>
-			</div>
+		<!-- Code Editor -->
+		<div class="h-[70vh]">
+			<CodeEditor
+				source={store.activeTab.source}
+				location={editorLocation}
+				readOnly={mode.state === 'viewing'}
+				onchange={mode.state === 'editing' ? handleSourceChange : undefined}
+			/>
+		</div>
 
+		<!-- Memory View -->
+		<div class="flex flex-col">
 			{#if mode.state === 'viewing'}
-				<div class="mt-3">
+				<div class="mb-3">
 					<StepControls
 						current={visiblePosition}
 						total={visibleIndices.length}
 						{subStepMode}
-						description={currentStep?.description}
-						evaluation={currentStep?.evaluation}
 						onprev={prev}
 						onnext={next}
 						ontogglesubstep={toggleSubStep}
 					/>
+					{#if currentStep?.description || currentStep?.evaluation}
+						<div class="mt-2 text-sm font-mono flex items-center gap-2">
+							{#if currentStep.description}
+								<span class="text-zinc-400">{currentStep.description}</span>
+							{/if}
+							{#if currentStep.evaluation}
+								<span class="text-emerald-500">{currentStep.evaluation}</span>
+							{/if}
+						</div>
+					{/if}
 				</div>
-			{/if}
-		</div>
-
-		<!-- Memory View -->
-		<div class="max-h-[70vh] overflow-y-auto">
-			{#if mode.state === 'viewing'}
-				<MemoryView data={currentSnapshot} />
+				<div class="max-h-[70vh] overflow-y-auto">
+					<MemoryView data={currentSnapshot} />
+				</div>
 			{:else}
-				<div class="h-full flex items-center justify-center text-zinc-600 text-sm font-mono">
+				<div class="h-[70vh] flex items-center justify-center text-zinc-600 text-sm font-mono">
 					Click Run to visualize memory
 				</div>
 			{/if}
