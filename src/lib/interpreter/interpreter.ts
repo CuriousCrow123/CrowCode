@@ -344,9 +344,10 @@ export class Interpreter {
 			if (isPointerType(declType)) {
 				const elemType = declType.pointsTo;
 				const elemSize = sizeOf(elemType);
-				// If allocating more than one element, treat as array
-				if (elemSize > 0 && totalSize > elemSize && totalSize % elemSize === 0) {
-					heapType = arrayType(elemType, totalSize / elemSize);
+				const count = elemSize > 0 ? totalSize / elemSize : 0;
+				// Infer array when allocating multiple elements (cap at 32 for display)
+				if (elemSize > 0 && count > 1 && count <= 32 && totalSize % elemSize === 0) {
+					heapType = arrayType(elemType, count);
 				} else {
 					heapType = elemType;
 				}
@@ -451,8 +452,9 @@ export class Interpreter {
 			if (targetType && isPointerType(targetType)) {
 				const elemType = targetType.pointsTo;
 				const elemSize = sizeOf(elemType);
-				if (elemSize > 0 && totalSize > elemSize && totalSize % elemSize === 0) {
-					heapType = arrayType(elemType, totalSize / elemSize);
+				const count = elemSize > 0 ? totalSize / elemSize : 0;
+				if (elemSize > 0 && count > 1 && count <= 32 && totalSize % elemSize === 0) {
+					heapType = arrayType(elemType, count);
 				} else {
 					heapType = elemType;
 				}
@@ -929,7 +931,20 @@ export class Interpreter {
 				const beforeVal = this.describeUpdateBefore(node.update);
 				const result = this.evaluator.eval(node.update);
 				if (result.error) this.errors.push(result.error);
-				const afterVal = result.value.data ?? 0;
+
+				// For post-increment (i++), the evaluator returns old value but
+				// updates the env. Read the actual new value from the environment.
+				let afterVal = result.value.data ?? 0;
+				let varName: string | undefined;
+				if (node.update.type === 'unary_expression' && node.update.operand.type === 'identifier') {
+					varName = node.update.operand.name;
+				} else if (node.update.type === 'assignment' && node.update.target.type === 'identifier') {
+					varName = node.update.target.name;
+				}
+				if (varName) {
+					const current = this.env.lookupVariable(varName);
+					if (current) afterVal = current.data ?? afterVal;
+				}
 
 				this.emitter.beginStep(
 					{ line: node.line, colStart: node.updateColStart, colEnd: node.updateColEnd },
@@ -939,10 +954,8 @@ export class Interpreter {
 				this.stepCount++;
 
 				// Emit setValue for the loop variable
-				if (node.update.type === 'unary_expression' && node.update.operand.type === 'identifier') {
-					this.emitter.assignVariable(node.update.operand.name, String(afterVal));
-				} else if (node.update.type === 'assignment' && node.update.target.type === 'identifier') {
-					this.emitter.assignVariable(node.update.target.name, String(afterVal));
+				if (varName) {
+					this.emitter.assignVariable(varName, String(afterVal));
 				}
 			}
 
