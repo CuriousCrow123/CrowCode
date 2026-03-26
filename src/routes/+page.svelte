@@ -1,68 +1,274 @@
 <script lang="ts">
-	import ProgramStepper from '$lib/components/ProgramStepper.svelte';
-	import { basics, loops } from '$lib/programs';
 	import type { Program } from '$lib/types';
+	import { createEditorTabStore, initPersistence } from '$lib/stores/editor-tabs.svelte';
+	import { testPrograms, getCategories } from '$lib/test-programs';
+	import EditorTabs from '$lib/components/EditorTabs.svelte';
+	import CodeEditor from '$lib/components/CodeEditor.svelte';
+	import MemoryView from '$lib/components/MemoryView.svelte';
+	import StepControls from '$lib/components/StepControls.svelte';
+	import { buildSnapshots, getVisibleIndices, nearestVisibleIndex } from '$lib/engine';
 
-	const programs: Program[] = [basics, loops];
-	let selected = $state(0);
-	let customMode = $state(false);
-	let customProgram = $state<Program | null>(null);
+	const store = createEditorTabStore();
+	initPersistence(store);
 
-	function selectProgram(index: number) {
-		selected = index;
-		customMode = false;
-		customProgram = null;
+	const categories = getCategories();
+
+	// Mode state machine
+	type AppMode =
+		| { state: 'editing' }
+		| { state: 'running' }
+		| { state: 'viewing'; program: Program; errors: string[]; warnings: string[] };
+
+	let mode = $state<AppMode>({ state: 'editing' });
+	let errors = $state<string[]>([]);
+	let warnings = $state<string[]>([]);
+
+	// Abort guard for stale runs
+	let runGeneration = 0;
+
+	async function run() {
+		const thisRun = ++runGeneration;
+		mode = { state: 'running' };
+		errors = [];
+		warnings = [];
+
+		try {
+			const { runProgram } = await import('$lib/interpreter/service');
+			if (thisRun !== runGeneration) return;
+
+			const result = await runProgram(store.activeTab.source);
+			if (thisRun !== runGeneration) return;
+
+			errors = result.errors;
+			warnings = result.warnings;
+
+			if (result.program.steps.length > 0) {
+				mode = {
+					state: 'viewing',
+					program: JSON.parse(JSON.stringify(result.program)),
+					errors: result.errors,
+					warnings: result.warnings,
+				};
+			} else {
+				if (errors.length === 0) {
+					errors = ['No steps generated — check your code.'];
+				}
+				mode = { state: 'editing' };
+			}
+		} catch (err) {
+			if (thisRun !== runGeneration) return;
+			errors = [err instanceof Error ? err.message : String(err)];
+			mode = { state: 'editing' };
+		}
 	}
 
-	function selectCustom() {
-		customMode = true;
+	function edit() {
+		mode = { state: 'editing' };
 	}
 
-	function handleCustomProgram(program: Program) {
-		// Deep copy to strip any reactive proxies before passing to ProgramStepper
-		customProgram = JSON.parse(JSON.stringify(program));
+	function handleTabSelect(index: number) {
+		store.setActive(index);
+		mode = { state: 'editing' };
+		errors = [];
+		warnings = [];
+		runGeneration++; // abort any in-flight run
+	}
+
+	function handleSourceChange(source: string) {
+		store.updateSource(store.active, source);
+	}
+
+	function loadTestProgram(event: Event) {
+		const select = event.target as HTMLSelectElement;
+		const id = select.value;
+		if (!id) return;
+		const prog = testPrograms.find((p) => p.id === id);
+		if (prog) {
+			store.updateSource(store.active, prog.source);
+			mode = { state: 'editing' };
+			errors = [];
+			warnings = [];
+		}
+		select.value = '';
+	}
+
+	// Stepping state (only used in viewing mode)
+	let internalIndex = $state(0);
+	let subStepMode = $state(false);
+
+	const viewingProgram = $derived(mode.state === 'viewing' ? mode.program : null);
+	const snapshots = $derived(viewingProgram ? buildSnapshots(viewingProgram) : []);
+	const steps = $derived(viewingProgram?.steps ?? []);
+	const visibleIndices = $derived(getVisibleIndices(steps, subStepMode));
+
+	const visiblePosition = $derived.by(() => {
+		const direct = visibleIndices.indexOf(internalIndex);
+		if (direct !== -1) return direct;
+		const nearest = nearestVisibleIndex(visibleIndices, internalIndex);
+		return visibleIndices.indexOf(nearest);
+	});
+
+	const currentStep = $derived(steps[internalIndex]);
+	const currentSnapshot = $derived(snapshots[internalIndex] ?? []);
+
+	const editorLocation = $derived.by(() => {
+		if (mode.state !== 'viewing') return undefined;
+		const loc = currentStep?.location ?? { line: 1 };
+		if (subStepMode) return loc;
+		return { line: loc.line };
+	});
+
+	// Reset step index when program changes
+	$effect(() => {
+		if (viewingProgram) {
+			internalIndex = 0;
+			subStepMode = false;
+		}
+	});
+
+	function prev() {
+		const pos = visiblePosition;
+		if (pos > 0) internalIndex = visibleIndices[pos - 1];
+	}
+
+	function next() {
+		const pos = visiblePosition;
+		if (pos < visibleIndices.length - 1) internalIndex = visibleIndices[pos + 1];
+	}
+
+	function toggleSubStep() {
+		subStepMode = !subStepMode;
+		const newVisible = getVisibleIndices(steps, subStepMode);
+		internalIndex = nearestVisibleIndex(newVisible, internalIndex);
+	}
+
+	// Keyboard shortcuts (only in viewing mode)
+	function handleKeydown(e: KeyboardEvent) {
+		if (mode.state !== 'viewing') return;
+		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+		if (e.target instanceof HTMLElement && e.target.closest('.cm-editor')) return;
+		switch (e.key) {
+			case 'ArrowLeft':
+				e.preventDefault();
+				prev();
+				break;
+			case 'ArrowRight':
+				e.preventDefault();
+				next();
+				break;
+			case 's':
+			case 'S':
+				e.preventDefault();
+				toggleSubStep();
+				break;
+		}
 	}
 </script>
 
-<div class="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center p-8">
-	<h1 class="text-3xl font-bold mb-2">CrowTools</h1>
-	<p class="text-zinc-500 mb-4">Memory Visualizer</p>
+<svelte:window onkeydown={handleKeydown} />
 
-	<div class="flex gap-2 mb-6">
-		{#each programs as prog, i}
-			<button
-				onclick={() => selectProgram(i)}
-				class="px-4 py-1.5 rounded text-sm font-mono transition-colors {!customMode && selected === i ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}"
+<main class="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center px-4 py-6">
+	<h1 class="text-2xl font-bold mb-1">CrowTools</h1>
+	<p class="text-zinc-500 text-sm mb-4">Memory Visualizer</p>
+
+	<!-- Toolbar: tabs + examples + run/edit -->
+	<div class="w-full max-w-7xl flex items-center gap-3 mb-4 flex-wrap">
+		<EditorTabs
+			tabs={store.tabs}
+			active={store.active}
+			onselect={handleTabSelect}
+			onadd={() => store.addTab()}
+			onclose={(i) => store.removeTab(i)}
+		/>
+
+		<div class="flex items-center gap-2 ml-auto">
+			<select
+				onchange={loadTestProgram}
+				aria-label="Load example program"
+				class="bg-zinc-800 text-zinc-300 text-sm font-mono px-3 py-1.5 rounded border border-zinc-700 focus:border-blue-500/50 focus:outline-none cursor-pointer"
 			>
-				{prog.name}
-			</button>
-		{/each}
-		<button
-			onclick={selectCustom}
-			class="px-4 py-1.5 rounded text-sm font-mono transition-colors {customMode ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}"
-		>
-			Custom
-		</button>
+				<option value="">Examples...</option>
+				{#each categories as cat}
+					<optgroup label={cat}>
+						{#each testPrograms.filter((p) => p.category === cat) as prog}
+							<option value={prog.id}>{prog.name}</option>
+						{/each}
+					</optgroup>
+				{/each}
+			</select>
+
+			{#if mode.state === 'viewing'}
+				<button
+					onclick={edit}
+					class="px-4 py-1.5 rounded text-sm font-mono bg-zinc-700 text-zinc-200 hover:bg-zinc-600 transition-colors"
+				>
+					Edit
+				</button>
+			{:else}
+				<button
+					onclick={run}
+					disabled={mode.state === 'running'}
+					class="px-4 py-1.5 rounded text-sm font-mono bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+				>
+					{mode.state === 'running' ? 'Running...' : 'Run'}
+				</button>
+			{/if}
+		</div>
 	</div>
 
-	{#if customMode}
-		{#await import('$lib/components/CustomEditor.svelte')}
-			<p class="text-zinc-500 text-sm">Loading editor...</p>
-		{:then module}
-			<module.default onProgram={handleCustomProgram} />
-		{:catch err}
-			<p class="text-red-400 text-sm">Failed to load editor: {err.message}</p>
-		{/await}
-		{#if customProgram}
-			<div class="mt-6 w-full flex justify-center">
-				{#key customProgram}
-					<ProgramStepper program={customProgram} />
-				{/key}
-			</div>
-		{/if}
-	{:else}
-		{#key selected}
-			<ProgramStepper program={programs[selected]} />
-		{/key}
+	<!-- Errors / Warnings -->
+	{#if errors.length > 0}
+		<div class="w-full max-w-7xl mb-3 bg-red-500/10 border border-red-500/30 rounded p-3" role="alert">
+			{#each errors as error}
+				<p class="text-red-400 text-sm font-mono">{error}</p>
+			{/each}
+		</div>
 	{/if}
-</div>
+	{#if warnings.length > 0}
+		<div class="w-full max-w-7xl mb-3 bg-amber-500/10 border border-amber-500/30 rounded p-3">
+			{#each warnings as warning}
+				<p class="text-amber-400 text-sm font-mono">{warning}</p>
+			{/each}
+		</div>
+	{/if}
+
+	<!-- Main area: editor + memory view -->
+	<div class="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-4">
+		<!-- Code Editor -->
+		<div class="h-[70vh]">
+			<CodeEditor
+				source={store.activeTab.source}
+				location={editorLocation}
+				readOnly={mode.state === 'viewing'}
+				onchange={mode.state === 'editing' ? handleSourceChange : undefined}
+			/>
+		</div>
+
+		<!-- Memory View -->
+		<div class="max-h-[70vh] overflow-y-auto">
+			{#if mode.state === 'viewing'}
+				<MemoryView data={currentSnapshot} />
+			{:else}
+				<div class="h-full flex items-center justify-center text-zinc-600 text-sm font-mono">
+					Click Run to visualize memory
+				</div>
+			{/if}
+		</div>
+	</div>
+
+	<!-- Step controls (viewing mode only) -->
+	{#if mode.state === 'viewing'}
+		<div class="w-full max-w-7xl mt-4">
+			<StepControls
+				current={visiblePosition}
+				total={visibleIndices.length}
+				{subStepMode}
+				description={currentStep?.description}
+				evaluation={currentStep?.evaluation}
+				onprev={prev}
+				onnext={next}
+				ontogglesubstep={toggleSubStep}
+			/>
+		</div>
+	{/if}
+</main>

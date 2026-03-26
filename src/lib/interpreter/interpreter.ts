@@ -13,6 +13,7 @@ import {
 	isStructType,
 	isArrayType,
 	isPointerType,
+	isFunctionPointerType,
 } from './types-c';
 import { createStdlib, buildStructChildSpecs, buildArrayChildSpecs } from './stdlib';
 import type { Program } from '$lib/api/types';
@@ -61,7 +62,10 @@ export class Interpreter {
 		this.typeReg = new TypeRegistry();
 		this.emitter = new DefaultEmitter('Custom Program', source);
 
-		const stdlib = createStdlib(this.env, this.typeReg, this.emitter);
+		const stdlib = createStdlib(this.env, this.typeReg, this.emitter, {
+			read: (addr) => this.memoryValues.get(addr),
+			write: (addr, val) => this.memoryValues.set(addr, val),
+		});
 
 		this.evaluator = new Evaluator(this.env, this.typeReg, (name, args, line, colStart, colEnd) => {
 			// Check user-defined functions first
@@ -78,12 +82,34 @@ export class Interpreter {
 				this.callDeclContext = savedContext;
 				return result;
 			}
+
+			// Check function pointer variables
+			const fpVar = this.env.lookupVariable(name);
+			if (fpVar && isFunctionPointerType(fpVar.type)) {
+				const idx = fpVar.data ?? 0;
+				if (idx === 0) {
+					return { value: { type: primitiveType('int'), data: 0, address: 0 }, error: `Null function pointer call at line ${line}` };
+				}
+				const target = this.env.getFunctionByIndex(idx);
+				if (target) {
+					return this.callFunction(target.node, args, line);
+				}
+				return { value: { type: primitiveType('int'), data: 0, address: 0 }, error: `Invalid function pointer at line ${line}` };
+			}
+
 			// Then stdlib
 			return stdlib(name, args, line);
 		});
 
 		// Wire up memory reader so evaluator can read heap/array values
-		this.evaluator.setMemoryReader((address) => this.memoryValues.get(address));
+		// Check for use-after-free on every read
+		this.evaluator.setMemoryReader((address) => {
+			if (this.isFreedAddress(address)) {
+				this.errors.push(`Use-after-free: reading from freed memory at ${formatAddress(address)}`);
+				return undefined;
+			}
+			return this.memoryValues.get(address);
+		});
 	}
 
 	run(): InterpretResult {
@@ -184,6 +210,9 @@ export class Interpreter {
 			case 'do_while_statement':
 				this.executeDoWhile(node);
 				break;
+			case 'switch_statement':
+				this.executeSwitch(node);
+				break;
 			case 'compound_statement':
 				this.executeBlock(node);
 				break;
@@ -231,39 +260,71 @@ export class Interpreter {
 
 			let initValues: string[] | undefined;
 			if (node.initializer?.type === 'init_list') {
-				initValues = node.initializer.values.map((v, i) => {
-					const result = this.evaluator.eval(v);
-					if (result.error) this.errors.push(result.error);
-					const val = result.value.data ?? 0;
-					// Store in memoryValues so element values can be read back
-					const elemSize = sizeOf(type.elementType);
-					this.memoryValues.set(value.address + i * elemSize, val);
-					return String(val);
+				// Flatten nested init_list for multi-dimensional arrays: {{1,2},{3,4}} → [1,2,3,4]
+				const flatValues: { val: number }[] = [];
+				const flattenInitList = (list: ASTNode[]) => {
+					for (const v of list) {
+						if (v.type === 'init_list') {
+							flattenInitList(v.values);
+						} else {
+							const result = this.evaluator.eval(v);
+							if (result.error) this.errors.push(result.error);
+							flatValues.push({ val: result.value.data ?? 0 });
+						}
+					}
+				};
+				flattenInitList(node.initializer.values);
+
+				// Determine leaf element size for address computation
+				let leafType = type.elementType;
+				while (isArrayType(leafType)) leafType = leafType.elementType;
+				const leafSize = sizeOf(leafType);
+
+				initValues = flatValues.map((fv, i) => {
+					this.memoryValues.set(value.address + i * leafSize, fv.val);
+					return String(fv.val);
 				});
 			}
 
 			children = buildArrayChildSpecs(type.elementType, type.size, initValues);
 		} else {
 			// Scalar declaration
-			let initData: number | null = 0;
+			let initData: number | null = node.initializer ? 0 : null;
 			let initWasFunctionCall = false;
 			if (node.initializer) {
+				// Handle function pointer initialization: int (*fp)(int,int) = add
+				if (isFunctionPointerType(type) && node.initializer.type === 'identifier') {
+					const fnName = node.initializer.name;
+					const fnIdx = this.env.getFunctionIndex(fnName);
+					if (fnIdx > 0) {
+						initData = fnIdx;
+					}
+				}
+				// Handle string literals: char *s = "hello"
+				else if (node.initializer.type === 'string_literal' && isPointerType(type)) {
+					this.executeStringLiteralDecl(node, node.initializer, type, sharesStep);
+					return;
+				}
 				// Handle call expressions that return heap pointers or function calls
-				if (node.initializer.type === 'call_expression') {
+				else if (node.initializer.type === 'call_expression') {
 					const callResult = this.evaluateCallForDecl(node, type);
 					if (callResult.handled) return; // malloc/calloc handler already emitted the step
 					if (callResult.value !== undefined) {
 						initData = callResult.value;
-						initWasFunctionCall = true;
+						initWasFunctionCall = !!callResult.isUserFunc;
 					}
 				} else {
 					const result = this.evaluator.eval(node.initializer);
 					if (result.error) this.errors.push(result.error);
-					initData = result.value.data;
+					// Array-to-pointer decay: int *p = arr
+					const decayed = isPointerType(type)
+						? Evaluator.decayArrayToPointer(result.value)
+						: result.value;
+					initData = decayed.data;
 				}
 			}
 			value = this.env.declareVariable(node.name, type, initData);
-			displayValue = this.formatValue(type, initData);
+			displayValue = this.formatValue(type, initData, initData !== null);
 
 			// If initializer was a function call, the return step is already active —
 			// append the variable declaration ops to it instead of creating a new step
@@ -301,11 +362,12 @@ export class Interpreter {
 
 		// Regular function call — set varName context for return step description
 		// Column info is handled by the onCall handler in the evaluator
+		const isUserFunc = !!this.env.getFunction(call.callee);
 		this.callDeclContext = { varName: node.name };
 		const result = this.evaluator.eval(call);
 		this.callDeclContext = null;
 		if (result.error) this.errors.push(result.error);
-		return { handled: false, value: result.value.data };
+		return { handled: false, value: result.value.data, isUserFunc };
 	}
 
 	private executeMallocDecl(
@@ -405,6 +467,69 @@ export class Interpreter {
 		return true;
 	}
 
+	private executeStringLiteralDecl(
+		decl: ASTNode & { type: 'declaration' },
+		literal: ASTNode & { type: 'string_literal' },
+		declType: CType,
+		sharesStep: boolean,
+	): void {
+		const str = literal.value;
+		const size = str.length + 1; // Include null terminator
+
+		// Allocate heap block for the string
+		const { address, error } = this.env.malloc(size, 'string_literal', decl.line);
+		if (error) {
+			this.errors.push(error);
+			return;
+		}
+
+		// Set heap block type as char array
+		const heapType = arrayType(primitiveType('char'), size);
+		this.env.setHeapBlockType(address, heapType);
+
+		// Store char codes in memoryValues
+		for (let i = 0; i < str.length; i++) {
+			this.memoryValues.set(address + i, str.charCodeAt(i));
+		}
+		this.memoryValues.set(address + str.length, 0); // null terminator
+
+		// Declare the pointer variable
+		const ptrValue = this.env.declareVariable(decl.name, declType, address);
+
+		// Build char children for visualization
+		const charValues = str.split('').map((c) => {
+			const code = c.charCodeAt(0);
+			return code >= 32 && code <= 126 ? `'${c}'` : String(code);
+		});
+		charValues.push(`'\\0'`);
+		const heapChildren = buildArrayChildSpecs(primitiveType('char'), size, charValues);
+
+		// Emit step
+		if (!sharesStep) {
+			this.emitter.beginStep({ line: decl.line }, `char *${decl.name} = "${str}"`);
+			this.stepCount++;
+		}
+
+		// Emit heap allocation
+		this.emitter.allocHeapWithAddress(
+			decl.name,
+			heapType,
+			size,
+			'string_literal',
+			{ line: decl.line },
+			address,
+			heapChildren,
+		);
+
+		// Emit pointer variable
+		this.emitter.declareVariableWithAddress(
+			decl.name,
+			declType,
+			formatAddress(address),
+			ptrValue.address,
+		);
+	}
+
 	private executeMallocAssign(
 		node: ASTNode & { type: 'assignment' },
 		call: ASTNode & { type: 'call_expression' },
@@ -469,6 +594,8 @@ export class Interpreter {
 			return;
 		}
 
+		this.env.setHeapBlockType(address, heapType);
+
 		let heapChildren: ChildSpec[] | undefined;
 		if (isStructType(heapType)) {
 			heapChildren = buildStructChildSpecs(heapType);
@@ -528,6 +655,29 @@ export class Interpreter {
 			}
 		}
 
+		// Chained assignment: a = b = c = 0 — execute inner assignment first to emit ops
+		if (node.operator === '=' && node.value?.type === 'assignment') {
+			this.executeAssignment(node.value, true);
+		}
+
+		// Function pointer assignment: fp = funcName
+		if (node.operator === '=' && node.value?.type === 'identifier' && node.target?.type === 'identifier') {
+			const targetVar = this.env.lookupVariable(node.target.name);
+			if (targetVar && isFunctionPointerType(targetVar.type)) {
+				const fnIdx = this.env.getFunctionIndex(node.value.name);
+				if (fnIdx > 0) {
+					if (!sharesStep) {
+						this.emitter.beginStep({ line: node.line }, this.formatAssignDesc(node));
+						this.stepCount++;
+					}
+					this.env.setVariable(node.target.name, fnIdx);
+					const target = this.env.getFunctionByIndex(fnIdx);
+					this.emitter.assignVariable(node.target.name, target ? `→ ${target.name}` : String(fnIdx));
+					return;
+				}
+			}
+		}
+
 		const rhs = this.evaluator.eval(node.value);
 		if (rhs.error) {
 			this.errors.push(rhs.error);
@@ -584,6 +734,7 @@ export class Interpreter {
 			if (ptrResult.error) { this.errors.push(ptrResult.error); return; }
 			const addr = ptrResult.value.data ?? 0;
 			if (addr === 0) { this.errors.push(`Null pointer dereference at line ${node.line}`); return; }
+			if (this.isFreedAddress(addr)) { this.errors.push(`Use-after-free: writing to freed memory at ${formatAddress(addr)}`); return; }
 			const newVal = rhs.value.data ?? 0;
 			this.memoryValues.set(addr, newVal);
 			// Resolve heap block and emit setValue
@@ -595,7 +746,60 @@ export class Interpreter {
 				}
 			}
 		} else if (node.target.type === 'subscript_expression') {
-			// Element assignment: arr[i] = val, scores[i] = val
+			// Nested subscript: m[i][j] = val (2D array)
+			if (node.target.object.type === 'subscript_expression') {
+				const innerSub = node.target;       // the [j] part
+				const outerSub = innerSub.object as ASTNode & { type: 'subscript_expression' };
+
+				const outerIdxResult = this.evaluator.eval(outerSub.index);
+				const innerIdxResult = this.evaluator.eval(innerSub.index);
+				if (outerIdxResult.error || innerIdxResult.error) {
+					this.errors.push(outerIdxResult.error ?? innerIdxResult.error ?? 'Index error');
+					return;
+				}
+
+				const outerIdx = outerIdxResult.value.data ?? 0;
+				const innerIdx = innerIdxResult.value.data ?? 0;
+
+				// Get root array name and type for bounds check + flat index
+				const rootName = outerSub.object.type === 'identifier' ? outerSub.object.name : '';
+				const rootVar = rootName ? this.env.lookupVariable(rootName) : undefined;
+
+				let innerDim = 1;
+				if (rootVar && isArrayType(rootVar.type) && isArrayType(rootVar.type.elementType)) {
+					const outerSize = rootVar.type.size;
+					innerDim = rootVar.type.elementType.size;
+
+					// Bounds check
+					if (outerIdx < 0 || outerIdx >= outerSize) {
+						this.errors.push(`Array index ${outerIdx} out of bounds (size ${outerSize}) at line ${node.line}`);
+						return;
+					}
+					if (innerIdx < 0 || innerIdx >= innerDim) {
+						this.errors.push(`Array index ${innerIdx} out of bounds (size ${innerDim}) at line ${node.line}`);
+						return;
+					}
+				}
+
+				const flatIdx = outerIdx * innerDim + innerIdx;
+				const newVal = rhs.value.data ?? 0;
+				const displayVal = String(newVal);
+
+				// Store value in memory
+				const targetEval = this.evaluator.eval(node.target);
+				if (targetEval.value.address) {
+					this.memoryValues.set(targetEval.value.address, newVal);
+				}
+
+				// Emit visualization update using flat index
+				const rootId = this.emitter.resolvePathId([rootName]);
+				if (rootId) {
+					this.emitter.directSetValue(`${rootId}-${flatIdx}`, displayVal);
+				}
+				return;
+			}
+
+			// Single subscript: arr[i] = val, scores[i] = val
 			const objPath = Evaluator.buildAccessPath(node.target.object);
 			const idxResult = this.evaluator.eval(node.target.index);
 			if (idxResult.error) {
@@ -604,8 +808,17 @@ export class Interpreter {
 			}
 			const index = idxResult.value.data ?? 0;
 
-			// Bounds check for arrays
+			// Use-after-free check for subscript writes
 			const objResult = this.evaluator.eval(node.target.object);
+			if (!objResult.error && isPointerType(objResult.value.type)) {
+				const heapAddr = objResult.value.data ?? 0;
+				if (this.isFreedAddress(heapAddr)) {
+					this.errors.push(`Use-after-free: writing to freed memory at ${formatAddress(heapAddr)}`);
+					return;
+				}
+			}
+
+			// Bounds check for arrays
 			if (!objResult.error) {
 				if (isPointerType(objResult.value.type)) {
 					// Heap array bounds check
@@ -757,6 +970,23 @@ export class Interpreter {
 		const fn = this.env.getFunction(call.callee);
 		if (fn) {
 			this.executeUserFunctionCall(fn, call, line, sharesStep);
+			return;
+		}
+
+		// Function pointer call as statement: fp(args)
+		const fpVar = this.env.lookupVariable(call.callee);
+		if (fpVar && isFunctionPointerType(fpVar.type)) {
+			const idx = fpVar.data ?? 0;
+			if (idx === 0) {
+				this.errors.push(`Null function pointer call '${call.callee}' at line ${line}`);
+				return;
+			}
+			const target = this.env.getFunctionByIndex(idx);
+			if (target) {
+				this.executeUserFunctionCall(target.node, call, line, sharesStep);
+				return;
+			}
+			this.errors.push(`Invalid function pointer '${call.callee}' at line ${line}`);
 			return;
 		}
 
@@ -1093,6 +1323,60 @@ export class Interpreter {
 		}
 	}
 
+	private executeSwitch(node: ASTNode & { type: 'switch_statement' }): void {
+		// Evaluate switch expression
+		const condResult = this.evaluator.eval(node.expression);
+		if (condResult.error) {
+			this.errors.push(condResult.error);
+			return;
+		}
+
+		const switchValue = condResult.value.data ?? 0;
+		const condText = this.describeExpr(node.expression);
+
+		// Emit anchor step for the switch line
+		this.emitter.beginStep({ line: node.line }, `switch: ${condText} = ${switchValue}`);
+		this.stepCount++;
+
+		// Find matching case
+		let matchIndex = -1;
+		let defaultIndex = -1;
+		for (let i = 0; i < node.cases.length; i++) {
+			const clause = node.cases[i];
+			if (clause.kind === 'default') {
+				defaultIndex = i;
+			} else if (clause.value) {
+				const caseResult = this.evaluator.eval(clause.value);
+				if (!caseResult.error && (caseResult.value.data ?? 0) === switchValue) {
+					matchIndex = i;
+					break;
+				}
+			}
+		}
+
+		const startIndex = matchIndex >= 0 ? matchIndex : defaultIndex;
+		if (startIndex < 0) return; // No match, no default — skip
+
+		// Execute from matching case forward (fall-through)
+		// Save/restore breakFlag to prevent switch-break from escaping to enclosing loop
+		const savedBreak = this.breakFlag;
+		this.breakFlag = false;
+
+		for (let i = startIndex; i < node.cases.length; i++) {
+			const clause = node.cases[i];
+			this.executeStatements(clause.statements);
+
+			if (this.breakFlag) {
+				this.breakFlag = false; // Consume switch-break
+				break;
+			}
+			if (this.returnFlag || this.continueFlag) break; // Propagate
+			if (this.stepCount >= this.maxSteps) break;
+		}
+
+		this.breakFlag = savedBreak; // Restore — loop break not swallowed
+	}
+
 	private executeBlock(node: ASTNode & { type: 'compound_statement' }): void {
 		const hasDecls = node.children.some((c) => c.type === 'declaration');
 
@@ -1134,8 +1418,22 @@ export class Interpreter {
 		const declaredParams: CValue[] = [];
 		for (let i = 0; i < fn.params.length; i++) {
 			const paramType = this.typeReg.resolve(fn.params[i].typeSpec);
-			const v = this.env.declareVariable(fn.params[i].name, paramType, args[i]?.data ?? 0);
+			// Array-to-pointer decay: when passing array to pointer parameter
+			const arg = args[i] ? Evaluator.decayArrayToPointer(args[i]) : undefined;
+			const v = this.env.declareVariable(fn.params[i].name, paramType, arg?.data ?? 0);
 			declaredParams.push(v);
+		}
+
+		// Register pointer parameter names in ptrTargetMap for cross-function free
+		for (let i = 0; i < fn.params.length; i++) {
+			const paramType = this.typeReg.resolve(fn.params[i].typeSpec);
+			if (isPointerType(paramType) && args[i]?.data != null && args[i].data !== 0) {
+				// Look up heap block by address
+				const blockId = this.emitter.getHeapBlockIdByAddress(args[i].data!);
+				if (blockId) {
+					this.emitter.setPointerTarget(fn.params[i].name, blockId);
+				}
+			}
 		}
 
 		// Build params with addresses
@@ -1253,11 +1551,30 @@ export class Interpreter {
 
 	// === Helpers ===
 
-	private formatValue(type: CType, data: number | null): string {
+	private isFreedAddress(address: number): boolean {
+		for (const block of this.env.getAllHeapBlocks().values()) {
+			if (block.status === 'freed' && address >= block.address && address < block.address + block.size) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private formatValue(type: CType, data: number | null, initialized = true): string {
+		if (!initialized) return '(uninit)';
 		if (data === null) return '0';
+		// Function pointer: show → funcName
+		if (isFunctionPointerType(type) && data !== 0) {
+			const target = this.env.getFunctionByIndex(data);
+			if (target) return `→ ${target.name}`;
+		}
 		if (isPointerType(type)) {
 			if (data === 0) return 'NULL';
 			return formatAddress(data);
+		}
+		// Float/double display with decimal precision
+		if (type.kind === 'primitive' && (type.name === 'float' || type.name === 'double')) {
+			return parseFloat(data.toFixed(6)).toString();
 		}
 		return String(data);
 	}

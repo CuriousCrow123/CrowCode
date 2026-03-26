@@ -4,7 +4,8 @@ export type CType =
 	| { kind: 'primitive'; name: 'int' | 'char' | 'short' | 'long' | 'float' | 'double' | 'void' }
 	| { kind: 'pointer'; pointsTo: CType }
 	| { kind: 'array'; elementType: CType; size: number }
-	| { kind: 'struct'; name: string; fields: Array<{ name: string; type: CType; offset: number }> };
+	| { kind: 'struct'; name: string; fields: Array<{ name: string; type: CType; offset: number }> }
+	| { kind: 'function'; returnType: CType; paramTypes: CType[] };
 
 // === Runtime Value ===
 
@@ -12,6 +13,7 @@ export type CValue = {
 	type: CType;
 	data: number | null;
 	address: number;
+	initialized?: boolean;
 };
 
 // === Child Specification (for emitter) ===
@@ -93,15 +95,25 @@ export type ASTNode =
 	| { type: 'conditional_expression'; condition: ASTNode; consequent: ASTNode; alternate: ASTNode; line: number }
 	| { type: 'init_list'; values: ASTNode[]; line: number }
 	| { type: 'null_literal'; line: number }
+	| { type: 'switch_statement'; expression: ASTNode; cases: ASTCaseClause[]; line: number }
 	| { type: 'break_statement'; line: number }
 	| { type: 'continue_statement'; line: number }
 	| { type: 'preproc_include'; line: number };
+
+export type ASTCaseClause = {
+	kind: 'case' | 'default';
+	value?: ASTNode;
+	statements: ASTNode[];
+	line: number;
+};
 
 export type CTypeSpec = {
 	base: string;
 	pointer: number;
 	array?: number;
+	arrays?: number[];
 	structName?: string;
+	functionParams?: CTypeSpec[];
 };
 
 export type ASTParam = {

@@ -59,12 +59,24 @@ export class TypeRegistry {
 			throw new Error(`Unknown type: ${spec.base}`);
 		}
 
-		if (spec.array !== undefined) {
+		if (spec.arrays !== undefined && spec.arrays.length > 0) {
+			// Multi-dimensional: build from innermost to outermost
+			// int arr[3][4] → arrays = [3, 4] → arrayType(arrayType(int, 4), 3)
+			for (let i = spec.arrays.length - 1; i >= 0; i--) {
+				base = { kind: 'array', elementType: base, size: spec.arrays[i] };
+			}
+		} else if (spec.array !== undefined) {
 			base = { kind: 'array', elementType: base, size: spec.array };
 		}
 
-		for (let i = 0; i < spec.pointer; i++) {
-			base = { kind: 'pointer', pointsTo: base };
+		// Function pointer: int (*fp)(int, int) → pointer(function(int, [int, int]))
+		if (spec.functionParams !== undefined) {
+			const paramTypes = spec.functionParams.map(p => this.resolve(p));
+			base = { kind: 'pointer', pointsTo: { kind: 'function', returnType: base, paramTypes } };
+		} else {
+			for (let i = 0; i < spec.pointer; i++) {
+				base = { kind: 'pointer', pointsTo: base };
+			}
 		}
 
 		return base;
@@ -88,6 +100,8 @@ export function sizeOf(type: CType): number {
 			const structAlign = alignOf(type);
 			return alignUp(rawSize, structAlign);
 		}
+		case 'function':
+			return POINTER_SIZE; // Function pointers are pointer-sized
 	}
 }
 
@@ -101,6 +115,8 @@ export function alignOf(type: CType): number {
 			return POINTER_SIZE;
 		case 'array':
 			return alignOf(type.elementType);
+		case 'function':
+			return POINTER_SIZE;
 		case 'struct': {
 			if (type.fields.length === 0) return 1;
 			return Math.max(...type.fields.map((f) => alignOf(f.type)));
@@ -139,6 +155,8 @@ export function typeToString(type: CType): string {
 			return `${typeToString(type.elementType)}[${type.size}]`;
 		case 'struct':
 			return `struct ${type.name}`;
+		case 'function':
+			return `${typeToString(type.returnType)} (*)(${type.paramTypes.map(typeToString).join(', ')})`;
 	}
 }
 
@@ -158,6 +176,18 @@ export function isStructType(type: CType): type is CType & { kind: 'struct' } {
 
 export function isArrayType(type: CType): type is CType & { kind: 'array' } {
 	return type.kind === 'array';
+}
+
+export function functionType(returnType: CType, paramTypes: CType[]): CType & { kind: 'function' } {
+	return { kind: 'function', returnType, paramTypes };
+}
+
+export function isFunctionType(type: CType): type is CType & { kind: 'function' } {
+	return type.kind === 'function';
+}
+
+export function isFunctionPointerType(type: CType): boolean {
+	return type.kind === 'pointer' && type.pointsTo.kind === 'function';
 }
 
 export { POINTER_SIZE };

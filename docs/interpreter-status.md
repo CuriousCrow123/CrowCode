@@ -1,7 +1,7 @@
 # C Interpreter — Feature Status
 
 Last updated: 2026-03-26
-Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
+Test suite: 603 passing, 0 skipped (603 total across 20 files)
 
 ## Fully Working
 
@@ -12,27 +12,32 @@ Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
 | `char` (8-bit signed) | Yes | Stored as numeric, sign-extended on cast |
 | `short` (16-bit signed) | Yes | Sign-extended on cast |
 | `long` (64-bit) | Partial | Parsed and sized (8 bytes) but treated as 32-bit in evaluator |
-| `float` / `double` | No | Types exist in registry but no FP arithmetic or display |
+| `float` / `double` | Yes | Arithmetic preserves decimal, type promotion (int+float→float), display with toFixed(6) |
 | `void` | Yes | 0-byte size, used for void* pointers |
 | Pointers (`int*`, `char*`, etc.) | Yes | 4-byte, hex display, pointer arithmetic scales by sizeof(*p) |
 | Arrays (`int[N]`) | Yes | Stack-allocated, indexed children, bounds checking |
+| Multi-dimensional arrays (`int[M][N]`) | Yes | Nested type, flattened [i][j] children, write via chained subscript, nested init_list |
 | Structs | Yes | Fields with offsets/padding, nested structs, init lists |
+| String literals (`char *s = "hello"`) | Yes | Heap-allocated char array with null terminator, individual char children |
+| Function pointers (`int (*fp)(int,int)`) | Yes | Declare, assign, call through pointer, display shows `→ funcName` |
 
 ### Operators
 | Feature | Tested | Notes |
 |---------|--------|-------|
-| Arithmetic: `+` `-` `*` `/` `%` | Yes | 32-bit, div-by-zero error, Math.imul |
+| Arithmetic: `+` `-` `*` `/` `%` | Yes | 32-bit int; float preserves decimal |
 | Comparison: `<` `>` `<=` `>=` `==` `!=` | Yes | Returns 0 or 1 |
 | Logical: `&&` `\|\|` `!` | Yes | Short-circuit evaluated |
 | Bitwise: `&` `\|` `^` `~` `<<` `>>` | Yes | 32-bit semantics |
 | Assignment: `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` | Yes | All compound ops |
+| Chained assignment: `a = b = c = 0` | Yes | Recursive executeAssignment emits ops for all variables |
 | Increment/Decrement: `++` `--` (pre/post) | Yes | On variables, array elements, pointer scaling |
 | Ternary: `? :` | Yes | Lazy evaluation |
 | Comma: `,` | Yes | Evaluates all, returns last |
-| sizeof | Yes | Types and expressions |
-| Cast: `(type)expr` | Yes | Truncation to target size (char, short, int) |
+| sizeof | Yes | Types and expressions (sizeof(2D array) returns full size) |
+| Cast: `(type)expr` | Yes | Truncation to target size; `(int)3.7` → 3, `(float)3` → 3.0 |
 | Address-of: `&` | Yes | Returns stack/heap address |
 | Dereference: `*` | Yes | Reads via memReader, null-pointer check |
+| Array-to-pointer decay | Yes | `int *p = arr` assigns base address; works in assignment, function args, arithmetic |
 
 ### Control Flow
 | Feature | Tested | Sub-steps | Notes |
@@ -41,8 +46,9 @@ Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
 | `for` (init; cond; update) | Yes | Yes — init, check, update sub-steps | Full column highlighting |
 | `while` | Yes | Yes — `"while: check <expr> → true"` | Condition sub-steps per iteration |
 | `do-while` | Yes | Yes — `"do-while: check <expr> → true"` | Condition after body |
-| `break` | Yes | — | Nested loops: exits inner only |
-| `continue` | Yes | — | Nested loops: skips inner only |
+| `switch` / `case` / `default` | Yes | — | Fall-through semantics, break exits switch only (not enclosing loop) |
+| `break` | Yes | — | Nested loops: exits inner only; in switch: exits switch only |
+| `continue` | Yes | — | Nested loops: skips inner only; in switch-in-loop: skips to next iteration |
 | `return` | Yes | — | From functions and loops, scope cleanup |
 
 ### Functions
@@ -50,6 +56,7 @@ Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
 |---------|--------|-------|
 | User-defined functions | Yes | Definition, call, return value |
 | Parameters (by value) | Yes | Scalars and struct-by-value copy |
+| Function pointers | Yes | `int (*fp)(int,int) = add; fp(3,4)` — declare, assign, reassign, call |
 | Recursion | Yes | factorial(5), fib(6), stack frame visualization |
 | Multiple return paths | Yes | Early return from loops, if/else branches |
 | Stack frame visualization | Yes | Frame appears on call, removed on return |
@@ -62,6 +69,7 @@ Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
 | `malloc(size)` | Yes | Infers array type when size > element (cap 32) |
 | `calloc(count, size)` | Yes | Zero-initialized, array type inferred |
 | `free(ptr)` | Yes | Marks freed, pointer shows "(dangling)" |
+| Cross-function free | Yes | `ptrTargetMap` tracks parameter names across function calls |
 | Leak detection | Yes | Unfreed blocks marked "leaked" at program end |
 | Double-free detection | Yes | Error reported |
 | Null pointer dereference | Yes | Error reported |
@@ -69,6 +77,8 @@ Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
 | Stack array bounds (write) | Yes | Error on index < 0 or >= size |
 | Heap array bounds (write) | Yes | "Heap buffer overflow" error |
 | Heap struct field access | Yes | Arrow operator, nested fields |
+| Use-after-free detection | Yes | Read/write through freed pointer produces error |
+| Uninitialized variable tracking | Yes | Shows `(uninit)` until first assignment |
 
 ### Standard Library
 | Function | Status | Notes |
@@ -81,6 +91,13 @@ Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
 | `puts(str)` | No-op | Step emitted |
 | `putchar(c)` | No-op | Recognized but ignored |
 | `fprintf(stream, fmt, ...)` | No-op | Recognized but ignored |
+| `strlen(s)` | Working | Walks char bytes from pointer address |
+| `strcpy(dst, src)` | Working | Copies bytes including null terminator |
+| `strcmp(a, b)` | Working | Returns -1, 0, or 1 |
+| `strcat(dst, src)` | Working | Appends src to end of dst |
+| `abs(x)` | Working | Returns absolute value as int |
+| `sqrt(x)` | Working | Returns double via Math.sqrt |
+| `pow(x, y)` | Working | Returns double via Math.pow |
 
 ### Visualization
 | Feature | Status | Notes |
@@ -88,7 +105,11 @@ Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
 | Stack variables with addresses | Working | Hex addresses, type display |
 | Struct children (fields) | Working | Nested display with dot-prefixed names |
 | Array children (elements) | Working | Indexed display, capped at 20 for display |
+| 2D array children | Working | Flattened `[i][j]` display names |
 | Heap blocks with metadata | Working | Address, type, size, status, alloc site |
+| String literal heap blocks | Working | Individual character children with null terminator |
+| Function pointer display | Working | Shows `→ funcName` |
+| Uninitialized variable display | Working | Shows `(uninit)` |
 | Scope entry/exit | Working | Block scopes `{ }`, for/while scopes |
 | Variable shadowing | Working | Inner scope variable separate from outer |
 | Step descriptions | Working | Computed values, operator text, condition results |
@@ -100,20 +121,15 @@ Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
 
 | Feature | What works | What doesn't | Difficulty to fix |
 |---------|-----------|--------------|-------------------|
-| **Strings** | `sprintf(buf, "text")` displays as heap value | `char *s = "hello"` evaluates to 0; no string array representation | Medium |
-| **Float/double** | Types parsed, sizeof correct | No arithmetic, no display formatting | Medium |
 | **Empty loop bodies** | Doesn't crash, loop variable advances correctly | May produce interpreter errors internally but program completes | Low |
-| **Cross-function free** | Doesn't crash | `free()` inside called function may not resolve heap block ID | Medium |
 | **Preprocessor** | `#include` ignored gracefully | `#define`, `#ifdef`, etc. ignored with warning | N/A (by design) |
+| **3D+ arrays** | Type system supports nesting | Only 2D write/init tested; 3D untested | Medium |
 
 ---
 
 ## Not Working (Known Bugs)
 
-| Bug | Test status | Root cause | Difficulty |
-|-----|-----------|-----------|-----------|
-| **Chained assignment** `a = b = c = 0` | `test.fails` | Evaluator only processes outermost assignment; inner assignments treated as expressions returning value but not executing side effects through interpreter | Medium |
-| **Struct-pointer-chain bounds check** `p->scores[10]` | `it.skip` | Can't resolve heap block through multi-level pointer to check array bounds | Hard |
+None. All previously known bugs have been fixed.
 
 ---
 
@@ -122,29 +138,23 @@ Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
 ### Language Features
 | Feature | Parser | Interpreter | Evaluator | Notes |
 |---------|--------|------------|-----------|-------|
-| `switch` / `case` / `default` | No | No | No | Not in convertStatementNode |
 | `enum` | No | No | No | Not in parser |
 | `union` | No | No | No | Not in parser |
 | `typedef` | Warned | No | No | Parser warns "not supported" |
 | `goto` / labels | No | No | No | Not in parser |
-| Function pointers | Partial | No | No | Parsed as pointers but not callable |
 | `static` / `extern` / `const` | No | No | No | Qualifiers ignored |
 | Variable-length arrays | No | No | No | `int arr[n]` not supported |
-| Multi-dimensional arrays | No | No | No | `int arr[3][4]` not tested |
 | Bit-fields | No | No | No | `int x:4` not parsed |
 | `#define` macros | Warned | No | No | Preprocessor directives ignored |
-| Array-to-pointer decay | No | No | No | `int *p = arr` doesn't work |
 | Designated initializers | No | No | No | `.field = val` syntax |
 | Variadic functions | No | No | No | `...` not supported |
 | Inline assembly | No | No | No | N/A |
+| `(*fp)(args)` dereference call syntax | No | No | No | `fp(args)` works; explicit dereference not parsed |
+| Function pointers in structs | No | No | No | `struct { int (*cb)(int); }` not supported |
 
 ### Runtime Features
 | Feature | Notes |
 |---------|-------|
-| Uninitialized read detection (MSan) | Variables default to 0 silently |
-| Use-after-free detection | Value still readable after free |
-| String manipulation (`strlen`, `strcpy`, `strcmp`) | Not implemented |
-| Math functions (`abs`, `sqrt`, `pow`) | Not implemented |
 | File I/O (`fopen`, `fread`, `fwrite`) | Not applicable |
 
 ---
@@ -171,7 +181,7 @@ Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
 
 | Test file | Tests | Focus |
 |-----------|-------|-------|
-| `value-correctness.test.ts` | ~130 | Value assertions across all features (includes it.each expanding to 10) |
+| `value-correctness.test.ts` | ~170 | Value assertions across all features |
 | `manual-programs.test.ts` | 60 | Full-program integration (38 programs) |
 | `interpreter.test.ts` | 35 | Statement handling, stdlib, validation |
 | `evaluator.test.ts` | 60 | Expression evaluation, operators |
@@ -181,4 +191,4 @@ Test suite: 560 passing, 1 expected-fail, 1 skipped (562 total across 20 files)
 | `emitter.test.ts` | 34 | Op emission, ID generation, path resolution |
 | `worker.test.ts` | 6 | Worker message contract |
 | Other (engine, programs, summary) | ~143 | Snapshot building, validation, programs |
-| **Total** | **562** | 560 passed, 1 expected-fail, 1 skipped |
+| **Total** | **603** | 603 passed, 0 skipped |

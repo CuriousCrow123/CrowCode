@@ -528,6 +528,196 @@ int main() {
     return 0;
 }`,
 	},
+
+	// Category 13: New Features
+	{
+		id: 'p13.1', category: 'New Features', name: 'Switch / Case',
+		source: `#include <stdio.h>
+
+int main() {
+    int day = 3;
+    int type = 0;
+
+    switch (day) {
+        case 1:
+        case 2:
+        case 3:
+        case 4:
+        case 5:
+            type = 1;  // weekday
+            break;
+        case 6:
+        case 7:
+            type = 2;  // weekend
+            break;
+        default:
+            type = 0;  // invalid
+    }
+    // expect: type = 1
+    return 0;
+}`,
+	},
+	{
+		id: 'p13.2', category: 'New Features', name: 'String Literal',
+		source: `#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    char *greeting = "hello";
+    char *name = "world";
+    // greeting and name are heap-allocated char arrays
+    // Each shows individual character values
+    return 0;
+}`,
+	},
+	{
+		id: 'p13.3', category: 'New Features', name: 'Float Arithmetic',
+		source: `#include <stdio.h>
+
+int main() {
+    float pi = 3.14159;
+    float r = 5.0;
+    float area = pi * r * r;
+    // expect: area ≈ 78.53975
+
+    int truncated = (int)area;
+    // expect: truncated = 78
+
+    float half = 1.0 / 2.0;
+    // expect: half = 0.5
+
+    return 0;
+}`,
+	},
+	{
+		id: 'p13.4', category: 'New Features', name: 'Uninitialized Variable',
+		source: `#include <stdio.h>
+
+int main() {
+    int x;          // shows (uninit)
+    int y = 10;     // shows 10
+
+    x = y + 5;      // now x = 15
+    int z = x * 2;  // z = 30
+
+    return 0;
+}`,
+	},
+	{
+		id: 'p13.5', category: 'New Features', name: 'Chained Assignment',
+		source: `#include <stdio.h>
+
+int main() {
+    int a = 0;
+    int b = 0;
+    int c = 0;
+
+    a = b = c = 42;
+    // expect: a = 42, b = 42, c = 42
+
+    a = b = c + 8;
+    // expect: a = 50, b = 50, c = 42
+
+    return 0;
+}`,
+	},
+	{
+		id: 'p13.6', category: 'New Features', name: 'Function Pointer',
+		source: `#include <stdio.h>
+
+int add(int a, int b) { return a + b; }
+int sub(int a, int b) { return a - b; }
+
+int main() {
+    int (*fp)(int, int) = add;
+    int a = fp(10, 3);   // expect: 13
+
+    fp = sub;
+    int b = fp(10, 3);   // expect: 7
+
+    return 0;
+}`,
+	},
+	{
+		id: 'p13.7', category: 'New Features', name: '2D Array',
+		source: `#include <stdio.h>
+
+int main() {
+    int m[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+
+    // Identity matrix — set diagonal
+    int trace = 0;
+    for (int i = 0; i < 3; i++) {
+        trace += m[i][i];
+    }
+    // expect: trace = 3
+
+    m[1][2] = 5;
+    m[2][0] = 7;
+    return 0;
+}`,
+	},
+	{
+		id: 'p13.8', category: 'New Features', name: 'Array-to-Pointer Decay',
+		source: `#include <stdio.h>
+
+int main() {
+    int arr[4] = {10, 20, 30, 40};
+    int *p = arr;       // decay: p points to arr[0]
+
+    int first = *p;     // 10
+    int third = *(p + 2); // 30
+
+    return 0;
+}`,
+	},
+
+	// Category 14: Runtime Safety + Stdlib
+	{
+		id: 'p14.1', category: 'Runtime Safety', name: 'Use-After-Free',
+		source: `#include <stdlib.h>
+
+int main() {
+    int *p = malloc(sizeof(int));
+    *p = 42;
+    free(p);
+    int x = *p;  // Use-after-free error!
+    return 0;
+}`,
+	},
+	{
+		id: 'p14.2', category: 'Runtime Safety', name: 'String Functions',
+		source: `#include <string.h>
+#include <stdlib.h>
+
+int main() {
+    char *s = "hello";
+    int len = strlen(s);
+
+    char *a = "abc";
+    char *b = "abd";
+    int cmp = strcmp(a, b);
+
+    char *dst = malloc(8);
+    strcpy(dst, s);
+    int len2 = strlen(dst);
+
+    free(dst);
+    return 0;
+}`,
+	},
+	{
+		id: 'p14.3', category: 'Runtime Safety', name: 'Math Functions',
+		source: `#include <math.h>
+#include <stdlib.h>
+
+int main() {
+    int a = abs(-7);
+    float s = sqrt(25.0);
+    float p = pow(2.0, 10.0);
+    return 0;
+}`,
+	},
 ];
 
 /** Get unique categories in order of appearance. */

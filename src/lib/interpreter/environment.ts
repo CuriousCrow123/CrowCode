@@ -7,6 +7,9 @@ const HEAP_BASE = 0x55A00000;
 export class Environment {
 	private scopes: Scope[] = [];
 	private functions = new Map<string, ASTNode & { type: 'function_definition' }>();
+	private functionIndices = new Map<string, number>();
+	private indexToFunction = new Map<number, string>();
+	private nextFunctionIndex = 1; // 0 = NULL
 	private heapBlocks = new Map<number, HeapBlock>();
 	private stackPointer = STACK_BASE;
 	private heapPointer = HEAP_BASE;
@@ -49,7 +52,7 @@ export class Environment {
 		this.stackPointer = alignDown(this.stackPointer - size, alignment);
 		const address = this.stackPointer;
 
-		const value: CValue = { type, data: data ?? defaultValue(type), address };
+		const value: CValue = { type, data: data ?? defaultValue(type), address, initialized: data !== null };
 		scope.symbols.set(name, value);
 		return value;
 	}
@@ -67,6 +70,7 @@ export class Environment {
 			const value = this.scopes[i].symbols.get(name);
 			if (value !== undefined) {
 				value.data = data;
+				value.initialized = true;
 				return;
 			}
 		}
@@ -77,10 +81,25 @@ export class Environment {
 
 	defineFunction(name: string, node: ASTNode & { type: 'function_definition' }): void {
 		this.functions.set(name, node);
+		const idx = this.nextFunctionIndex++;
+		this.functionIndices.set(name, idx);
+		this.indexToFunction.set(idx, name);
 	}
 
 	getFunction(name: string): (ASTNode & { type: 'function_definition' }) | undefined {
 		return this.functions.get(name);
+	}
+
+	getFunctionIndex(name: string): number {
+		return this.functionIndices.get(name) ?? 0;
+	}
+
+	getFunctionByIndex(index: number): { name: string; node: ASTNode & { type: 'function_definition' } } | undefined {
+		const name = this.indexToFunction.get(index);
+		if (!name) return undefined;
+		const node = this.functions.get(name);
+		if (!node) return undefined;
+		return { name, node };
 	}
 
 	// === Heap management ===

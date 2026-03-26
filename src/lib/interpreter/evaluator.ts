@@ -40,6 +40,10 @@ export class Evaluator {
 	eval(node: ASTNode): EvalResult {
 		switch (node.type) {
 			case 'number_literal':
+				// Detect float literals (has fractional part)
+				if (!Number.isInteger(node.value)) {
+					return this.ok(node.value, primitiveType('double'));
+				}
 				return this.ok(node.value);
 
 			case 'char_literal':
@@ -99,6 +103,10 @@ export class Evaluator {
 
 	// === Helpers ===
 
+	private static isFloat(type: CType): boolean {
+		return type.kind === 'primitive' && (type.name === 'float' || type.name === 'double');
+	}
+
 	private ok(data: number | null, type?: CType): EvalResult {
 		return {
 			value: {
@@ -122,6 +130,18 @@ export class Evaluator {
 		const v = this.env.lookupVariable(name);
 		if (!v) return this.err(`Undefined variable '${name}' at line ${line}`);
 		return { value: v };
+	}
+
+	/** Decay an array value to a pointer to its first element */
+	static decayArrayToPointer(value: CValue): CValue {
+		if (isArrayType(value.type)) {
+			return {
+				type: pointerType(value.type.elementType),
+				data: value.address,
+				address: value.address,
+			};
+		}
+		return value;
 	}
 
 	// === Binary ===
@@ -150,28 +170,45 @@ export class Evaluator {
 		const right = this.eval(node.right);
 		if (right.error) return right;
 
-		const l = left.value.data ?? 0;
-		const r = right.value.data ?? 0;
+		// Array-to-pointer decay for binary operations (e.g., arr + 1)
+		const leftVal = Evaluator.decayArrayToPointer(left.value);
+		const rightVal = Evaluator.decayArrayToPointer(right.value);
+
+		const l = leftVal.data ?? 0;
+		const r = rightVal.data ?? 0;
 
 		// Pointer arithmetic
-		if (isPointerType(left.value.type) && !isPointerType(right.value.type)) {
+		if (isPointerType(leftVal.type) && !isPointerType(rightVal.type)) {
 			if (node.operator === '+') {
-				const elemSize = sizeOf(left.value.type.pointsTo);
-				return this.ok(l + r * elemSize, left.value.type);
+				const elemSize = sizeOf(leftVal.type.pointsTo);
+				return this.ok(l + r * elemSize, leftVal.type);
 			}
 			if (node.operator === '-') {
-				const elemSize = sizeOf(left.value.type.pointsTo);
-				return this.ok(l - r * elemSize, left.value.type);
+				const elemSize = sizeOf(leftVal.type.pointsTo);
+				return this.ok(l - r * elemSize, leftVal.type);
+			}
+		}
+
+		// Float type promotion
+		const isFloat = Evaluator.isFloat(leftVal.type) || Evaluator.isFloat(rightVal.type);
+		let promotedType: CType | undefined;
+		if (isFloat) {
+			if (Evaluator.isFloat(leftVal.type) && Evaluator.isFloat(rightVal.type)) {
+				promotedType = (leftVal.type.kind === 'primitive' && leftVal.type.name === 'double') ||
+					(rightVal.type.kind === 'primitive' && rightVal.type.name === 'double')
+					? primitiveType('double') : primitiveType('float');
+			} else {
+				promotedType = Evaluator.isFloat(leftVal.type) ? leftVal.type : rightVal.type;
 			}
 		}
 
 		switch (node.operator) {
-			case '+': return this.ok(toInt32(l + r));
-			case '-': return this.ok(toInt32(l - r));
-			case '*': return this.ok(toInt32(Math.imul(l, r)));
+			case '+': return this.ok(isFloat ? l + r : toInt32(l + r), promotedType);
+			case '-': return this.ok(isFloat ? l - r : toInt32(l - r), promotedType);
+			case '*': return this.ok(isFloat ? l * r : toInt32(Math.imul(l, r)), promotedType);
 			case '/':
 				if (r === 0) return this.err(`Division by zero at line ${node.line}`);
-				return this.ok(toInt32(Math.trunc(l / r)));
+				return this.ok(isFloat ? l / r : toInt32(Math.trunc(l / r)), promotedType);
 			case '%':
 				if (r === 0) return this.err(`Division by zero at line ${node.line}`);
 				return this.ok(toInt32(l % r));
@@ -265,7 +302,12 @@ export class Evaluator {
 			const existing = this.env.lookupVariable(node.target.name);
 			if (!existing) return this.err(`Undefined variable '${node.target.name}'`);
 
-			let newVal = right.value.data ?? 0;
+			// Array-to-pointer decay: int *p = arr
+			const assignValue = (node.operator === '=' && isPointerType(existing.type))
+				? Evaluator.decayArrayToPointer(right.value)
+				: right.value;
+
+			let newVal = assignValue.data ?? 0;
 			const oldVal = existing.data ?? 0;
 
 			switch (node.operator) {
@@ -403,12 +445,18 @@ export class Evaluator {
 
 		const targetType = this.typeReg.resolve(node.targetType);
 		let data = result.value.data;
-		// Narrow numeric value to target type size
+		// Cast to target type
 		if (data !== null && targetType.kind === 'primitive') {
-			const size = sizeOf(targetType);
-			if (size === 1) data = (data << 24) >> 24;       // char: sign-extend 8-bit
-			else if (size === 2) data = (data << 16) >> 16;   // short: sign-extend 16-bit
-			else if (size <= 4) data = data | 0;              // int: toInt32
+			if (Evaluator.isFloat(targetType)) {
+				// Cast to float/double: preserve value
+			} else {
+				// Cast to integer: truncate float first, then narrow
+				if (Evaluator.isFloat(result.value.type)) data = Math.trunc(data);
+				const size = sizeOf(targetType);
+				if (size === 1) data = (data << 24) >> 24;       // char: sign-extend 8-bit
+				else if (size === 2) data = (data << 16) >> 16;   // short: sign-extend 16-bit
+				else if (size <= 4) data = data | 0;              // int: toInt32
+			}
 		}
 		return {
 			value: {
@@ -427,6 +475,11 @@ export class Evaluator {
 	}
 
 	private evalSizeofExpr(node: ASTNode & { type: 'sizeof_expr' }): EvalResult {
+		// sizeof(arr) must return full array size, not decayed pointer size
+		if (node.value.type === 'identifier') {
+			const v = this.env.lookupVariable(node.value.name);
+			if (v) return this.ok(sizeOf(v.type));
+		}
 		const result = this.eval(node.value);
 		if (result.error) return result;
 		return this.ok(sizeOf(result.value.type));

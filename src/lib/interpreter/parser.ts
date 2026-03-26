@@ -1,5 +1,5 @@
 import type { Node, Parser as ParserType } from 'web-tree-sitter';
-import type { ASTNode, CTypeSpec, ASTParam, ASTStructField } from './types';
+import type { ASTNode, ASTCaseClause, CTypeSpec, ASTParam, ASTStructField } from './types';
 
 let cachedParser: ParserType | null = null;
 
@@ -110,6 +110,8 @@ function convertNode(node: Node, errors: string[]): ASTNode | null {
 			return convertWhile(node, errors);
 		case 'do_statement':
 			return convertDoWhile(node, errors);
+		case 'switch_statement':
+			return convertSwitch(node, errors);
 		case 'break_statement':
 			return { type: 'break_statement', line: line(node) };
 		case 'continue_statement':
@@ -169,18 +171,59 @@ function parseDeclarator(node: Node, baseSpec: CTypeSpec, errors: string[]): { n
 		current = current.childForFieldName('declarator')!;
 	}
 
-	// Handle array declarator
+	// Handle array declarator(s) — supports multi-dimensional: int arr[3][4]
 	if (current.type === 'array_declarator') {
-		const declNode = current.childForFieldName('declarator')!;
-		const sizeNode = current.childForFieldName('size');
-		const arraySize = sizeNode ? parseInt(sizeNode.text) : 0;
-		spec = { ...spec, array: arraySize };
-		return { name: declNode.text, typeSpec: spec };
+		const arraySizes: number[] = [];
+		while (current.type === 'array_declarator') {
+			const sizeNode = current.childForFieldName('size');
+			const arraySize = sizeNode ? parseInt(sizeNode.text) : 0;
+			if (isNaN(arraySize)) {
+				errors.push(`Variable-length arrays are not supported (line ${line(current)}). Use a constant size like int arr[5].`);
+				arraySizes.unshift(0);
+			} else {
+				arraySizes.unshift(arraySize);
+			}
+			current = current.childForFieldName('declarator')!;
+		}
+		// arraySizes is [3, 4] for int arr[3][4]
+		if (arraySizes.length === 1) {
+			spec = { ...spec, array: arraySizes[0] };
+		} else {
+			spec = { ...spec, arrays: arraySizes };
+		}
+		return { name: current.text, typeSpec: spec };
 	}
 
-	// Handle function declarator (for function pointer params we skip)
+	// Handle function declarator: int (*fp)(int, int) or function parameters
 	if (current.type === 'function_declarator') {
-		return { name: current.childForFieldName('declarator')?.text ?? '', typeSpec: spec };
+		const innerDecl = current.childForFieldName('declarator');
+		// Check for function pointer pattern: function_declarator → parenthesized_declarator → pointer_declarator → identifier
+		if (innerDecl?.type === 'parenthesized_declarator') {
+			let ptrNode = innerDecl.child(1); // skip '('
+			if (ptrNode?.type === 'pointer_declarator') {
+				const nameNode = ptrNode.childForFieldName('declarator');
+				const name = nameNode?.text ?? '';
+
+				// Extract parameter types from the function_declarator's parameter_list
+				const paramsNode = current.childForFieldName('parameters');
+				const paramTypes: CTypeSpec[] = [];
+				if (paramsNode) {
+					for (let i = 0; i < paramsNode.childCount; i++) {
+						const paramChild = paramsNode.child(i)!;
+						if (paramChild.type === 'parameter_declaration') {
+							const typeNode = paramChild.childForFieldName('type');
+							if (typeNode) {
+								paramTypes.push(parseTypeSpec(typeNode, errors));
+							}
+						}
+					}
+				}
+
+				return { name, typeSpec: { ...spec, functionParams: paramTypes } };
+			}
+		}
+		// Regular function declarator (for function definition params) — just extract name
+		return { name: innerDecl?.text ?? '', typeSpec: spec };
 	}
 
 	return { name: current.text, typeSpec: spec };
@@ -338,6 +381,8 @@ function convertStatementNode(node: Node, errors: string[]): ASTNode | null {
 			return convertWhile(node, errors);
 		case 'do_statement':
 			return convertDoWhile(node, errors);
+		case 'switch_statement':
+			return convertSwitch(node, errors);
 		case 'compound_statement':
 			return convertCompound(node, errors);
 		case 'break_statement':
@@ -462,6 +507,42 @@ function convertDoWhile(node: Node, errors: string[]): ASTNode {
 	result.condColStart = condNode.startPosition.column;
 	result.condColEnd = condNode.endPosition.column;
 	return result;
+}
+
+function convertSwitch(node: Node, errors: string[]): ASTNode {
+	const condNode = node.childForFieldName('condition')!;
+	const condition = convertExpression(condNode, errors)!;
+	const body = node.childForFieldName('body')!;
+
+	const cases: ASTCaseClause[] = [];
+
+	for (let i = 0; i < body.childCount; i++) {
+		const child = body.child(i)!;
+		if (child.type === 'case_statement') {
+			const valueNode = child.childForFieldName('value');
+			const value = valueNode ? convertExpression(valueNode, errors) : undefined;
+			const isDefault = !valueNode;
+
+			const statements: ASTNode[] = [];
+			let afterColon = false;
+			for (let j = 0; j < child.childCount; j++) {
+				const stmtNode = child.child(j)!;
+				if (stmtNode.type === ':') { afterColon = true; continue; }
+				if (!afterColon) continue;
+				const stmt = convertNode(stmtNode, errors) ?? convertStatementNode(stmtNode, errors);
+				if (stmt) statements.push(stmt);
+			}
+
+			cases.push({
+				kind: isDefault ? 'default' : 'case',
+				value: value ?? undefined,
+				statements,
+				line: line(child),
+			});
+		}
+	}
+
+	return { type: 'switch_statement', expression: condition, cases, line: line(node) };
 }
 
 // === Expressions ===

@@ -134,12 +134,12 @@ describe('scalar variable values', () => {
 		expect(findEntry(last, 'c')?.value).toBe('65');
 	});
 
-	it('uninitialized variable shows 0', () => {
+	it('uninitialized variable shows (uninit) then value after assignment', () => {
 		const { snapshots } = interpretAndBuild('int main() { int x; x = 5; return 0; }');
 		// Find the snapshot right after declaration (before assignment)
 		const declSnap = snapshots.find((s) => findEntry(s, 'x'));
 		expect(declSnap).toBeDefined();
-		expect(findEntry(declSnap!, 'x')?.value).toBe('0');
+		expect(findEntry(declSnap!, 'x')?.value).toBe('(uninit)');
 		// After assignment
 		const last = snapshots[snapshots.length - 1];
 		expect(findEntry(last, 'x')?.value).toBe('5');
@@ -992,8 +992,8 @@ describe('bounds checking', () => {
 		expectValid(program);
 	});
 
-	it.skip('detects heap buffer overflow through struct pointer', () => {
-		const src = `
+	it('detects heap buffer overflow through struct pointer', () => {
+		const src = `#include <stdlib.h>
 struct Player { int id; int *scores; };
 int main() {
 	struct Player *p = malloc(sizeof(struct Player));
@@ -1022,9 +1022,7 @@ describe('error reporting', () => {
 });
 
 describe('previously planned spec constructs', () => {
-	test.fails('chained assignment a = b = c = 0 sets all three (not yet supported)', () => {
-		// Chained assignment parses as a = (b = (c = 0))
-		// Currently only the outermost assignment runs
+	it('chained assignment a = b = c = 0 sets all three', () => {
 		const { snapshots } = interpretAndBuild(`int main() {
 	int a = 1; int b = 2; int c = 3;
 	a = b = c = 0;
@@ -1034,6 +1032,374 @@ describe('previously planned spec constructs', () => {
 		expect(findEntry(last, 'a')?.value).toBe('0');
 		expect(findEntry(last, 'b')?.value).toBe('0');
 		expect(findEntry(last, 'c')?.value).toBe('0');
+	});
+
+	it('chained assignment a = b = expr evaluates correctly', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int a = 0; int b = 0;
+	a = b = 3 + 4;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('7');
+		expect(findEntry(last, 'b')?.value).toBe('7');
+	});
+
+	it('chained assignment updates all variables in snapshots', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int a = 1; int b = 2; int c = 3;
+	a = b = c = 5;
+	return 0;
+}`);
+		// After the chained assignment, all three should be 5
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('5');
+		expect(findEntry(last, 'b')?.value).toBe('5');
+		expect(findEntry(last, 'c')?.value).toBe('5');
+	});
+
+	it('array-to-pointer decay: int *p = arr assigns base address', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int arr[3] = {10, 20, 30};
+	int *p = arr;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		const arrEntry = findEntry(last, 'arr');
+		const pEntry = findEntry(last, 'p');
+		// p should hold arr's address
+		expect(pEntry?.value).toBe(arrEntry?.address);
+	});
+
+	it('array-to-pointer decay: pointer arithmetic after decay', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int arr[3] = {10, 20, 30};
+	int *p = arr;
+	int x = *(p + 1);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		// *(p + 1) should read arr[1] = 20 through pointer arithmetic
+		expect(findEntry(last, 'x')?.value).toBe('20');
+	});
+
+	it('array subscript still works with bounds checking', () => {
+		// Array subscript should still work normally (not decayed)
+		const { snapshots } = interpretAndBuild(`int main() {
+	int arr[3] = {10, 20, 30};
+	int x = arr[2];
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('30');
+	});
+
+	it('string literal assigns heap address to pointer', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *s = "hi";
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		// s should be a pointer (hex address, not '0' or 'NULL')
+		const sEntry = findEntry(last, 's');
+		expect(sEntry?.value).not.toBe('0');
+		expect(sEntry?.value).not.toBe('NULL');
+		expect(sEntry?.value?.startsWith('0x')).toBe(true);
+	});
+
+	it('two identical string literals get separate allocations', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *a = "hi";
+	char *b = "hi";
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		const aVal = findEntry(last, 'a')?.value;
+		const bVal = findEntry(last, 'b')?.value;
+		// Both should be hex addresses
+		expect(aVal?.startsWith('0x')).toBe(true);
+		expect(bVal?.startsWith('0x')).toBe(true);
+		// But different addresses (no string interning)
+		expect(aVal).not.toBe(bVal);
+	});
+
+	it('switch takes correct case branch', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 2;
+	int r = 0;
+	switch (x) {
+		case 1: r = 10; break;
+		case 2: r = 20; break;
+		case 3: r = 30; break;
+	}
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'r')?.value).toBe('20');
+	});
+
+	it('switch default taken when no case matches', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 99;
+	int r = 0;
+	switch (x) {
+		case 1: r = 10; break;
+		default: r = 42; break;
+	}
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'r')?.value).toBe('42');
+	});
+
+	it('switch fall-through without break', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 1;
+	int r = 0;
+	switch (x) {
+		case 1: r += 10;
+		case 2: r += 20; break;
+		case 3: r += 30; break;
+	}
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		// Fall-through: case 1 (r=10) then case 2 (r=30), break
+		expect(findEntry(last, 'r')?.value).toBe('30');
+	});
+
+	it('switch no match no default skips body', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 99;
+	int r = 5;
+	switch (x) {
+		case 1: r = 10; break;
+		case 2: r = 20; break;
+	}
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'r')?.value).toBe('5');
+	});
+
+	it('switch break does not exit enclosing loop', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int count = 0;
+	for (int i = 0; i < 3; i++) {
+		switch (i) {
+			case 1: break;
+		}
+		count++;
+	}
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		// break inside switch exits switch only, loop continues: count = 3
+		expect(findEntry(last, 'count')?.value).toBe('3');
+	});
+
+	it('uninitialized variable shows (uninit)', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('(uninit)');
+	});
+
+	it('uninitialized variable becomes initialized after assignment', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x;
+	x = 42;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('42');
+	});
+
+	it('initialized variable does not show (uninit)', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 10;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('10');
+	});
+
+	it('float arithmetic preserves decimal', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = 3.14;
+	float y = x * 2.0;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('3.14');
+		expect(findEntry(last, 'y')?.value).toBe('6.28');
+	});
+
+	it('int division still truncates', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 7 / 2;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('3');
+	});
+
+	it('float cast to int truncates', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int z = (int)3.7;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'z')?.value).toBe('3');
+	});
+
+	it('2D array write and read via chained subscript', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int m[2][3];
+	m[0][2] = 3;
+	m[1][0] = 4;
+	m[1][2] = 6;
+	int a = m[0][2];
+	int b = m[1][0];
+	int c = m[1][2];
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('3');
+		expect(findEntry(last, 'b')?.value).toBe('4');
+		expect(findEntry(last, 'c')?.value).toBe('6');
+	});
+
+	it('2D array initialized with nested init_list', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int m[2][3] = {{1, 2, 3}, {4, 5, 6}};
+	int a = m[0][1];
+	int b = m[1][2];
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('2');
+		expect(findEntry(last, 'b')?.value).toBe('6');
+	});
+
+	it('2D array in nested loop', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int m[2][3];
+	for (int i = 0; i < 2; i++) {
+		for (int j = 0; j < 3; j++) {
+			m[i][j] = i * 10 + j;
+		}
+	}
+	int x = m[1][2];
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('12');
+	});
+
+	it('2D array outer index out of bounds', () => {
+		const { errors } = run(`int main() {
+	int m[2][3];
+	m[2][0] = 1;
+	return 0;
+}`);
+		expect(errors.some(e => e.includes('out of bounds'))).toBe(true);
+	});
+
+	it('1D array still works after multi-dim changes', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int arr[3] = {10, 20, 30};
+	arr[1] = 99;
+	int x = arr[1];
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('99');
+	});
+
+	it('cross-function free does not crash', () => {
+		// Cross-function free: cleanup() calls free(p) where p is a parameter
+		// The ptrTargetMap registration allows the emitter to find the heap block
+		const { program, errors } = run(`#include <stdlib.h>
+
+void cleanup(int *p) {
+	free(p);
+}
+
+int main() {
+	int *data = malloc(sizeof(int));
+	*data = 42;
+	cleanup(data);
+	return 0;
+}`);
+		// Should complete without crashing; may have display warning but program runs
+		expect(program.steps.length).toBeGreaterThan(0);
+		// No "Cannot find heap block" error from emitter
+		const heapErrors = errors.filter(e => e.includes('Cannot find heap block'));
+		expect(heapErrors.length).toBe(0);
+	});
+
+	it('function pointer basic call', () => {
+		const { snapshots } = interpretAndBuild(`
+int add(int a, int b) { return a + b; }
+int main() {
+	int (*fp)(int, int) = add;
+	int x = fp(3, 4);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('7');
+	});
+
+	it('function pointer reassignment', () => {
+		const { snapshots } = interpretAndBuild(`
+int add(int a, int b) { return a + b; }
+int sub(int a, int b) { return a - b; }
+int main() {
+	int (*fp)(int, int) = add;
+	int a = fp(10, 3);
+	fp = sub;
+	int b = fp(10, 3);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('13');
+		expect(findEntry(last, 'b')?.value).toBe('7');
+	});
+
+	it('function pointer display shows arrow funcName', () => {
+		const { snapshots } = interpretAndBuild(`
+int add(int a, int b) { return a + b; }
+int main() {
+	int (*fp)(int, int) = add;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'fp')?.value).toBe('→ add');
+	});
+
+	it('null function pointer call produces error', () => {
+		const { errors } = run(`
+int add(int a, int b) { return a + b; }
+int main() {
+	int (*fp)(int, int) = 0;
+	int x = fp(3, 4);
+	return 0;
+}`);
+		expect(errors.some(e => e.toLowerCase().includes('null') || e.includes('function pointer'))).toBe(true);
+	});
+
+	it('direct function calls still work with function pointers present', () => {
+		const { snapshots } = interpretAndBuild(`
+int add(int a, int b) { return a + b; }
+int main() {
+	int x = add(3, 4);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('7');
 	});
 
 	it('short-circuit && skips right side when left is false', () => {
@@ -1767,5 +2133,145 @@ int main() {
 		const { snapshots } = buildBasics();
 		const last = snapshots[snapshots.length - 1];
 		expect(findEntry(last, 'p')?.value).toBe('(dangling)');
+	});
+});
+
+// === Use-after-free detection ===
+
+describe('use-after-free detection', () => {
+	it('read through freed pointer produces error', () => {
+		const { errors } = run(`int main() {
+	int *p = malloc(sizeof(int));
+	*p = 42;
+	free(p);
+	int x = *p;
+	return 0;
+}`);
+		expect(errors.some(e => e.includes('Use-after-free') || e.includes('freed'))).toBe(true);
+	});
+
+	it('write through freed pointer produces error', () => {
+		const { errors } = run(`int main() {
+	int *p = malloc(sizeof(int));
+	free(p);
+	*p = 99;
+	return 0;
+}`);
+		expect(errors.some(e => e.includes('Use-after-free') || e.includes('freed'))).toBe(true);
+	});
+
+	it('array access after free produces error', () => {
+		const { errors } = run(`int main() {
+	int *arr = calloc(3, sizeof(int));
+	arr[0] = 10;
+	free(arr);
+	int x = arr[0];
+	return 0;
+}`);
+		expect(errors.some(e => e.includes('Use-after-free') || e.includes('freed'))).toBe(true);
+	});
+
+	it('reading through non-freed pointer works normally', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int *p = malloc(sizeof(int));
+	*p = 42;
+	int x = *p;
+	free(p);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('42');
+	});
+});
+
+// === String functions ===
+
+describe('string functions', () => {
+	it('strlen returns correct length', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *s = "hello";
+	int len = strlen(s);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'len')?.value).toBe('5');
+	});
+
+	it('strlen of empty string returns 0', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *s = "";
+	int len = strlen(s);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'len')?.value).toBe('0');
+	});
+
+	it('strcmp returns 0 for equal strings', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *a = "hello";
+	char *b = "hello";
+	int cmp = strcmp(a, b);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'cmp')?.value).toBe('0');
+	});
+
+	it('strcmp returns nonzero for different strings', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *a = "abc";
+	char *b = "abd";
+	int cmp = strcmp(a, b);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		const val = parseInt(findEntry(last, 'cmp')?.value ?? '0');
+		expect(val).toBeLessThan(0);
+	});
+
+	it('strcpy copies string to destination', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *src = "hi";
+	char *dst = malloc(8);
+	strcpy(dst, src);
+	int len = strlen(dst);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'len')?.value).toBe('2');
+	});
+});
+
+// === Math functions ===
+
+describe('math functions', () => {
+	it('abs returns absolute value', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int a = abs(-7);
+	int b = abs(5);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('7');
+		expect(findEntry(last, 'b')?.value).toBe('5');
+	});
+
+	it('sqrt returns correct value', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = sqrt(25.0);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('5');
+	});
+
+	it('pow returns correct value', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = pow(2.0, 10.0);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('1024');
 	});
 });

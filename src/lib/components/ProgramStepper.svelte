@@ -13,15 +13,12 @@
 
 	// Navigation state
 	let internalIndex = $state(0);
-	let playing = $state(false);
-	let speed = $state(1000);
 	let subStepMode = $state(false);
 
 	const visibleIndices = $derived(getVisibleIndices(program.steps, subStepMode));
 	const visiblePosition = $derived.by(() => {
 		const direct = visibleIndices.indexOf(internalIndex);
 		if (direct !== -1) return direct;
-		// internalIndex is on a non-visible step — find nearest visible
 		const nearest = nearestVisibleIndex(visibleIndices, internalIndex);
 		return visibleIndices.indexOf(nearest);
 	});
@@ -57,38 +54,16 @@
 		}
 	}
 
-	function togglePlay() {
-		playing = !playing;
-	}
-
-	function setSpeed(s: number) {
-		speed = s;
-	}
-
 	function toggleSubStep() {
 		subStepMode = !subStepMode;
-		// Map current position to nearest visible step in new mode
 		const newVisible = getVisibleIndices(program.steps, subStepMode);
 		internalIndex = nearestVisibleIndex(newVisible, internalIndex);
 	}
 
-	// Auto-play
-	$effect(() => {
-		if (!playing) return;
-		const id = setInterval(() => {
-			const pos = visibleIndices.indexOf(internalIndex);
-			if (pos >= visibleIndices.length - 1) {
-				playing = false;
-			} else {
-				internalIndex = visibleIndices[pos + 1];
-			}
-		}, speed);
-		return () => clearInterval(id);
-	});
-
 	// Keyboard shortcuts
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+		if (e.target instanceof HTMLElement && e.target.closest('.cm-editor')) return;
 		switch (e.key) {
 			case 'ArrowLeft':
 				e.preventDefault();
@@ -97,10 +72,6 @@
 			case 'ArrowRight':
 				e.preventDefault();
 				next();
-				break;
-			case ' ':
-				e.preventDefault();
-				togglePlay();
 				break;
 			case 's':
 			case 'S':
@@ -114,25 +85,10 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="w-full max-w-7xl space-y-4">
-	<StepControls
-		current={visiblePosition}
-		total={visibleIndices.length}
-		{playing}
-		{speed}
-		{subStepMode}
-		description={currentStep?.description}
-		evaluation={currentStep?.evaluation}
-		onprev={prev}
-		onnext={next}
-		ontoggleplay={togglePlay}
-		onspeedchange={setSpeed}
-		ontogglesubstep={toggleSubStep}
-	/>
-
 	<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 		<!-- Code Editor -->
 		<div class="h-[70vh] sticky top-4">
-			<CodeEditor source={program.source} location={editorLocation} />
+			<CodeEditor source={program.source} location={editorLocation} readOnly={true} />
 		</div>
 
 		<!-- Memory View -->
@@ -140,4 +96,15 @@
 			<MemoryView data={currentSnapshot} />
 		</div>
 	</div>
+
+	<StepControls
+		current={visiblePosition}
+		total={visibleIndices.length}
+		{subStepMode}
+		description={currentStep?.description}
+		evaluation={currentStep?.evaluation}
+		onprev={prev}
+		onnext={next}
+		ontogglesubstep={toggleSubStep}
+	/>
 </div>
