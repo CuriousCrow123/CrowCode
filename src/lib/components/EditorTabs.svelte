@@ -15,8 +15,7 @@
 		onclose: (index: number) => void;
 	} = $props();
 
-	function handleClose(e: MouseEvent, index: number) {
-		e.stopPropagation();
+	function handleClose(index: number) {
 		if (tabs.length <= 1) return;
 		if (!confirm(`Delete "${tabs[index].name}"? This cannot be undone.`)) return;
 		onclose(index);
@@ -27,7 +26,6 @@
 			e.preventDefault();
 			const next = (active + 1) % tabs.length;
 			onselect(next);
-			// Focus the next tab button
 			const btn = (e.currentTarget as HTMLElement).querySelector(`[data-tab-index="${next}"]`) as HTMLElement;
 			btn?.focus();
 		} else if (e.key === 'ArrowLeft') {
@@ -48,28 +46,32 @@
 	onkeydown={handleKeydown}
 >
 	{#each tabs as tab, i}
-		<button
-			role="tab"
-			aria-selected={active === i}
-			tabindex={active === i ? 0 : -1}
-			data-tab-index={i}
-			onclick={() => onselect(i)}
-			class="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-mono whitespace-nowrap transition-colors {active === i
-				? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-				: 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}"
-		>
-			{tab.name}
+		<div class="flex items-center">
+			<button
+				role="tab"
+				aria-selected={active === i}
+				tabindex={active === i ? 0 : -1}
+				data-tab-index={i}
+				onclick={() => onselect(i)}
+				class="px-3 py-1.5 rounded-l text-sm font-mono whitespace-nowrap transition-colors {active === i
+					? 'bg-blue-500/20 text-blue-400 border border-blue-500/30 border-r-0'
+					: 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'} {tabs.length <= 1 ? 'rounded-r' : ''}"
+			>
+				{tab.name}
+			</button>
 			{#if tabs.length > 1}
 				<button
 					tabindex={-1}
 					aria-label="Close {tab.name}"
-					onclick={(e: MouseEvent) => handleClose(e, i)}
-					class="ml-1 text-zinc-500 hover:text-zinc-300 text-xs leading-none"
+					onclick={() => handleClose(i)}
+					class="px-1.5 py-1.5 rounded-r text-xs transition-colors {active === i
+						? 'bg-blue-500/20 text-zinc-500 hover:text-zinc-300 border border-blue-500/30 border-l-0'
+						: 'bg-zinc-800 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700'}"
 				>
 					&times;
 				</button>
 			{/if}
-		</button>
+		</div>
 	{/each}
 	<button
 		onclick={onadd}

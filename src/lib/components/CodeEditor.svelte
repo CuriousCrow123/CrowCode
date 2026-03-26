@@ -2,6 +2,7 @@
 	import type { SourceLocation } from '$lib/types';
 	import { EditorView, Decoration, type DecorationSet } from '@codemirror/view';
 	import { EditorState, StateField, StateEffect, Compartment } from '@codemirror/state';
+	import { untrack } from 'svelte';
 	import { basicSetup } from 'codemirror';
 	import { cpp } from '@codemirror/lang-cpp';
 	import { oneDark } from '@codemirror/theme-one-dark';
@@ -85,33 +86,34 @@
 		},
 	});
 
-	function makeExtensions(isReadOnly: boolean) {
-		const exts = [
-			basicSetup,
-			cpp(),
-			oneDark,
-			crowTheme,
-			readOnlyCompartment.of(EditorState.readOnly.of(isReadOnly)),
-			highlightField,
-		];
-		if (onchange) {
-			exts.push(EditorView.updateListener.of((update) => {
-				if (update.docChanged) {
-					onchange!(update.state.doc.toString());
-				}
-			}));
-		}
-		return exts;
-	}
+	const staticExtensions = [
+		basicSetup,
+		cpp(),
+		oneDark,
+		crowTheme,
+		highlightField,
+	];
 
-	// Create editor once container is available
+	// Create editor once container is available.
+	// Uses untrack so this only re-runs when container changes (mount/unmount).
 	$effect(() => {
 		if (!container) return;
 
+		const initialSource = untrack(() => source);
+		const initialReadOnly = untrack(() => readOnly);
+
 		view = new EditorView({
 			state: EditorState.create({
-				doc: source,
-				extensions: makeExtensions(readOnly),
+				doc: initialSource,
+				extensions: [
+					...staticExtensions,
+					readOnlyCompartment.of(EditorState.readOnly.of(initialReadOnly)),
+					EditorView.updateListener.of((update) => {
+						if (update.docChanged && onchange) {
+							onchange(update.state.doc.toString());
+						}
+					}),
+				],
 			}),
 			parent: container,
 		});
@@ -139,11 +141,10 @@
 		const src = source;
 		const currentDoc = view.state.doc.toString();
 		if (currentDoc === src) return; // no-op guard to prevent infinite loop
-		// Full state replacement for tab switch
-		view.setState(EditorState.create({
-			doc: src,
-			extensions: makeExtensions(readOnly),
-		}));
+		// Replace document content without recreating the view
+		view.dispatch({
+			changes: { from: 0, to: currentDoc.length, insert: src },
+		});
 	});
 
 	// Update highlight when location changes
