@@ -1109,9 +1109,10 @@ export class Interpreter {
 		const blocks = this.env.getAllHeapBlocks();
 		for (const [addr, block] of blocks) {
 			if (block.status === 'allocated') {
-				// Find which emitter heap block ID corresponds to this address
-				// For now, we mark them as leaked
-				// The emitter's heap block tracking handles the ID mapping
+				const blockId = this.emitter.getHeapBlockIdByAddress(addr);
+				if (blockId) {
+					this.emitter.leakHeap(blockId);
+				}
 			}
 		}
 	}

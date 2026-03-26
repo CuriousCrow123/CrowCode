@@ -344,7 +344,8 @@ describe('pointer and heap values', () => {
 		const block = findHeapBlock(last);
 		expect(block).toBeDefined();
 		expect(block!.heap!.allocator).toBe('calloc');
-		expect(block!.heap!.status).toBe('allocated');
+		// Status may be 'allocated' or 'leaked' (leak detection marks unfreed blocks)
+		expect(['allocated', 'leaked']).toContain(block!.heap!.status);
 	});
 
 	it('array element assignment through pointer updates value', () => {
@@ -765,7 +766,31 @@ describe('planned: unimplemented spec constructs', () => {
 	it.todo('do-while loop value progression');
 	it.todo('if/else condition evaluation as sub-step');
 	it.todo('function returning malloc pointer used by caller');
-	it.todo('leak detection marks unfreed blocks as leaked');
+	it('leak detection marks unfreed blocks as leaked', () => {
+		const src = `int main() {
+	int *p = malloc(sizeof(int));
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		// The heap block should be marked as leaked
+		function findHeapBlock(entries: MemoryEntry[]): MemoryEntry | undefined {
+			for (const e of entries) {
+				if (e.heap) return e;
+				if (e.children) {
+					const found = findHeapBlock(e.children);
+					if (found) return found;
+				}
+			}
+			return undefined;
+		}
+		const block = findHeapBlock(last);
+		expect(block).toBeDefined();
+		expect(block!.heap!.status).toBe('leaked');
+	});
 	it.todo('array decay: int *p = arr equals &arr[0]');
 	it.todo('sizeof(long) documents 32-bit model behavior');
 });

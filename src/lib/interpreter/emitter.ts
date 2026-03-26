@@ -555,4 +555,11 @@ export class DefaultEmitter implements OpEmitter {
 	setPointerTarget(varName: string, blockId: string): void {
 		this.ptrTargetMap.set(varName, blockId);
 	}
+
+	getHeapBlockIdByAddress(address: number): string | undefined {
+		for (const [id, addr] of this.heapBlockAddresses) {
+			if (addr === address) return id;
+		}
+		return undefined;
+	}
 }
