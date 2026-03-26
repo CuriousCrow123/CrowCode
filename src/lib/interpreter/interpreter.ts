@@ -62,7 +62,10 @@ export class Interpreter {
 		this.typeReg = new TypeRegistry();
 		this.emitter = new DefaultEmitter('Custom Program', source);
 
-		const stdlib = createStdlib(this.env, this.typeReg, this.emitter);
+		const stdlib = createStdlib(this.env, this.typeReg, this.emitter, {
+			read: (addr) => this.memoryValues.get(addr),
+			write: (addr, val) => this.memoryValues.set(addr, val),
+		});
 
 		this.evaluator = new Evaluator(this.env, this.typeReg, (name, args, line, colStart, colEnd) => {
 			// Check user-defined functions first
@@ -99,7 +102,14 @@ export class Interpreter {
 		});
 
 		// Wire up memory reader so evaluator can read heap/array values
-		this.evaluator.setMemoryReader((address) => this.memoryValues.get(address));
+		// Check for use-after-free on every read
+		this.evaluator.setMemoryReader((address) => {
+			if (this.isFreedAddress(address)) {
+				this.errors.push(`Use-after-free: reading from freed memory at ${formatAddress(address)}`);
+				return undefined;
+			}
+			return this.memoryValues.get(address);
+		});
 	}
 
 	run(): InterpretResult {
@@ -723,6 +733,7 @@ export class Interpreter {
 			if (ptrResult.error) { this.errors.push(ptrResult.error); return; }
 			const addr = ptrResult.value.data ?? 0;
 			if (addr === 0) { this.errors.push(`Null pointer dereference at line ${node.line}`); return; }
+			if (this.isFreedAddress(addr)) { this.errors.push(`Use-after-free: writing to freed memory at ${formatAddress(addr)}`); return; }
 			const newVal = rhs.value.data ?? 0;
 			this.memoryValues.set(addr, newVal);
 			// Resolve heap block and emit setValue
@@ -796,8 +807,17 @@ export class Interpreter {
 			}
 			const index = idxResult.value.data ?? 0;
 
-			// Bounds check for arrays
+			// Use-after-free check for subscript writes
 			const objResult = this.evaluator.eval(node.target.object);
+			if (!objResult.error && isPointerType(objResult.value.type)) {
+				const heapAddr = objResult.value.data ?? 0;
+				if (this.isFreedAddress(heapAddr)) {
+					this.errors.push(`Use-after-free: writing to freed memory at ${formatAddress(heapAddr)}`);
+					return;
+				}
+			}
+
+			// Bounds check for arrays
 			if (!objResult.error) {
 				if (isPointerType(objResult.value.type)) {
 					// Heap array bounds check
@@ -1529,6 +1549,15 @@ export class Interpreter {
 	}
 
 	// === Helpers ===
+
+	private isFreedAddress(address: number): boolean {
+		for (const block of this.env.getAllHeapBlocks().values()) {
+			if (block.status === 'freed' && address >= block.address && address < block.address + block.size) {
+				return true;
+			}
+		}
+		return false;
+	}
 
 	private formatValue(type: CType, data: number | null, initialized = true): string {
 		if (!initialized) return '(uninit)';

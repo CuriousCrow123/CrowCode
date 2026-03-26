@@ -1,7 +1,7 @@
 # C Interpreter — Feature Status
 
 Last updated: 2026-03-26
-Test suite: 591 passing, 0 skipped (591 total across 20 files)
+Test suite: 603 passing, 0 skipped (603 total across 20 files)
 
 ## Fully Working
 
@@ -77,6 +77,7 @@ Test suite: 591 passing, 0 skipped (591 total across 20 files)
 | Stack array bounds (write) | Yes | Error on index < 0 or >= size |
 | Heap array bounds (write) | Yes | "Heap buffer overflow" error |
 | Heap struct field access | Yes | Arrow operator, nested fields |
+| Use-after-free detection | Yes | Read/write through freed pointer produces error |
 | Uninitialized variable tracking | Yes | Shows `(uninit)` until first assignment |
 
 ### Standard Library
@@ -90,6 +91,13 @@ Test suite: 591 passing, 0 skipped (591 total across 20 files)
 | `puts(str)` | No-op | Step emitted |
 | `putchar(c)` | No-op | Recognized but ignored |
 | `fprintf(stream, fmt, ...)` | No-op | Recognized but ignored |
+| `strlen(s)` | Working | Walks char bytes from pointer address |
+| `strcpy(dst, src)` | Working | Copies bytes including null terminator |
+| `strcmp(a, b)` | Working | Returns -1, 0, or 1 |
+| `strcat(dst, src)` | Working | Appends src to end of dst |
+| `abs(x)` | Working | Returns absolute value as int |
+| `sqrt(x)` | Working | Returns double via Math.sqrt |
+| `pow(x, y)` | Working | Returns double via Math.pow |
 
 ### Visualization
 | Feature | Status | Notes |
@@ -147,9 +155,6 @@ None. All previously known bugs have been fixed.
 ### Runtime Features
 | Feature | Notes |
 |---------|-------|
-| Use-after-free detection | Value still readable after free |
-| String manipulation (`strlen`, `strcpy`, `strcmp`) | Not implemented |
-| Math functions (`abs`, `sqrt`, `pow`) | Not implemented |
 | File I/O (`fopen`, `fread`, `fwrite`) | Not applicable |
 
 ---
@@ -176,7 +181,7 @@ None. All previously known bugs have been fixed.
 
 | Test file | Tests | Focus |
 |-----------|-------|-------|
-| `value-correctness.test.ts` | ~158 | Value assertions across all features |
+| `value-correctness.test.ts` | ~170 | Value assertions across all features |
 | `manual-programs.test.ts` | 60 | Full-program integration (38 programs) |
 | `interpreter.test.ts` | 35 | Statement handling, stdlib, validation |
 | `evaluator.test.ts` | 60 | Expression evaluation, operators |
@@ -186,4 +191,4 @@ None. All previously known bugs have been fixed.
 | `emitter.test.ts` | 34 | Op emission, ID generation, path resolution |
 | `worker.test.ts` | 6 | Worker message contract |
 | Other (engine, programs, summary) | ~143 | Snapshot building, validation, programs |
-| **Total** | **591** | 591 passed, 0 skipped |
+| **Total** | **603** | 603 passed, 0 skipped |

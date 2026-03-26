@@ -671,6 +671,53 @@ int main() {
     return 0;
 }`,
 	},
+
+	// Category 14: Runtime Safety + Stdlib
+	{
+		id: 'p14.1', category: 'Runtime Safety', name: 'Use-After-Free',
+		source: `#include <stdlib.h>
+
+int main() {
+    int *p = malloc(sizeof(int));
+    *p = 42;
+    free(p);
+    int x = *p;  // Use-after-free error!
+    return 0;
+}`,
+	},
+	{
+		id: 'p14.2', category: 'Runtime Safety', name: 'String Functions',
+		source: `#include <string.h>
+#include <stdlib.h>
+
+int main() {
+    char *s = "hello";
+    int len = strlen(s);
+
+    char *a = "abc";
+    char *b = "abd";
+    int cmp = strcmp(a, b);
+
+    char *dst = malloc(8);
+    strcpy(dst, s);
+    int len2 = strlen(dst);
+
+    free(dst);
+    return 0;
+}`,
+	},
+	{
+		id: 'p14.3', category: 'Runtime Safety', name: 'Math Functions',
+		source: `#include <math.h>
+#include <stdlib.h>
+
+int main() {
+    int a = abs(-7);
+    float s = sqrt(25.0);
+    float p = pow(2.0, 10.0);
+    return 0;
+}`,
+	},
 ];
 
 /** Get unique categories in order of appearance. */

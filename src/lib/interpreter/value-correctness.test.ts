@@ -2135,3 +2135,143 @@ int main() {
 		expect(findEntry(last, 'p')?.value).toBe('(dangling)');
 	});
 });
+
+// === Use-after-free detection ===
+
+describe('use-after-free detection', () => {
+	it('read through freed pointer produces error', () => {
+		const { errors } = run(`int main() {
+	int *p = malloc(sizeof(int));
+	*p = 42;
+	free(p);
+	int x = *p;
+	return 0;
+}`);
+		expect(errors.some(e => e.includes('Use-after-free') || e.includes('freed'))).toBe(true);
+	});
+
+	it('write through freed pointer produces error', () => {
+		const { errors } = run(`int main() {
+	int *p = malloc(sizeof(int));
+	free(p);
+	*p = 99;
+	return 0;
+}`);
+		expect(errors.some(e => e.includes('Use-after-free') || e.includes('freed'))).toBe(true);
+	});
+
+	it('array access after free produces error', () => {
+		const { errors } = run(`int main() {
+	int *arr = calloc(3, sizeof(int));
+	arr[0] = 10;
+	free(arr);
+	int x = arr[0];
+	return 0;
+}`);
+		expect(errors.some(e => e.includes('Use-after-free') || e.includes('freed'))).toBe(true);
+	});
+
+	it('reading through non-freed pointer works normally', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int *p = malloc(sizeof(int));
+	*p = 42;
+	int x = *p;
+	free(p);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('42');
+	});
+});
+
+// === String functions ===
+
+describe('string functions', () => {
+	it('strlen returns correct length', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *s = "hello";
+	int len = strlen(s);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'len')?.value).toBe('5');
+	});
+
+	it('strlen of empty string returns 0', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *s = "";
+	int len = strlen(s);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'len')?.value).toBe('0');
+	});
+
+	it('strcmp returns 0 for equal strings', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *a = "hello";
+	char *b = "hello";
+	int cmp = strcmp(a, b);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'cmp')?.value).toBe('0');
+	});
+
+	it('strcmp returns nonzero for different strings', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *a = "abc";
+	char *b = "abd";
+	int cmp = strcmp(a, b);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		const val = parseInt(findEntry(last, 'cmp')?.value ?? '0');
+		expect(val).toBeLessThan(0);
+	});
+
+	it('strcpy copies string to destination', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *src = "hi";
+	char *dst = malloc(8);
+	strcpy(dst, src);
+	int len = strlen(dst);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'len')?.value).toBe('2');
+	});
+});
+
+// === Math functions ===
+
+describe('math functions', () => {
+	it('abs returns absolute value', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int a = abs(-7);
+	int b = abs(5);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('7');
+		expect(findEntry(last, 'b')?.value).toBe('5');
+	});
+
+	it('sqrt returns correct value', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = sqrt(25.0);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('5');
+	});
+
+	it('pow returns correct value', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = pow(2.0, 10.0);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('1024');
+	});
+});
