@@ -14,6 +14,9 @@
 
 	const blocks = $derived(entry.children ?? []);
 
+	// Track which blocks have their values expanded
+	let expandedValues: Record<string, boolean> = $state({});
+
 	function statusColor(status: string): string {
 		switch (status) {
 			case 'allocated': return 'text-emerald-400';
@@ -91,8 +94,16 @@
 								>
 									{isLong ? summary.slice(0, MAX_VALUE_LENGTH) + '...' : summary}
 								</button>
+							{:else if isLong}
+								<button
+									onclick={() => (expandedValues[block.id] = !expandedValues[block.id])}
+									class="text-left cursor-pointer hover:text-emerald-300 transition-colors"
+								>
+									{expandedValues[block.id] ? summary : summary.slice(0, MAX_VALUE_LENGTH) + '...'}
+									<span class="text-xs text-zinc-500 ml-1">{expandedValues[block.id] ? '(less)' : '(more)'}</span>
+								</button>
 							{:else}
-								{isLong ? summary.slice(0, MAX_VALUE_LENGTH) + '...' : summary}
+								{summary}
 							{/if}
 						</td>
 						<td class="px-4 py-2.5 font-mono text-zinc-600 text-xs">
