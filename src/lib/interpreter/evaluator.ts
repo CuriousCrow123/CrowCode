@@ -124,6 +124,18 @@ export class Evaluator {
 		return { value: v };
 	}
 
+	/** Decay an array value to a pointer to its first element */
+	static decayArrayToPointer(value: CValue): CValue {
+		if (isArrayType(value.type)) {
+			return {
+				type: pointerType(value.type.elementType),
+				data: value.address,
+				address: value.address,
+			};
+		}
+		return value;
+	}
+
 	// === Binary ===
 
 	private evalBinary(node: ASTNode & { type: 'binary_expression' }): EvalResult {
@@ -150,18 +162,22 @@ export class Evaluator {
 		const right = this.eval(node.right);
 		if (right.error) return right;
 
-		const l = left.value.data ?? 0;
-		const r = right.value.data ?? 0;
+		// Array-to-pointer decay for binary operations (e.g., arr + 1)
+		const leftVal = Evaluator.decayArrayToPointer(left.value);
+		const rightVal = Evaluator.decayArrayToPointer(right.value);
+
+		const l = leftVal.data ?? 0;
+		const r = rightVal.data ?? 0;
 
 		// Pointer arithmetic
-		if (isPointerType(left.value.type) && !isPointerType(right.value.type)) {
+		if (isPointerType(leftVal.type) && !isPointerType(rightVal.type)) {
 			if (node.operator === '+') {
-				const elemSize = sizeOf(left.value.type.pointsTo);
-				return this.ok(l + r * elemSize, left.value.type);
+				const elemSize = sizeOf(leftVal.type.pointsTo);
+				return this.ok(l + r * elemSize, leftVal.type);
 			}
 			if (node.operator === '-') {
-				const elemSize = sizeOf(left.value.type.pointsTo);
-				return this.ok(l - r * elemSize, left.value.type);
+				const elemSize = sizeOf(leftVal.type.pointsTo);
+				return this.ok(l - r * elemSize, leftVal.type);
 			}
 		}
 
@@ -265,7 +281,12 @@ export class Evaluator {
 			const existing = this.env.lookupVariable(node.target.name);
 			if (!existing) return this.err(`Undefined variable '${node.target.name}'`);
 
-			let newVal = right.value.data ?? 0;
+			// Array-to-pointer decay: int *p = arr
+			const assignValue = (node.operator === '=' && isPointerType(existing.type))
+				? Evaluator.decayArrayToPointer(right.value)
+				: right.value;
+
+			let newVal = assignValue.data ?? 0;
 			const oldVal = existing.data ?? 0;
 
 			switch (node.operator) {
@@ -427,6 +448,11 @@ export class Evaluator {
 	}
 
 	private evalSizeofExpr(node: ASTNode & { type: 'sizeof_expr' }): EvalResult {
+		// sizeof(arr) must return full array size, not decayed pointer size
+		if (node.value.type === 'identifier') {
+			const v = this.env.lookupVariable(node.value.name);
+			if (v) return this.ok(sizeOf(v.type));
+		}
 		const result = this.eval(node.value);
 		if (result.error) return result;
 		return this.ok(sizeOf(result.value.type));

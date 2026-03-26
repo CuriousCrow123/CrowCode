@@ -259,7 +259,11 @@ export class Interpreter {
 				} else {
 					const result = this.evaluator.eval(node.initializer);
 					if (result.error) this.errors.push(result.error);
-					initData = result.value.data;
+					// Array-to-pointer decay: int *p = arr
+					const decayed = isPointerType(type)
+						? Evaluator.decayArrayToPointer(result.value)
+						: result.value;
+					initData = decayed.data;
 				}
 			}
 			value = this.env.declareVariable(node.name, type, initData);
@@ -526,6 +530,11 @@ export class Interpreter {
 				this.executeMallocAssign(node, call, sharesStep);
 				return;
 			}
+		}
+
+		// Chained assignment: a = b = c = 0 — execute inner assignment first to emit ops
+		if (node.operator === '=' && node.value?.type === 'assignment') {
+			this.executeAssignment(node.value, true);
 		}
 
 		const rhs = this.evaluator.eval(node.value);
@@ -1134,7 +1143,9 @@ export class Interpreter {
 		const declaredParams: CValue[] = [];
 		for (let i = 0; i < fn.params.length; i++) {
 			const paramType = this.typeReg.resolve(fn.params[i].typeSpec);
-			const v = this.env.declareVariable(fn.params[i].name, paramType, args[i]?.data ?? 0);
+			// Array-to-pointer decay: when passing array to pointer parameter
+			const arg = args[i] ? Evaluator.decayArrayToPointer(args[i]) : undefined;
+			const v = this.env.declareVariable(fn.params[i].name, paramType, arg?.data ?? 0);
 			declaredParams.push(v);
 		}
 

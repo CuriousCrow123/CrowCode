@@ -1022,9 +1022,7 @@ describe('error reporting', () => {
 });
 
 describe('previously planned spec constructs', () => {
-	test.fails('chained assignment a = b = c = 0 sets all three (not yet supported)', () => {
-		// Chained assignment parses as a = (b = (c = 0))
-		// Currently only the outermost assignment runs
+	it('chained assignment a = b = c = 0 sets all three', () => {
 		const { snapshots } = interpretAndBuild(`int main() {
 	int a = 1; int b = 2; int c = 3;
 	a = b = c = 0;
@@ -1034,6 +1032,66 @@ describe('previously planned spec constructs', () => {
 		expect(findEntry(last, 'a')?.value).toBe('0');
 		expect(findEntry(last, 'b')?.value).toBe('0');
 		expect(findEntry(last, 'c')?.value).toBe('0');
+	});
+
+	it('chained assignment a = b = expr evaluates correctly', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int a = 0; int b = 0;
+	a = b = 3 + 4;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('7');
+		expect(findEntry(last, 'b')?.value).toBe('7');
+	});
+
+	it('chained assignment updates all variables in snapshots', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int a = 1; int b = 2; int c = 3;
+	a = b = c = 5;
+	return 0;
+}`);
+		// After the chained assignment, all three should be 5
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('5');
+		expect(findEntry(last, 'b')?.value).toBe('5');
+		expect(findEntry(last, 'c')?.value).toBe('5');
+	});
+
+	it('array-to-pointer decay: int *p = arr assigns base address', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int arr[3] = {10, 20, 30};
+	int *p = arr;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		const arrEntry = findEntry(last, 'arr');
+		const pEntry = findEntry(last, 'p');
+		// p should hold arr's address
+		expect(pEntry?.value).toBe(arrEntry?.address);
+	});
+
+	it('array-to-pointer decay: pointer arithmetic after decay', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int arr[3] = {10, 20, 30};
+	int *p = arr;
+	int x = *(p + 1);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		// *(p + 1) should read arr[1] = 20 through pointer arithmetic
+		expect(findEntry(last, 'x')?.value).toBe('20');
+	});
+
+	it('array subscript still works with bounds checking', () => {
+		// Array subscript should still work normally (not decayed)
+		const { snapshots } = interpretAndBuild(`int main() {
+	int arr[3] = {10, 20, 30};
+	int x = arr[2];
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('30');
 	});
 
 	it('short-circuit && skips right side when left is false', () => {
