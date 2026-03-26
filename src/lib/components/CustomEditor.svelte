@@ -51,11 +51,15 @@ int main() {
 		if (parser) return parser;
 
 		const TreeSitter = await import('web-tree-sitter');
+		const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+		const wasmUrl = `${base}tree-sitter.wasm`;
+		const langUrl = `${base}tree-sitter-c.wasm`;
+
 		await TreeSitter.Parser.init({
-			locateFile: () => `${import.meta.env.BASE_URL}tree-sitter.wasm`,
+			locateFile: (_file: string, _scriptDir: string) => wasmUrl,
 		});
 		parser = new TreeSitter.Parser();
-		const lang = await TreeSitter.Language.load(`${import.meta.env.BASE_URL}tree-sitter-c.wasm`);
+		const lang = await TreeSitter.Language.load(langUrl);
 		parser.setLanguage(lang);
 		return parser;
 	}
