@@ -398,10 +398,18 @@ export class Evaluator {
 		if (result.error) return result;
 
 		const targetType = this.typeReg.resolve(node.targetType);
+		let data = result.value.data;
+		// Narrow numeric value to target type size
+		if (data !== null && targetType.kind === 'primitive') {
+			const size = sizeOf(targetType);
+			if (size === 1) data = (data << 24) >> 24;       // char: sign-extend 8-bit
+			else if (size === 2) data = (data << 16) >> 16;   // short: sign-extend 16-bit
+			else if (size <= 4) data = data | 0;              // int: toInt32
+		}
 		return {
 			value: {
 				type: targetType,
-				data: result.value.data,
+				data,
 				address: result.value.address,
 			},
 		};

@@ -172,28 +172,28 @@ describe('scalar variable values', () => {
 	});
 
 	describe('unary increment/decrement', () => {
-		test.fails('post-increment x++ as statement updates value', () => {
+		it('post-increment x++ as statement updates value', () => {
 			const src = 'int main() { int x = 5; x++; return 0; }';
 			const { snapshots } = interpretAndBuild(src);
 			const last = snapshots[snapshots.length - 1];
 			expect(findEntry(last, 'x')?.value).toBe('6');
 		});
 
-		test.fails('pre-increment ++x as statement updates value', () => {
+		it('pre-increment ++x as statement updates value', () => {
 			const src = 'int main() { int x = 5; ++x; return 0; }';
 			const { snapshots } = interpretAndBuild(src);
 			const last = snapshots[snapshots.length - 1];
 			expect(findEntry(last, 'x')?.value).toBe('6');
 		});
 
-		test.fails('post-decrement x-- as statement updates value', () => {
+		it('post-decrement x-- as statement updates value', () => {
 			const src = 'int main() { int x = 5; x--; return 0; }';
 			const { snapshots } = interpretAndBuild(src);
 			const last = snapshots[snapshots.length - 1];
 			expect(findEntry(last, 'x')?.value).toBe('4');
 		});
 
-		test.fails('pre-decrement --x as statement updates value', () => {
+		it('pre-decrement --x as statement updates value', () => {
 			const src = 'int main() { int x = 5; --x; return 0; }';
 			const { snapshots } = interpretAndBuild(src);
 			const last = snapshots[snapshots.length - 1];
@@ -639,12 +639,12 @@ int main() {
 }`;
 		const { snapshots } = interpretAndBuild(src);
 		const last = snapshots[snapshots.length - 1];
-		// The heap block should show 42
-		// Walk to find the first non-scope, non-heap entry that is a child of a heap block
+		// The heap block should show 42 (either as block value or child value)
 		function findHeapValue(entries: MemoryEntry[]): string | undefined {
 			for (const e of entries) {
-				if (e.heap?.status === 'allocated' && e.children) {
-					return e.children[0]?.value;
+				if (e.heap?.status === 'allocated') {
+					if (e.value) return e.value;
+					if (e.children) return e.children[0]?.value;
 				}
 				if (e.children) {
 					const found = findHeapValue(e.children);
@@ -656,7 +656,7 @@ int main() {
 		expect(findHeapValue(last)).toBe('42');
 	});
 
-	test.fails('compound assignment on struct field: p->x += 5 applies old value', () => {
+	it('compound assignment on struct field: p->x += 5 applies old value', () => {
 		const src = `
 struct S { int x; };
 int main() {
@@ -681,7 +681,7 @@ int main() {
 		expect(findEntry(last, '[0]')?.value).toBe('11');
 	});
 
-	test.fails('cast truncation: (char)300 narrows to 8 bits', () => {
+	it('cast truncation: (char)300 narrows to 8 bits', () => {
 		const src = `int main() {
 	int x = 300;
 	char c = (char)x;
@@ -693,7 +693,7 @@ int main() {
 		expect(findEntry(last, 'c')?.value).toBe('44');
 	});
 
-	test.fails('compound assignment overflow: x += 1 wraps at INT_MAX', () => {
+	it('compound assignment overflow: x += 1 wraps at INT_MAX', () => {
 		const src = `int main() {
 	int x = 2147483647;
 	x += 1;

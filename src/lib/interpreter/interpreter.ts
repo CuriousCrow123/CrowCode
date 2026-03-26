@@ -449,7 +449,7 @@ export class Interpreter {
 
 	private executeAssignment(node: ASTNode & { type: 'assignment' }, sharesStep: boolean): void {
 		// Intercept malloc/calloc in assignment RHS: p = malloc(n)
-		if (node.operator === '=' && node.target.type === 'identifier' && node.value.type === 'call_expression') {
+		if (node.operator === '=' && node.target?.type === 'identifier' && node.value?.type === 'call_expression') {
 			const call = node.value;
 			if (call.callee === 'malloc' || call.callee === 'calloc') {
 				this.executeMallocAssign(node, call, sharesStep);
@@ -486,7 +486,15 @@ export class Interpreter {
 		} else if (node.target.type === 'member_expression') {
 			// Field assignment: p->x = 10, p.x = 10, p->pos.x = 10
 			const path = Evaluator.buildAccessPath(node.target);
-			const newVal = rhs.value.data ?? 0;
+			let newVal = rhs.value.data ?? 0;
+
+			// For compound operators, apply old value
+			if (node.operator !== '=') {
+				const targetEval = this.evaluator.eval(node.target);
+				const oldVal = targetEval.value.data ?? this.memoryValues.get(targetEval.value.address) ?? 0;
+				newVal = this.applyCompoundOp(node.operator, oldVal, newVal);
+			}
+
 			const displayVal = String(newVal);
 
 			// Store value at the field's address for future reads
@@ -498,6 +506,22 @@ export class Interpreter {
 			const entryId = this.emitter.resolvePointerPath(path);
 			if (entryId) {
 				this.emitter.assignField(path, displayVal);
+			}
+		} else if (node.target.type === 'unary_expression' && node.target.operator === '*') {
+			// Dereference assignment: *p = 42
+			const ptrResult = this.evaluator.eval(node.target.operand);
+			if (ptrResult.error) { this.errors.push(ptrResult.error); return; }
+			const addr = ptrResult.value.data ?? 0;
+			if (addr === 0) { this.errors.push(`Null pointer dereference at line ${node.line}`); return; }
+			const newVal = rhs.value.data ?? 0;
+			this.memoryValues.set(addr, newVal);
+			// Resolve heap block and emit setValue
+			const ptrName = node.target.operand.type === 'identifier' ? node.target.operand.name : undefined;
+			if (ptrName) {
+				const heapBlockId = this.emitter.getHeapBlockId(ptrName);
+				if (heapBlockId) {
+					this.emitter.directSetValue(heapBlockId, String(newVal));
+				}
 			}
 		} else if (node.target.type === 'subscript_expression') {
 			// Element assignment: arr[i] = val, scores[i] = val
@@ -543,6 +567,27 @@ export class Interpreter {
 
 		if (expr.type === 'assignment') {
 			this.executeAssignment({ ...expr, line: node.line } as any, sharesStep);
+			return;
+		}
+
+		// Unary increment/decrement as statement: x++, --x, etc.
+		if (expr.type === 'unary_expression' && (expr.operator === '++' || expr.operator === '--')) {
+			const result = this.evaluator.eval(expr);
+			if (result.error) { this.errors.push(result.error); return; }
+			if (!sharesStep) {
+				const desc = expr.operand.type === 'identifier'
+					? `${expr.operand.name}${expr.operator}`
+					: `${expr.operator}`;
+				this.emitter.beginStep({ line: node.line }, desc);
+				this.stepCount++;
+			}
+			if (expr.operand.type === 'identifier') {
+				const current = this.env.lookupVariable(expr.operand.name);
+				if (current) {
+					const displayVal = this.formatValue(current.type, current.data);
+					this.emitter.assignVariable(expr.operand.name, displayVal);
+				}
+			}
 			return;
 		}
 
@@ -1076,11 +1121,11 @@ export class Interpreter {
 	private applyCompoundOp(op: string, oldVal: number, newVal: number): number {
 		switch (op) {
 			case '=': return newVal;
-			case '+=': return oldVal + newVal;
-			case '-=': return oldVal - newVal;
-			case '*=': return oldVal * newVal;
-			case '/=': return newVal === 0 ? 0 : Math.trunc(oldVal / newVal);
-			case '%=': return newVal === 0 ? 0 : oldVal % newVal;
+			case '+=': return (oldVal + newVal) | 0;
+			case '-=': return (oldVal - newVal) | 0;
+			case '*=': return Math.imul(oldVal, newVal);
+			case '/=': return newVal === 0 ? 0 : (Math.trunc(oldVal / newVal)) | 0;
+			case '%=': return newVal === 0 ? 0 : (oldVal % newVal) | 0;
 			case '&=': return oldVal & newVal;
 			case '|=': return oldVal | newVal;
 			case '^=': return oldVal ^ newVal;
