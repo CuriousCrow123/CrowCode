@@ -1341,6 +1341,67 @@ int main() {
 		expect(heapErrors.length).toBe(0);
 	});
 
+	it('function pointer basic call', () => {
+		const { snapshots } = interpretAndBuild(`
+int add(int a, int b) { return a + b; }
+int main() {
+	int (*fp)(int, int) = add;
+	int x = fp(3, 4);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('7');
+	});
+
+	it('function pointer reassignment', () => {
+		const { snapshots } = interpretAndBuild(`
+int add(int a, int b) { return a + b; }
+int sub(int a, int b) { return a - b; }
+int main() {
+	int (*fp)(int, int) = add;
+	int a = fp(10, 3);
+	fp = sub;
+	int b = fp(10, 3);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('13');
+		expect(findEntry(last, 'b')?.value).toBe('7');
+	});
+
+	it('function pointer display shows arrow funcName', () => {
+		const { snapshots } = interpretAndBuild(`
+int add(int a, int b) { return a + b; }
+int main() {
+	int (*fp)(int, int) = add;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'fp')?.value).toBe('→ add');
+	});
+
+	it('null function pointer call produces error', () => {
+		const { errors } = run(`
+int add(int a, int b) { return a + b; }
+int main() {
+	int (*fp)(int, int) = 0;
+	int x = fp(3, 4);
+	return 0;
+}`);
+		expect(errors.some(e => e.toLowerCase().includes('null') || e.includes('function pointer'))).toBe(true);
+	});
+
+	it('direct function calls still work with function pointers present', () => {
+		const { snapshots } = interpretAndBuild(`
+int add(int a, int b) { return a + b; }
+int main() {
+	int x = add(3, 4);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('7');
+	});
+
 	it('short-circuit && skips right side when left is false', () => {
 		const { snapshots } = interpretAndBuild(`int main() {
 	int x = 0;

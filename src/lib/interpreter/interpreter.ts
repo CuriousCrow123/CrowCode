@@ -13,6 +13,7 @@ import {
 	isStructType,
 	isArrayType,
 	isPointerType,
+	isFunctionPointerType,
 } from './types-c';
 import { createStdlib, buildStructChildSpecs, buildArrayChildSpecs } from './stdlib';
 import type { Program } from '$lib/api/types';
@@ -78,6 +79,21 @@ export class Interpreter {
 				this.callDeclContext = savedContext;
 				return result;
 			}
+
+			// Check function pointer variables
+			const fpVar = this.env.lookupVariable(name);
+			if (fpVar && isFunctionPointerType(fpVar.type)) {
+				const idx = fpVar.data ?? 0;
+				if (idx === 0) {
+					return { value: { type: primitiveType('int'), data: 0, address: 0 }, error: `Null function pointer call at line ${line}` };
+				}
+				const target = this.env.getFunctionByIndex(idx);
+				if (target) {
+					return this.callFunction(target.node, args, line);
+				}
+				return { value: { type: primitiveType('int'), data: 0, address: 0 }, error: `Invalid function pointer at line ${line}` };
+			}
+
 			// Then stdlib
 			return stdlib(name, args, line);
 		});
@@ -266,13 +282,21 @@ export class Interpreter {
 			let initData: number | null = node.initializer ? 0 : null;
 			let initWasFunctionCall = false;
 			if (node.initializer) {
+				// Handle function pointer initialization: int (*fp)(int,int) = add
+				if (isFunctionPointerType(type) && node.initializer.type === 'identifier') {
+					const fnName = node.initializer.name;
+					const fnIdx = this.env.getFunctionIndex(fnName);
+					if (fnIdx > 0) {
+						initData = fnIdx;
+					}
+				}
 				// Handle string literals: char *s = "hello"
-				if (node.initializer.type === 'string_literal' && isPointerType(type)) {
+				else if (node.initializer.type === 'string_literal' && isPointerType(type)) {
 					this.executeStringLiteralDecl(node, node.initializer, type, sharesStep);
 					return;
 				}
 				// Handle call expressions that return heap pointers or function calls
-				if (node.initializer.type === 'call_expression') {
+				else if (node.initializer.type === 'call_expression') {
 					const callResult = this.evaluateCallForDecl(node, type);
 					if (callResult.handled) return; // malloc/calloc handler already emitted the step
 					if (callResult.value !== undefined) {
@@ -623,6 +647,24 @@ export class Interpreter {
 			this.executeAssignment(node.value, true);
 		}
 
+		// Function pointer assignment: fp = funcName
+		if (node.operator === '=' && node.value?.type === 'identifier' && node.target?.type === 'identifier') {
+			const targetVar = this.env.lookupVariable(node.target.name);
+			if (targetVar && isFunctionPointerType(targetVar.type)) {
+				const fnIdx = this.env.getFunctionIndex(node.value.name);
+				if (fnIdx > 0) {
+					if (!sharesStep) {
+						this.emitter.beginStep({ line: node.line }, this.formatAssignDesc(node));
+						this.stepCount++;
+					}
+					this.env.setVariable(node.target.name, fnIdx);
+					const target = this.env.getFunctionByIndex(fnIdx);
+					this.emitter.assignVariable(node.target.name, target ? `→ ${target.name}` : String(fnIdx));
+					return;
+				}
+			}
+		}
+
 		const rhs = this.evaluator.eval(node.value);
 		if (rhs.error) {
 			this.errors.push(rhs.error);
@@ -905,6 +947,23 @@ export class Interpreter {
 		const fn = this.env.getFunction(call.callee);
 		if (fn) {
 			this.executeUserFunctionCall(fn, call, line, sharesStep);
+			return;
+		}
+
+		// Function pointer call as statement: fp(args)
+		const fpVar = this.env.lookupVariable(call.callee);
+		if (fpVar && isFunctionPointerType(fpVar.type)) {
+			const idx = fpVar.data ?? 0;
+			if (idx === 0) {
+				this.errors.push(`Null function pointer call '${call.callee}' at line ${line}`);
+				return;
+			}
+			const target = this.env.getFunctionByIndex(idx);
+			if (target) {
+				this.executeUserFunctionCall(target.node, call, line, sharesStep);
+				return;
+			}
+			this.errors.push(`Invalid function pointer '${call.callee}' at line ${line}`);
 			return;
 		}
 
@@ -1472,6 +1531,11 @@ export class Interpreter {
 	private formatValue(type: CType, data: number | null, initialized = true): string {
 		if (!initialized) return '(uninit)';
 		if (data === null) return '0';
+		// Function pointer: show → funcName
+		if (isFunctionPointerType(type) && data !== 0) {
+			const target = this.env.getFunctionByIndex(data);
+			if (target) return `→ ${target.name}`;
+		}
 		if (isPointerType(type)) {
 			if (data === 0) return 'NULL';
 			return formatAddress(data);

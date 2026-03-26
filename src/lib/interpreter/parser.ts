@@ -189,9 +189,36 @@ function parseDeclarator(node: Node, baseSpec: CTypeSpec, errors: string[]): { n
 		return { name: current.text, typeSpec: spec };
 	}
 
-	// Handle function declarator (for function pointer params we skip)
+	// Handle function declarator: int (*fp)(int, int) or function parameters
 	if (current.type === 'function_declarator') {
-		return { name: current.childForFieldName('declarator')?.text ?? '', typeSpec: spec };
+		const innerDecl = current.childForFieldName('declarator');
+		// Check for function pointer pattern: function_declarator → parenthesized_declarator → pointer_declarator → identifier
+		if (innerDecl?.type === 'parenthesized_declarator') {
+			let ptrNode = innerDecl.child(1); // skip '('
+			if (ptrNode?.type === 'pointer_declarator') {
+				const nameNode = ptrNode.childForFieldName('declarator');
+				const name = nameNode?.text ?? '';
+
+				// Extract parameter types from the function_declarator's parameter_list
+				const paramsNode = current.childForFieldName('parameters');
+				const paramTypes: CTypeSpec[] = [];
+				if (paramsNode) {
+					for (let i = 0; i < paramsNode.childCount; i++) {
+						const paramChild = paramsNode.child(i)!;
+						if (paramChild.type === 'parameter_declaration') {
+							const typeNode = paramChild.childForFieldName('type');
+							if (typeNode) {
+								paramTypes.push(parseTypeSpec(typeNode, errors));
+							}
+						}
+					}
+				}
+
+				return { name, typeSpec: { ...spec, functionParams: paramTypes } };
+			}
+		}
+		// Regular function declarator (for function definition params) — just extract name
+		return { name: innerDecl?.text ?? '', typeSpec: spec };
 	}
 
 	return { name: current.text, typeSpec: spec };

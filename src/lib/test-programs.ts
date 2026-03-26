@@ -622,7 +622,43 @@ int main() {
 }`,
 	},
 	{
-		id: 'p13.6', category: 'New Features', name: 'Array-to-Pointer Decay',
+		id: 'p13.6', category: 'New Features', name: 'Function Pointer',
+		source: `#include <stdio.h>
+
+int add(int a, int b) { return a + b; }
+int sub(int a, int b) { return a - b; }
+
+int main() {
+    int (*fp)(int, int) = add;
+    int a = fp(10, 3);   // expect: 13
+
+    fp = sub;
+    int b = fp(10, 3);   // expect: 7
+
+    return 0;
+}`,
+	},
+	{
+		id: 'p13.7', category: 'New Features', name: '2D Array',
+		source: `#include <stdio.h>
+
+int main() {
+    int m[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+
+    // Identity matrix — set diagonal
+    int trace = 0;
+    for (int i = 0; i < 3; i++) {
+        trace += m[i][i];
+    }
+    // expect: trace = 3
+
+    m[1][2] = 5;
+    m[2][0] = 7;
+    return 0;
+}`,
+	},
+	{
+		id: 'p13.8', category: 'New Features', name: 'Array-to-Pointer Decay',
 		source: `#include <stdio.h>
 
 int main() {

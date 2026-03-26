@@ -4,7 +4,8 @@ export type CType =
 	| { kind: 'primitive'; name: 'int' | 'char' | 'short' | 'long' | 'float' | 'double' | 'void' }
 	| { kind: 'pointer'; pointsTo: CType }
 	| { kind: 'array'; elementType: CType; size: number }
-	| { kind: 'struct'; name: string; fields: Array<{ name: string; type: CType; offset: number }> };
+	| { kind: 'struct'; name: string; fields: Array<{ name: string; type: CType; offset: number }> }
+	| { kind: 'function'; returnType: CType; paramTypes: CType[] };
 
 // === Runtime Value ===
 
@@ -112,6 +113,7 @@ export type CTypeSpec = {
 	array?: number;
 	arrays?: number[];
 	structName?: string;
+	functionParams?: CTypeSpec[];
 };
 
 export type ASTParam = {
