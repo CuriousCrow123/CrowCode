@@ -235,15 +235,18 @@ export class Interpreter {
 			// Scalar declaration
 			let initData: number | null = 0;
 			if (node.initializer) {
-				// Handle call expressions that return heap pointers
+				// Handle call expressions that return heap pointers or function calls
 				if (node.initializer.type === 'call_expression') {
 					const callResult = this.evaluateCallForDecl(node, type);
-					if (callResult) return; // Call handler already emitted the step
+					if (callResult.handled) return; // malloc/calloc handler already emitted the step
+					if (callResult.value !== undefined) {
+						initData = callResult.value;
+					}
+				} else {
+					const result = this.evaluator.eval(node.initializer);
+					if (result.error) this.errors.push(result.error);
+					initData = result.value.data;
 				}
-
-				const result = this.evaluator.eval(node.initializer);
-				if (result.error) this.errors.push(result.error);
-				initData = result.value.data;
 			}
 			value = this.env.declareVariable(node.name, type, initData);
 			displayValue = this.formatValue(type, initData);
@@ -267,18 +270,19 @@ export class Interpreter {
 	private evaluateCallForDecl(
 		node: ASTNode & { type: 'declaration' },
 		declType: CType,
-	): boolean {
-		if (node.initializer?.type !== 'call_expression') return false;
+	): { handled: boolean; value?: number | null } {
+		if (node.initializer?.type !== 'call_expression') return { handled: false };
 		const call = node.initializer;
 
 		if (call.callee === 'malloc' || call.callee === 'calloc') {
-			return this.executeMallocDecl(node, call, declType);
+			const handled = this.executeMallocDecl(node, call, declType);
+			return { handled };
 		}
 
-		// Regular function call
+		// Regular function call — evaluate once and return the value
 		const result = this.evaluator.eval(call);
 		if (result.error) this.errors.push(result.error);
-		return false;
+		return { handled: false, value: result.value.data };
 	}
 
 	private executeMallocDecl(
