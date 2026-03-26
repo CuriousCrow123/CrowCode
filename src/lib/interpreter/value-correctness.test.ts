@@ -596,7 +596,7 @@ int main() {
 // ============================================================
 
 describe('known bugs', () => {
-	test.fails('member-expression malloc: p->scores = calloc creates heap block', () => {
+	it('member-expression malloc: p->scores = calloc creates heap block', () => {
 		const src = `
 struct Player { int id; int *scores; };
 int main() {
@@ -613,7 +613,7 @@ int main() {
 		expect(scores!.value).toMatch(/^0x[0-9a-f]+$/i);
 	});
 
-	test.fails('multi-level pointer chain: p->scores[0] = 100 updates element', () => {
+	it('multi-level pointer chain: p->scores[0] = 100 updates element', () => {
 		const src = `
 struct Player { int id; int *scores; };
 int main() {
@@ -670,7 +670,7 @@ int main() {
 		expect(findEntry(last, '.x')?.value).toBe('15');
 	});
 
-	test.fails('post-increment on array element: arr[0]++ increments', () => {
+	it('post-increment on array element: arr[0]++ increments', () => {
 		const src = `int main() {
 	int arr[3] = {10, 20, 30};
 	arr[0]++;
@@ -704,7 +704,7 @@ int main() {
 		expect(findEntry(last, 'x')?.value).toBe('-2147483648');
 	});
 
-	test.fails('double pointer indirection: p->data->field through two pointers', () => {
+	it('double pointer indirection: p->data->field through two pointers', () => {
 		const src = `
 struct Inner { int val; };
 struct Outer { struct Inner *data; };

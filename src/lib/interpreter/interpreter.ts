@@ -219,10 +219,14 @@ export class Interpreter {
 
 			let initValues: string[] | undefined;
 			if (node.initializer?.type === 'init_list') {
-				initValues = node.initializer.values.map((v) => {
+				initValues = node.initializer.values.map((v, i) => {
 					const result = this.evaluator.eval(v);
 					if (result.error) this.errors.push(result.error);
-					return String(result.value.data ?? 0);
+					const val = result.value.data ?? 0;
+					// Store in memoryValues so element values can be read back
+					const elemSize = sizeOf(type.elementType);
+					this.memoryValues.set(value.address + i * elemSize, val);
+					return String(val);
 				});
 			}
 
@@ -371,21 +375,27 @@ export class Interpreter {
 		call: ASTNode & { type: 'call_expression' },
 		sharesStep: boolean,
 	): void {
-		if (node.target.type !== 'identifier') return;
-		const varName = node.target.name;
-
-		const existing = this.env.lookupVariable(varName);
-		if (!existing) {
-			this.errors.push(`Undefined variable '${varName}' at line ${node.line}`);
-			return;
-		}
-
 		// Evaluate args
 		const args = call.args.map((a) => {
 			const r = this.evaluator.eval(a);
 			if (r.error) this.errors.push(r.error);
 			return r.value;
 		});
+
+		// Determine target type for heap type inference
+		let targetType: CType | undefined;
+		if (node.target.type === 'identifier') {
+			const existing = this.env.lookupVariable(node.target.name);
+			if (!existing) {
+				this.errors.push(`Undefined variable '${node.target.name}' at line ${node.line}`);
+				return;
+			}
+			targetType = existing.type;
+		} else if (node.target.type === 'member_expression') {
+			const targetEval = this.evaluator.eval(node.target);
+			if (targetEval.error) { this.errors.push(targetEval.error); return; }
+			targetType = targetEval.value.type;
+		}
 
 		let totalSize: number;
 		let allocator: string;
@@ -396,16 +406,16 @@ export class Interpreter {
 			const elemSize = args[1]?.data ?? 0;
 			totalSize = count * elemSize;
 			allocator = 'calloc';
-			if (isPointerType(existing.type)) {
-				heapType = arrayType(existing.type.pointsTo, count);
+			if (targetType && isPointerType(targetType)) {
+				heapType = arrayType(targetType.pointsTo, count);
 			} else {
 				heapType = primitiveType('void');
 			}
 		} else {
 			totalSize = args[0]?.data ?? 0;
 			allocator = 'malloc';
-			if (isPointerType(existing.type)) {
-				heapType = existing.type.pointsTo;
+			if (targetType && isPointerType(targetType)) {
+				heapType = targetType.pointsTo;
 			} else {
 				heapType = primitiveType('void');
 			}
@@ -416,8 +426,6 @@ export class Interpreter {
 			this.errors.push(error);
 			return;
 		}
-
-		this.env.setVariable(varName, address);
 
 		let heapChildren: ChildSpec[] | undefined;
 		if (isStructType(heapType)) {
@@ -432,26 +440,47 @@ export class Interpreter {
 			this.stepCount++;
 		}
 
-		this.emitter.allocHeapWithAddress(
-			varName,
-			heapType,
-			totalSize,
-			allocator,
-			{ line: node.line },
-			address,
-			heapChildren,
-		);
+		if (node.target.type === 'identifier') {
+			const varName = node.target.name;
+			this.env.setVariable(varName, address);
+			this.emitter.allocHeapWithAddress(
+				varName, heapType, totalSize, allocator,
+				{ line: node.line }, address, heapChildren,
+			);
+			this.emitter.assignVariable(varName, formatAddress(address));
+		} else if (node.target.type === 'member_expression') {
+			// p->scores = calloc(...) — allocate and assign to struct field
+			const path = Evaluator.buildAccessPath(node.target);
+			const fieldName = path[path.length - 1];
 
-		this.emitter.assignVariable(varName, formatAddress(address));
+			// Store address in memoryValues at the field's address
+			const targetEval = this.evaluator.eval(node.target);
+			if (targetEval.value.address) {
+				this.memoryValues.set(targetEval.value.address, address);
+			}
+
+			// Use the field name as the pointer key for heap tracking
+			this.emitter.allocHeapWithAddress(
+				fieldName, heapType, totalSize, allocator,
+				{ line: node.line }, address, heapChildren,
+			);
+
+			// Update the field display value to the hex address
+			const entryId = this.emitter.resolvePointerPath(path);
+			if (entryId) {
+				this.emitter.assignField(path, formatAddress(address));
+			}
+		}
 	}
 
 	// === Assignments ===
 
 	private executeAssignment(node: ASTNode & { type: 'assignment' }, sharesStep: boolean): void {
-		// Intercept malloc/calloc in assignment RHS: p = malloc(n)
-		if (node.operator === '=' && node.target?.type === 'identifier' && node.value?.type === 'call_expression') {
+		// Intercept malloc/calloc in assignment RHS: p = malloc(n) or p->field = calloc(...)
+		if (node.operator === '=' && node.value?.type === 'call_expression') {
 			const call = node.value;
-			if (call.callee === 'malloc' || call.callee === 'calloc') {
+			if ((call.callee === 'malloc' || call.callee === 'calloc') &&
+				(node.target?.type === 'identifier' || node.target?.type === 'member_expression')) {
 				this.executeMallocAssign(node, call, sharesStep);
 				return;
 			}
@@ -505,7 +534,7 @@ export class Interpreter {
 
 			const entryId = this.emitter.resolvePointerPath(path);
 			if (entryId) {
-				this.emitter.assignField(path, displayVal);
+				this.emitter.directSetValue(entryId, displayVal);
 			}
 		} else if (node.target.type === 'unary_expression' && node.target.operator === '*') {
 			// Dereference assignment: *p = 42
@@ -570,10 +599,15 @@ export class Interpreter {
 			return;
 		}
 
-		// Unary increment/decrement as statement: x++, --x, etc.
+		// Unary increment/decrement as statement: x++, --x, arr[0]++, etc.
 		if (expr.type === 'unary_expression' && (expr.operator === '++' || expr.operator === '--')) {
-			const result = this.evaluator.eval(expr);
-			if (result.error) { this.errors.push(result.error); return; }
+			// Compute the new value (evaluator updates env for identifiers)
+			const targetEval = this.evaluator.eval(expr.operand);
+			if (targetEval.error) { this.errors.push(targetEval.error); return; }
+			const oldVal = targetEval.value.data ?? this.memoryValues.get(targetEval.value.address) ?? 0;
+			const step = isPointerType(targetEval.value.type) ? sizeOf(targetEval.value.type.pointsTo) : 1;
+			const newVal = expr.operator === '++' ? (oldVal + step) | 0 : (oldVal - step) | 0;
+
 			if (!sharesStep) {
 				const desc = expr.operand.type === 'identifier'
 					? `${expr.operand.name}${expr.operator}`
@@ -581,12 +615,35 @@ export class Interpreter {
 				this.emitter.beginStep({ line: node.line }, desc);
 				this.stepCount++;
 			}
+
 			if (expr.operand.type === 'identifier') {
+				this.env.setVariable(expr.operand.name, newVal);
 				const current = this.env.lookupVariable(expr.operand.name);
 				if (current) {
-					const displayVal = this.formatValue(current.type, current.data);
-					this.emitter.assignVariable(expr.operand.name, displayVal);
+					this.emitter.assignVariable(expr.operand.name, this.formatValue(current.type, current.data));
 				}
+			} else if (expr.operand.type === 'subscript_expression') {
+				// arr[0]++
+				const addr = targetEval.value.address;
+				if (addr) this.memoryValues.set(addr, newVal);
+				const objPath = Evaluator.buildAccessPath(expr.operand.object);
+				const idxResult = this.evaluator.eval(expr.operand.index);
+				const index = idxResult.value?.data ?? 0;
+				const heapBlockId = this.emitter.resolvePointerPath(objPath);
+				if (heapBlockId) {
+					this.emitter.directSetValue(`${heapBlockId}-${index}`, String(newVal));
+				} else {
+					const parentId = this.emitter.resolvePathId(objPath);
+					if (parentId) {
+						this.emitter.directSetValue(`${parentId}-${index}`, String(newVal));
+					}
+				}
+			} else if (expr.operand.type === 'member_expression') {
+				// p->x++
+				const addr = targetEval.value.address;
+				if (addr) this.memoryValues.set(addr, newVal);
+				const path = Evaluator.buildAccessPath(expr.operand);
+				this.emitter.assignField(path, String(newVal));
 			}
 			return;
 		}

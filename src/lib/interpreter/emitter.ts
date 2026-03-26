@@ -437,6 +437,14 @@ export class DefaultEmitter implements OpEmitter {
 		let currentId = heapBlockId;
 		for (let i = 1; i < path.length; i++) {
 			const field = path[i];
+
+			// Check if this field is itself a pointer to another heap block
+			const fieldHeapBlock = this.ptrTargetMap.get(field);
+			if (fieldHeapBlock) {
+				currentId = fieldHeapBlock;
+				continue;
+			}
+
 			const children = this.childMap.get(currentId);
 			if (children) {
 				const childId = children.get(field);
