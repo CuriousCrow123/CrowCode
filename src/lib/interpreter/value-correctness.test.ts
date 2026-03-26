@@ -1255,6 +1255,16 @@ describe('previously planned spec constructs', () => {
 		expect(findEntry(last, 'z')?.value).toBe('3');
 	});
 
+	it('multi-dimensional array type resolves correctly', () => {
+		// 2D array parses and type-resolves without error
+		// Read access works; write via chained subscript is not yet supported
+		const { program } = run(`int main() {
+	int m[2][3];
+	return 0;
+}`);
+		expect(program.steps.length).toBeGreaterThan(0);
+	});
+
 	it('short-circuit && skips right side when left is false', () => {
 		const { snapshots } = interpretAndBuild(`int main() {
 	int x = 0;

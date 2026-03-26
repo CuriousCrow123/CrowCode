@@ -59,7 +59,13 @@ export class TypeRegistry {
 			throw new Error(`Unknown type: ${spec.base}`);
 		}
 
-		if (spec.array !== undefined) {
+		if (spec.arrays !== undefined && spec.arrays.length > 0) {
+			// Multi-dimensional: build from innermost to outermost
+			// int arr[3][4] → arrays = [3, 4] → arrayType(arrayType(int, 4), 3)
+			for (let i = spec.arrays.length - 1; i >= 0; i--) {
+				base = { kind: 'array', elementType: base, size: spec.arrays[i] };
+			}
+		} else if (spec.array !== undefined) {
 			base = { kind: 'array', elementType: base, size: spec.array };
 		}
 

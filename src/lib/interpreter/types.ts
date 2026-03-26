@@ -110,6 +110,7 @@ export type CTypeSpec = {
 	base: string;
 	pointer: number;
 	array?: number;
+	arrays?: number[];
 	structName?: string;
 };
 
