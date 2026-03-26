@@ -686,7 +686,30 @@ export class Interpreter {
 			return;
 		}
 
-		if (call.callee === 'printf' || call.callee === 'sprintf' || call.callee === 'puts') {
+		if (call.callee === 'sprintf' && call.args.length >= 2) {
+			// sprintf(dest, fmt, ...) — write formatted string to dest buffer
+			const destResult = this.evaluator.eval(call.args[0]);
+			const formatted = this.evaluateSprintfResult(call);
+
+			if (!sharesStep) {
+				this.emitter.beginStep({ line }, `sprintf(${this.describeExpr(call.args[0])}, ...) — write "${formatted}"`);
+				this.stepCount++;
+			}
+
+			// Update the heap block's display value
+			if (!destResult.error && destResult.value.data) {
+				const destName = call.args[0].type === 'identifier' ? call.args[0].name : undefined;
+				if (destName) {
+					const blockId = this.emitter.getHeapBlockId(destName);
+					if (blockId) {
+						this.emitter.directSetValue(blockId, `"${formatted}"`);
+					}
+				}
+			}
+			return;
+		}
+
+		if (call.callee === 'printf' || call.callee === 'puts') {
 			if (!sharesStep) {
 				this.emitter.beginStep({ line }, this.formatPrintfDesc(call));
 				this.stepCount++;
@@ -1183,6 +1206,42 @@ export class Interpreter {
 
 	private formatMallocArgs(call: ASTNode & { type: 'call_expression' }): string {
 		return call.args.map((a) => this.describeExpr(a)).join(', ');
+	}
+
+	private evaluateSprintfResult(call: ASTNode & { type: 'call_expression' }): string {
+		// Evaluate format string and substitute %d, %s, etc. with arg values
+		if (call.args.length < 2) return '';
+		const fmtResult = this.evaluator.eval(call.args[1]);
+		let fmt = '';
+		if (call.args[1].type === 'string_literal') {
+			fmt = (call.args[1] as any).value ?? '';
+		} else {
+			return '';
+		}
+
+		let argIdx = 2;
+		let result = '';
+		for (let i = 0; i < fmt.length; i++) {
+			if (fmt[i] === '%' && i + 1 < fmt.length) {
+				i++;
+				if (argIdx < call.args.length) {
+					const argResult = this.evaluator.eval(call.args[argIdx]);
+					const val = argResult.value?.data ?? 0;
+					switch (fmt[i]) {
+						case 'd': case 'i': result += String(val); break;
+						case 's': result += '(string)'; break;
+						case 'x': result += val.toString(16); break;
+						case 'c': result += String.fromCharCode(val); break;
+						case '%': result += '%'; argIdx--; break;
+						default: result += `%${fmt[i]}`;
+					}
+					argIdx++;
+				}
+			} else {
+				result += fmt[i];
+			}
+		}
+		return result;
 	}
 
 	private formatPrintfDesc(call: ASTNode & { type: 'call_expression' }): string {
