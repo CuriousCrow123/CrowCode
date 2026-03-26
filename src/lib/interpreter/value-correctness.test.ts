@@ -1265,6 +1265,28 @@ describe('previously planned spec constructs', () => {
 		expect(program.steps.length).toBeGreaterThan(0);
 	});
 
+	it('cross-function free does not crash', () => {
+		// Cross-function free: cleanup() calls free(p) where p is a parameter
+		// The ptrTargetMap registration allows the emitter to find the heap block
+		const { program, errors } = run(`#include <stdlib.h>
+
+void cleanup(int *p) {
+	free(p);
+}
+
+int main() {
+	int *data = malloc(sizeof(int));
+	*data = 42;
+	cleanup(data);
+	return 0;
+}`);
+		// Should complete without crashing; may have display warning but program runs
+		expect(program.steps.length).toBeGreaterThan(0);
+		// No "Cannot find heap block" error from emitter
+		const heapErrors = errors.filter(e => e.includes('Cannot find heap block'));
+		expect(heapErrors.length).toBe(0);
+	});
+
 	it('short-circuit && skips right side when left is false', () => {
 		const { snapshots } = interpretAndBuild(`int main() {
 	int x = 0;

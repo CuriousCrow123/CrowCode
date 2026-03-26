@@ -1274,6 +1274,18 @@ export class Interpreter {
 			declaredParams.push(v);
 		}
 
+		// Register pointer parameter names in ptrTargetMap for cross-function free
+		for (let i = 0; i < fn.params.length; i++) {
+			const paramType = this.typeReg.resolve(fn.params[i].typeSpec);
+			if (isPointerType(paramType) && args[i]?.data) {
+				// Look up heap block by address
+				const blockId = this.emitter.getHeapBlockIdByAddress(args[i].data);
+				if (blockId) {
+					this.emitter.setPointerTarget(fn.params[i].name, blockId);
+				}
+			}
+		}
+
 		// Build params with addresses
 		const params = fn.params.map((p, i) => {
 			const paramType = this.typeReg.resolve(p.typeSpec);
