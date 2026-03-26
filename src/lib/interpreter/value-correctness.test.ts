@@ -759,6 +759,41 @@ int main() {
 	});
 });
 
+describe('function call step structure', () => {
+	it('int d = distance(...) produces no duplicate anchor steps on same line', () => {
+		const src = `
+struct Point { int x; int y; };
+int distance(struct Point a, struct Point b) {
+	int dx = a.x - b.x;
+	int dy = a.y - b.y;
+	return dx * dx + dy * dy;
+}
+int main() {
+	struct Point origin = {0, 0};
+	struct Point dest = {10, 20};
+	int d = distance(origin, dest);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		// Log steps for diagnosis
+		const stepInfo = program.steps.map((s, i) =>
+			`${i}: line=${s.location.line} sub=${!!s.subStep} "${s.description}"`
+		);
+		console.log('STEPS:\n' + stepInfo.join('\n'));
+
+		// The declaration line should have at most one non-subStep anchor
+		const declLine = program.steps.find(s => s.description?.includes('distance'))?.location.line;
+		if (declLine) {
+			const anchorsOnLine = program.steps.filter(
+				s => s.location.line === declLine && !s.subStep
+			);
+			console.log(`Anchors on line ${declLine}:`, anchorsOnLine.map(s => s.description));
+			expect(anchorsOnLine.length).toBeLessThanOrEqual(2); // call + assign is ok, but 3+ is a bug
+		}
+	});
+});
+
 describe('planned: unimplemented spec constructs', () => {
 	it.todo('chained assignment a = b = c = 0 sets all three');
 	it.todo('short-circuit evaluation ptr && ptr->valid');

@@ -234,6 +234,7 @@ export class Interpreter {
 		} else {
 			// Scalar declaration
 			let initData: number | null = 0;
+			let initWasFunctionCall = false;
 			if (node.initializer) {
 				// Handle call expressions that return heap pointers or function calls
 				if (node.initializer.type === 'call_expression') {
@@ -241,6 +242,7 @@ export class Interpreter {
 					if (callResult.handled) return; // malloc/calloc handler already emitted the step
 					if (callResult.value !== undefined) {
 						initData = callResult.value;
+						initWasFunctionCall = true;
 					}
 				} else {
 					const result = this.evaluator.eval(node.initializer);
@@ -250,6 +252,12 @@ export class Interpreter {
 			}
 			value = this.env.declareVariable(node.name, type, initData);
 			displayValue = this.formatValue(type, initData);
+
+			// If initializer was a function call, the return step is already active —
+			// append the variable declaration ops to it instead of creating a new step
+			if (initWasFunctionCall) {
+				sharesStep = true;
+			}
 		}
 
 		if (!sharesStep) {
