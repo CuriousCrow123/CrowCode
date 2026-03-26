@@ -87,7 +87,7 @@ export type ASTNode =
 	| { type: 'cast_expression'; targetType: CTypeSpec; value: ASTNode; line: number }
 	| { type: 'sizeof_expression'; targetType: CTypeSpec; line: number }
 	| { type: 'sizeof_expr'; value: ASTNode; line: number }
-	| { type: 'number_literal'; value: number; line: number }
+	| { type: 'number_literal'; value: number; isFloat?: boolean; line: number }
 	| { type: 'string_literal'; value: string; line: number }
 	| { type: 'char_literal'; value: number; line: number }
 	| { type: 'identifier'; name: string; line: number }

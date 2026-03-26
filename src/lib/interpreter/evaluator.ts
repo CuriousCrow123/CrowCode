@@ -40,8 +40,8 @@ export class Evaluator {
 	eval(node: ASTNode): EvalResult {
 		switch (node.type) {
 			case 'number_literal':
-				// Detect float literals (has fractional part)
-				if (!Number.isInteger(node.value)) {
+				// Detect float literals (has fractional part or .0 suffix in source)
+				if (!Number.isInteger(node.value) || node.isFloat) {
 					return this.ok(node.value, primitiveType('double'));
 				}
 				return this.ok(node.value);

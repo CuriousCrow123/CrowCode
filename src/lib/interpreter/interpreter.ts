@@ -74,7 +74,9 @@ export class Interpreter {
 				// Set column info from the call expression for step highlighting
 				const savedContext = this.callDeclContext;
 				this.callDeclContext = {
-					varName: savedContext?.varName ?? '',
+					// Preserve varName only for the direct call from a declaration;
+					// clear it for nested calls (where savedContext already has a varName set by a prior call)
+					varName: savedContext?.varName && this.frameDepth > 0 ? '' : savedContext?.varName ?? '',
 					colStart,
 					colEnd,
 				};
@@ -217,9 +219,17 @@ export class Interpreter {
 				this.executeBlock(node);
 				break;
 			case 'break_statement':
+				if (!sharesStep) {
+					this.emitter.beginStep({ line: node.line }, 'break');
+					this.stepCount++;
+				}
 				this.breakFlag = true;
 				break;
 			case 'continue_statement':
+				if (!sharesStep) {
+					this.emitter.beginStep({ line: node.line }, 'continue');
+					this.stepCount++;
+				}
 				this.continueFlag = true;
 				break;
 			case 'struct_definition':
@@ -230,6 +240,9 @@ export class Interpreter {
 				break;
 			case 'preproc_include':
 				// Skip
+				break;
+			case 'comment':
+				// Comments are not executable
 				break;
 			default:
 				this.errors.push(`Unhandled statement type: ${node.type}`);
@@ -321,6 +334,9 @@ export class Interpreter {
 						? Evaluator.decayArrayToPointer(result.value)
 						: result.value;
 					initData = decayed.data;
+					// If eval failed (e.g. use-after-free) but initializer was present,
+					// still treat as initialized with value 0
+					if (initData === null || initData === undefined) initData = 0;
 				}
 			}
 			value = this.env.declareVariable(node.name, type, initData);
@@ -655,8 +671,13 @@ export class Interpreter {
 			}
 		}
 
-		// Chained assignment: a = b = c = 0 — execute inner assignment first to emit ops
+		// Chained assignment: a = b = c = 0 — begin step first, then process inner
 		if (node.operator === '=' && node.value?.type === 'assignment') {
+			if (!sharesStep) {
+				this.emitter.beginStep({ line: node.line }, this.formatAssignDesc(node));
+				this.stepCount++;
+				sharesStep = true; // prevent duplicate beginStep below
+			}
 			this.executeAssignment(node.value, true);
 		}
 
@@ -885,8 +906,9 @@ export class Interpreter {
 			const newVal = expr.operator === '++' ? (oldVal + step) | 0 : (oldVal - step) | 0;
 
 			if (!sharesStep) {
-				const desc = expr.operand.type === 'identifier'
-					? `${expr.operand.name}${expr.operator}`
+				const name = expr.operand.type === 'identifier' ? expr.operand.name : '';
+				const desc = name
+					? (expr.prefix ? `${expr.operator}${name}` : `${name}${expr.operator}`)
 					: `${expr.operator}`;
 				this.emitter.beginStep({ line: node.line }, desc);
 				this.stepCount++;
@@ -990,9 +1012,19 @@ export class Interpreter {
 			return;
 		}
 
-		// Stdlib call
+		// Stdlib call — emit a step for visibility
+		if (!sharesStep) {
+			const argDescs = call.args.map(a => this.describeExpr(a)).join(', ');
+			this.emitter.beginStep({ line }, `${call.callee}(${argDescs})`);
+			this.stepCount++;
+		}
 		const result = this.evaluator.eval(call);
 		if (result.error) this.errors.push(result.error);
+
+		// For string functions that write to a destination buffer, update heap display children
+		if (call.callee === 'strcpy' || call.callee === 'strcat') {
+			this.updateHeapChildrenFromMemory(call.args[0]);
+		}
 	}
 
 	private executeFreeCall(call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
@@ -1013,7 +1045,7 @@ export class Interpreter {
 		}
 
 		if (!sharesStep) {
-			const argText = call.args[0].type === 'identifier' ? call.args[0].name : 'ptr';
+			const argText = this.describeExpr(call.args[0]);
 			this.emitter.beginStep({ line }, `free(${argText}) — deallocate memory`);
 			this.stepCount++;
 		}
@@ -1130,11 +1162,11 @@ export class Interpreter {
 				const condVal = condResult.value.data ?? 0;
 
 				if (condVal === 0) {
-					// Exit loop
+					// Exit loop — show the false condition check
 					const condText = this.describeExpr(node.condition);
 					this.emitter.beginStep(
-						{ line: node.line },
-						`for: exit loop`,
+						{ line: node.line, colStart: node.condColStart, colEnd: node.condColEnd },
+						`for: check ${condText} → false, exit loop`,
 						`${condText} → false`,
 					);
 					this.stepCount++;
@@ -1551,6 +1583,24 @@ export class Interpreter {
 
 	// === Helpers ===
 
+	private updateHeapChildrenFromMemory(destArg: ASTNode): void {
+		if (destArg.type !== 'identifier') return;
+		const ptrVar = this.env.lookupVariable(destArg.name);
+		if (!ptrVar || !ptrVar.data) return;
+		const baseAddr = ptrVar.data;
+		const block = this.env.getHeapBlock(baseAddr);
+		if (!block) return;
+		const blockId = this.emitter.getHeapBlockId(destArg.name);
+		if (!blockId) return;
+		// Update each byte child from memoryValues
+		for (let i = 0; i < block.size; i++) {
+			const val = this.memoryValues.get(baseAddr + i);
+			if (val !== undefined) {
+				this.emitter.directSetValue(`${blockId}-${i}`, String(val));
+			}
+		}
+	}
+
 	private isFreedAddress(address: number): boolean {
 		for (const block of this.env.getAllHeapBlocks().values()) {
 			if (block.status === 'freed' && address >= block.address && address < block.address + block.size) {
@@ -1574,7 +1624,8 @@ export class Interpreter {
 		}
 		// Float/double display with decimal precision
 		if (type.kind === 'primitive' && (type.name === 'float' || type.name === 'double')) {
-			return parseFloat(data.toFixed(6)).toString();
+			const s = parseFloat(data.toFixed(6)).toString();
+			return s.includes('.') ? s : s + '.0';
 		}
 		return String(data);
 	}
@@ -1737,13 +1788,23 @@ export class Interpreter {
 
 	private initStructFromList(type: CType & { kind: 'struct' }, children: ChildSpec[], values: ASTNode[], baseAddress?: number): void {
 		for (let i = 0; i < Math.min(type.fields.length, values.length); i++) {
+			const field = type.fields[i];
+			// Nested struct with brace-enclosed initializer
+			if (isStructType(field.type) && values[i].type === 'init_list') {
+				const nestedChildren = children[i].children;
+				if (nestedChildren) {
+					const nestedBase = baseAddress !== undefined ? baseAddress + field.offset : undefined;
+					this.initStructFromList(field.type, nestedChildren, values[i].values, nestedBase);
+				}
+				continue;
+			}
 			const result = this.evaluator.eval(values[i]);
 			if (result.error) this.errors.push(result.error);
 			const val = result.value.data ?? 0;
 			children[i].value = String(val);
 			// Store in memoryValues so field values can be read back (e.g. for pass-by-value)
 			if (baseAddress !== undefined) {
-				this.memoryValues.set(baseAddress + type.fields[i].offset, val);
+				this.memoryValues.set(baseAddress + field.offset, val);
 			}
 		}
 	}
