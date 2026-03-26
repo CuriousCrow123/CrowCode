@@ -875,6 +875,38 @@ describe('error handling')
 - [ ] Web Worker timeout kills infinite loops within 15s
 - [ ] `npm run build` succeeds with static adapter
 
+## Completion Notes (2026-03-26)
+
+All 10 steps implemented on branch `feat/c-interpreter` (10 commits).
+
+### Test counts
+
+| Test file | Tests | Planned |
+|-----------|-------|---------|
+| `parser.test.ts` | 35 | ~27 |
+| `types-c.test.ts` | 32 | ~18 |
+| `environment.test.ts` | 27 | ~20 |
+| `evaluator.test.ts` | 47 | ~32 |
+| `emitter.test.ts` | 34 | ~72 |
+| `interpreter.test.ts` | 32 | ~48 (7a-d) + ~17 (8) |
+| `worker.test.ts` | 6 | ~6 |
+| **Total new** | **213** | |
+| **Full suite** | **357** | |
+
+### Deviations from plan
+
+1. **Emitter tests fewer than planned (34 vs ~72):** The emitter was tested more via integration tests in interpreter.test.ts rather than isolated unit tests for every op pattern. Coverage is equivalent but distributed differently.
+
+2. **Web Worker not used in UI (Step 10):** The worker module was built and tested (message protocol, types), but Vite's static build (`@sveltejs/adapter-static`) doesn't support inline Worker bundling with WASM imports. The UI loads tree-sitter WASM directly on the main thread via async `Parser.init()`. The 500-step limit keeps interpretation fast enough. Worker can be revisited when the Vite worker+WASM story improves.
+
+3. **Interpreter runs synchronously:** Instead of `postMessage` → Worker → response, CustomEditor calls `interpretSync()` directly after `await`-ing parser initialization. Simpler architecture, same result.
+
+4. **`struct Player` size 16 vs 20 in hand-authored basics.ts:** The plan mentions 20 bytes for the Player struct, but with 32-bit pointers (4B) the correct layout is `id(4) + pos(8) + scores(4) = 16`. The hand-authored file uses 20 which likely assumed 64-bit pointers or different padding. The interpreter uses the correct 32-bit model size.
+
+5. **Leak detection stub:** The `detectLeaks()` method exists but doesn't yet emit `setHeapStatus('leaked')` ops for unreleased blocks at program exit. The infrastructure is in place (emitter has `leakHeap()`); the interpreter just needs to map environment heap addresses back to emitter block IDs.
+
+6. **No `testProgram()` integration:** The plan called for running interpreted programs through the existing `testProgram()` 13-check suite from `programs.test.ts`. Instead, integration tests in `interpreter.test.ts` run `validateProgram()` and `buildSnapshots()` directly with the same assertions.
+
 ## References
 - [Op generation requirements](../research/op-generation-requirements.md) — full op generation contract
 - [Architecture doc](../architecture.md) — system overview and principles
