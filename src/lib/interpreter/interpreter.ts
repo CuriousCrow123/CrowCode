@@ -1517,8 +1517,9 @@ export class Interpreter {
 		);
 		this.stepCount++;
 
+		const callerScope = this.env.currentScope();
 		this.emitter.enterFunction(fn.name, params, {
-			caller: 'main()',
+			caller: callerScope ? `${callerScope.name}()` : 'main()',
 			file: '',
 			line: fn.line,
 		});
