@@ -461,6 +461,7 @@ export function convertExpression(node: Node, errors: string[]): ASTNode | null 
 			return convertBinary(node, errors);
 
 		case 'unary_expression':
+		case 'pointer_expression':
 			return convertUnary(node, errors);
 
 		case 'update_expression':

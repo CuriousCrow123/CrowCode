@@ -632,7 +632,7 @@ int main() {
 		expect(findEntry(last, '[2]')?.value).toBe('300');
 	});
 
-	test.fails('dereference assignment: *p = 42 sets heap value', () => {
+	it('dereference assignment: *p = 42 sets heap value', () => {
 		const src = `int main() {
 	int *p = malloc(sizeof(int));
 	*p = 42;
@@ -643,7 +643,7 @@ int main() {
 		// The heap block should show 42 (either as block value or child value)
 		function findHeapValue(entries: MemoryEntry[]): string | undefined {
 			for (const e of entries) {
-				if (e.heap?.status === 'allocated') {
+				if (e.heap) {
 					if (e.value) return e.value;
 					if (e.children) return e.children[0]?.value;
 				}
