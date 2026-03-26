@@ -27,6 +27,9 @@ export type ParseResult = {
 
 export function parseSource(parser: Parser, source: string): ParseResult {
 	const tree = parser.parse(source);
+	if (!tree) {
+		return { result: { type: 'translation_unit', children: [] }, errors: ['Failed to parse source'] };
+	}
 	const errors: string[] = [];
 	const children: ASTNode[] = [];
 
@@ -238,7 +241,7 @@ function convertDeclaration(node: Node, errors: string[]): ASTNode | null {
 
 	const { name, typeSpec } = parseDeclarator(declNode, baseType, errors);
 
-	const initializer = initNode ? convertExpression(initNode, errors) : undefined;
+	const initializer = initNode ? (convertExpression(initNode, errors) ?? undefined) : undefined;
 
 	return {
 		type: 'declaration',
@@ -348,7 +351,7 @@ function convertReturn(node: Node, errors: string[]): ASTNode {
 		}
 	}
 
-	const value = children.length > 0 ? convertExpression(children[0], errors) : undefined;
+	const value = children.length > 0 ? (convertExpression(children[0], errors) ?? undefined) : undefined;
 	return { type: 'return_statement', value, line: line(node) };
 }
 

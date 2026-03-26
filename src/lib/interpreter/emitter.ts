@@ -391,8 +391,9 @@ export class DefaultEmitter implements OpEmitter {
 		if (path.length === 0) return undefined;
 
 		const rootVar = path[0];
-		let currentId = this.varMap.get(rootVar);
-		if (!currentId) return undefined;
+		const rootId = this.varMap.get(rootVar);
+		if (!rootId) return undefined;
+		let currentId: string = rootId;
 
 		for (let i = 1; i < path.length; i++) {
 			const field = path[i];
@@ -413,8 +414,7 @@ export class DefaultEmitter implements OpEmitter {
 			}
 
 			// Try direct ID construction
-			const directId = `${currentId}-${field}`;
-			currentId = directId;
+			currentId = `${currentId}-${field}`;
 		}
 
 		return currentId;

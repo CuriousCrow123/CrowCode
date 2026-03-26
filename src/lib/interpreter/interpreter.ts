@@ -972,16 +972,21 @@ export class Interpreter {
 
 	private findFirstStatementLine(body: ASTNode): number {
 		if (body.type === 'compound_statement' && body.children.length > 0) {
-			return body.children[0].line;
+			return this.getLine(body.children[0]);
 		}
-		return body.line;
+		return this.getLine(body);
 	}
 
 	private findClosingLine(node: ASTNode): number {
 		if (node.type === 'compound_statement' && node.children.length > 0) {
-			return node.children[node.children.length - 1].line + 1;
+			return this.getLine(node.children[node.children.length - 1]) + 1;
 		}
-		return node.line;
+		return this.getLine(node);
+	}
+
+	private getLine(node: ASTNode): number {
+		if ('line' in node) return node.line as number;
+		return 1;
 	}
 
 	private bodyHasDeclarations(body: ASTNode): boolean {

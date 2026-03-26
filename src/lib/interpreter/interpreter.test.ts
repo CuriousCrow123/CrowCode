@@ -18,7 +18,7 @@ beforeAll(async () => {
 	parser.setLanguage(lang);
 });
 
-function run(source: string, opts?: { maxSteps?: number }) {
+function run(source: string, opts?: { maxSteps?: number; maxFrames?: number }) {
 	return interpretSync(parser, source, opts);
 }
 
