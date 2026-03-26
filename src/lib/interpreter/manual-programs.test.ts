@@ -1344,3 +1344,115 @@ int main() {
 		expect(heapValues).toContain('0');
 	});
 });
+
+// ============================================================
+// Category 12: Advanced Integration
+// ============================================================
+
+describe('P12.1 — Bubble Sort', () => {
+	const source = `
+#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int arr[5] = {5, 3, 1, 4, 2};
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4 - i; j++) {
+            if (arr[j] > arr[j + 1]) {
+                int tmp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = tmp;
+            }
+        }
+    }
+    return 0;
+}`;
+
+	it('sorts array correctly', () => {
+		const { snapshots } = runProgram(source);
+		expect(lastValue(snapshots, '[0]')).toBe('1');
+		expect(lastValue(snapshots, '[1]')).toBe('2');
+		expect(lastValue(snapshots, '[2]')).toBe('3');
+		expect(lastValue(snapshots, '[3]')).toBe('4');
+		expect(lastValue(snapshots, '[4]')).toBe('5');
+	});
+});
+
+describe('P12.2 — Multi-Function Program', () => {
+	const source = `
+#include <stdio.h>
+
+int max(int a, int b) {
+    if (a > b) { return a; }
+    return b;
+}
+
+int clamp(int val, int lo, int hi) {
+    return max(lo, val > hi ? hi : val);
+}
+
+int main() {
+    int a = clamp(15, 0, 10);
+    int b = clamp(-5, 0, 10);
+    int c = clamp(5, 0, 10);
+    return 0;
+}`;
+
+	it('clamps values correctly', () => {
+		const { snapshots } = runProgram(source);
+		expect(lastValue(snapshots, 'a')).toBe('10');
+		expect(lastValue(snapshots, 'b')).toBe('0');
+		expect(lastValue(snapshots, 'c')).toBe('5');
+	});
+});
+
+describe('P12.4 — Early Return from Nested Context', () => {
+	const source = `
+#include <stdio.h>
+
+int search(int target) {
+    for (int i = 0; i < 5; i++) {
+        if (i == target) {
+            return i * i;
+        }
+    }
+    return -1;
+}
+
+int main() {
+    int a = search(3);
+    int b = search(10);
+    return 0;
+}`;
+
+	it('returns correct values', () => {
+		const { snapshots } = runProgram(source);
+		expect(lastValue(snapshots, 'a')).toBe('9');
+		expect(lastValue(snapshots, 'b')).toBe('-1');
+	});
+});
+
+describe('P12.5 — Recursive Fibonacci', () => {
+	const source = `
+#include <stdio.h>
+
+int fib(int n) {
+    if (n <= 0) { return 0; }
+    if (n == 1) { return 1; }
+    return fib(n - 1) + fib(n - 2);
+}
+
+int main() {
+    int a = fib(0);
+    int b = fib(1);
+    int c = fib(6);
+    return 0;
+}`;
+
+	it('computes fibonacci correctly', () => {
+		const { snapshots } = runProgram(source);
+		expect(lastValue(snapshots, 'a')).toBe('0');
+		expect(lastValue(snapshots, 'b')).toBe('1');
+		expect(lastValue(snapshots, 'c')).toBe('8');
+	});
+});

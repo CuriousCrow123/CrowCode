@@ -973,3 +973,139 @@ int main() {
 ```
 
 **Check:** Dereference writes update heap block value correctly.
+
+---
+
+## 12. Advanced Integration
+
+### P12.1 — Bubble Sort
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int arr[5] = {5, 3, 1, 4, 2};
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4 - i; j++) {
+            if (arr[j] > arr[j + 1]) {
+                int tmp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = tmp;
+            }
+        }
+    }
+    // expect: {1, 2, 3, 4, 5}
+    return 0;
+}
+```
+
+**Check:** Array elements are sorted after nested loop passes. Swap via temp variable works.
+
+---
+
+### P12.2 — Multi-Function Program
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int max(int a, int b) {
+    if (a > b) { return a; }
+    return b;
+}
+
+int clamp(int val, int lo, int hi) {
+    return max(lo, val > hi ? hi : val);
+}
+
+int main() {
+    int a = clamp(15, 0, 10);   // expect: 10
+    int b = clamp(-5, 0, 10);   // expect: 0
+    int c = clamp(5, 0, 10);    // expect: 5
+    return 0;
+}
+```
+
+**Check:** Functions call each other. Ternary inside function args. Return values chain correctly.
+
+---
+
+### P12.3 — Memory Pool Pattern
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int n = 4;
+    int *blocks[4];
+    for (int i = 0; i < n; i++) {
+        blocks[i] = malloc(sizeof(int));
+        *blocks[i] = (i + 1) * 100;
+    }
+    // expect: 4 heap blocks with values 100, 200, 300, 400
+
+    int sum = 0;
+    for (int i = 0; i < n; i++) {
+        sum += *blocks[i];
+    }
+    // expect: sum = 1000
+
+    for (int i = 0; i < n; i++) {
+        free(blocks[i]);
+    }
+    // expect: all 4 blocks freed
+    return 0;
+}
+```
+
+**Check:** Array of pointers, each pointing to heap. All allocated, summed, then freed.
+
+---
+
+### P12.4 — Early Return from Nested Context
+
+```c
+#include <stdio.h>
+
+int search(int target) {
+    for (int i = 0; i < 5; i++) {
+        if (i == target) {
+            return i * i;
+        }
+    }
+    return -1;
+}
+
+int main() {
+    int a = search(3);    // expect: 9
+    int b = search(10);   // expect: -1
+    return 0;
+}
+```
+
+**Check:** Function returns from inside a for-loop. Not-found case returns -1.
+
+---
+
+### P12.5 — Recursive Fibonacci
+
+```c
+#include <stdio.h>
+
+int fib(int n) {
+    if (n <= 0) { return 0; }
+    if (n == 1) { return 1; }
+    return fib(n - 1) + fib(n - 2);
+}
+
+int main() {
+    int a = fib(0);    // expect: 0
+    int b = fib(1);    // expect: 1
+    int c = fib(6);    // expect: 8
+    return 0;
+}
+```
+
+**Check:** Recursive calls with two branches. Multiple stack frames build up. Correct fibonacci values.
