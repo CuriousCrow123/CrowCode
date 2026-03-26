@@ -1,7 +1,7 @@
 ---
 title: Comprehensive Interpreter Value-Correctness Test Suite
 type: feat
-status: active
+status: completed
 date: 2026-03-26
 deepened: 2026-03-26
 ---
