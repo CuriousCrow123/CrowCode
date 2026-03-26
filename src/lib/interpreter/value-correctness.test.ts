@@ -1226,6 +1226,35 @@ describe('previously planned spec constructs', () => {
 		expect(findEntry(last, 'x')?.value).toBe('10');
 	});
 
+	it('float arithmetic preserves decimal', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = 3.14;
+	float y = x * 2.0;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('3.14');
+		expect(findEntry(last, 'y')?.value).toBe('6.28');
+	});
+
+	it('int division still truncates', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int x = 7 / 2;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('3');
+	});
+
+	it('float cast to int truncates', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	int z = (int)3.7;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'z')?.value).toBe('3');
+	});
+
 	it('short-circuit && skips right side when left is false', () => {
 		const { snapshots } = interpretAndBuild(`int main() {
 	int x = 0;

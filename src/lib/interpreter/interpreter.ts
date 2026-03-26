@@ -1396,6 +1396,10 @@ export class Interpreter {
 			if (data === 0) return 'NULL';
 			return formatAddress(data);
 		}
+		// Float/double display with decimal precision
+		if (type.kind === 'primitive' && (type.name === 'float' || type.name === 'double')) {
+			return parseFloat(data.toFixed(6)).toString();
+		}
 		return String(data);
 	}
 

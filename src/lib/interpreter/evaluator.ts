@@ -40,6 +40,10 @@ export class Evaluator {
 	eval(node: ASTNode): EvalResult {
 		switch (node.type) {
 			case 'number_literal':
+				// Detect float literals (has fractional part)
+				if (!Number.isInteger(node.value)) {
+					return this.ok(node.value, primitiveType('double'));
+				}
 				return this.ok(node.value);
 
 			case 'char_literal':
@@ -98,6 +102,10 @@ export class Evaluator {
 	}
 
 	// === Helpers ===
+
+	private static isFloat(type: CType): boolean {
+		return type.kind === 'primitive' && (type.name === 'float' || type.name === 'double');
+	}
 
 	private ok(data: number | null, type?: CType): EvalResult {
 		return {
@@ -181,13 +189,26 @@ export class Evaluator {
 			}
 		}
 
+		// Float type promotion
+		const isFloat = Evaluator.isFloat(leftVal.type) || Evaluator.isFloat(rightVal.type);
+		let promotedType: CType | undefined;
+		if (isFloat) {
+			if (Evaluator.isFloat(leftVal.type) && Evaluator.isFloat(rightVal.type)) {
+				promotedType = (leftVal.type.kind === 'primitive' && leftVal.type.name === 'double') ||
+					(rightVal.type.kind === 'primitive' && rightVal.type.name === 'double')
+					? primitiveType('double') : primitiveType('float');
+			} else {
+				promotedType = Evaluator.isFloat(leftVal.type) ? leftVal.type : rightVal.type;
+			}
+		}
+
 		switch (node.operator) {
-			case '+': return this.ok(toInt32(l + r));
-			case '-': return this.ok(toInt32(l - r));
-			case '*': return this.ok(toInt32(Math.imul(l, r)));
+			case '+': return this.ok(isFloat ? l + r : toInt32(l + r), promotedType);
+			case '-': return this.ok(isFloat ? l - r : toInt32(l - r), promotedType);
+			case '*': return this.ok(isFloat ? l * r : toInt32(Math.imul(l, r)), promotedType);
 			case '/':
 				if (r === 0) return this.err(`Division by zero at line ${node.line}`);
-				return this.ok(toInt32(Math.trunc(l / r)));
+				return this.ok(isFloat ? l / r : toInt32(Math.trunc(l / r)), promotedType);
 			case '%':
 				if (r === 0) return this.err(`Division by zero at line ${node.line}`);
 				return this.ok(toInt32(l % r));
@@ -424,12 +445,18 @@ export class Evaluator {
 
 		const targetType = this.typeReg.resolve(node.targetType);
 		let data = result.value.data;
-		// Narrow numeric value to target type size
+		// Cast to target type
 		if (data !== null && targetType.kind === 'primitive') {
-			const size = sizeOf(targetType);
-			if (size === 1) data = (data << 24) >> 24;       // char: sign-extend 8-bit
-			else if (size === 2) data = (data << 16) >> 16;   // short: sign-extend 16-bit
-			else if (size <= 4) data = data | 0;              // int: toInt32
+			if (Evaluator.isFloat(targetType)) {
+				// Cast to float/double: preserve value
+			} else {
+				// Cast to integer: truncate float first, then narrow
+				if (Evaluator.isFloat(result.value.type)) data = Math.trunc(data);
+				const size = sizeOf(targetType);
+				if (size === 1) data = (data << 24) >> 24;       // char: sign-extend 8-bit
+				else if (size === 2) data = (data << 16) >> 16;   // short: sign-extend 16-bit
+				else if (size <= 4) data = data | 0;              // int: toInt32
+			}
 		}
 		return {
 			value: {
