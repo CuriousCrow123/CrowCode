@@ -23,6 +23,16 @@
 	let errors = $state<string[]>([]);
 	let warnings = $state<string[]>([]);
 
+	// Per-tab run result cache
+	interface CachedRun {
+		program: Program;
+		errors: string[];
+		warnings: string[];
+		stepIndex: number;
+		subStepMode: boolean;
+	}
+	const runCache = new Map<number, CachedRun>();
+
 	// Abort guard for stale runs
 	let runGeneration = 0;
 
@@ -43,12 +53,21 @@
 			warnings = result.warnings;
 
 			if (result.program.steps.length > 0) {
+				const program = JSON.parse(JSON.stringify(result.program));
 				mode = {
 					state: 'viewing',
-					program: JSON.parse(JSON.stringify(result.program)),
+					program,
 					errors: result.errors,
 					warnings: result.warnings,
 				};
+				// Cache the result for this tab
+				runCache.set(store.active, {
+					program,
+					errors: result.errors,
+					warnings: result.warnings,
+					stepIndex: 0,
+					subStepMode: false,
+				});
 			} else {
 				if (errors.length === 0) {
 					errors = ['No steps generated — check your code.'];
@@ -63,19 +82,54 @@
 	}
 
 	function edit() {
+		// Save step position before leaving viewing mode
+		if (mode.state === 'viewing') {
+			const cached = runCache.get(store.active);
+			if (cached) {
+				cached.stepIndex = internalIndex;
+				cached.subStepMode = subStepMode;
+			}
+		}
 		mode = { state: 'editing' };
 	}
 
 	function handleTabSelect(index: number) {
+		// Save step position of current tab before switching
+		if (mode.state === 'viewing') {
+			const cached = runCache.get(store.active);
+			if (cached) {
+				cached.stepIndex = internalIndex;
+				cached.subStepMode = subStepMode;
+			}
+		}
+
 		store.setActive(index);
-		mode = { state: 'editing' };
-		errors = [];
-		warnings = [];
 		runGeneration++; // abort any in-flight run
+
+		// Restore cached run for the new tab
+		const cached = runCache.get(index);
+		if (cached) {
+			mode = {
+				state: 'viewing',
+				program: cached.program,
+				errors: cached.errors,
+				warnings: cached.warnings,
+			};
+			errors = cached.errors;
+			warnings = cached.warnings;
+			internalIndex = cached.stepIndex;
+			subStepMode = cached.subStepMode;
+		} else {
+			mode = { state: 'editing' };
+			errors = [];
+			warnings = [];
+		}
 	}
 
 	function handleSourceChange(source: string) {
 		store.updateSource(store.active, source);
+		// Invalidate cache — source changed since last run
+		runCache.delete(store.active);
 	}
 
 	function loadTestProgram(event: Event) {
@@ -85,6 +139,7 @@
 		const prog = testPrograms.find((p) => p.id === id);
 		if (prog) {
 			store.updateSource(store.active, prog.source);
+			runCache.delete(store.active);
 			mode = { state: 'editing' };
 			errors = [];
 			warnings = [];
@@ -117,14 +172,6 @@
 		const loc = currentStep?.location ?? { line: 1 };
 		if (subStepMode) return loc;
 		return { line: loc.line };
-	});
-
-	// Reset step index when program changes
-	$effect(() => {
-		if (viewingProgram) {
-			internalIndex = 0;
-			subStepMode = false;
-		}
 	});
 
 	function prev() {
@@ -178,8 +225,8 @@
 			tabs={store.tabs}
 			active={store.active}
 			onselect={handleTabSelect}
-			onadd={() => store.addTab()}
-			onclose={(i) => store.removeTab(i)}
+			onadd={() => { store.addTab(); runCache.clear(); mode = { state: 'editing' }; errors = []; warnings = []; }}
+			onclose={(i) => { store.removeTab(i); runCache.clear(); mode = { state: 'editing' }; errors = []; warnings = []; }}
 		/>
 
 		<div class="flex items-center gap-2 ml-auto">
@@ -235,14 +282,31 @@
 
 	<!-- Main area: editor + memory view -->
 	<div class="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-4">
-		<!-- Code Editor -->
-		<div class="h-[70vh]">
-			<CodeEditor
-				source={store.activeTab.source}
-				location={editorLocation}
-				readOnly={mode.state === 'viewing'}
-				onchange={mode.state === 'editing' ? handleSourceChange : undefined}
-			/>
+		<!-- Code Editor + Step Controls -->
+		<div class="flex flex-col">
+			<div class="h-[70vh]">
+				<CodeEditor
+					source={store.activeTab.source}
+					location={editorLocation}
+					readOnly={mode.state === 'viewing'}
+					onchange={mode.state === 'editing' ? handleSourceChange : undefined}
+				/>
+			</div>
+
+			{#if mode.state === 'viewing'}
+				<div class="mt-3">
+					<StepControls
+						current={visiblePosition}
+						total={visibleIndices.length}
+						{subStepMode}
+						description={currentStep?.description}
+						evaluation={currentStep?.evaluation}
+						onprev={prev}
+						onnext={next}
+						ontogglesubstep={toggleSubStep}
+					/>
+				</div>
+			{/if}
 		</div>
 
 		<!-- Memory View -->
@@ -256,20 +320,4 @@
 			{/if}
 		</div>
 	</div>
-
-	<!-- Step controls (viewing mode only) -->
-	{#if mode.state === 'viewing'}
-		<div class="w-full max-w-7xl mt-4">
-			<StepControls
-				current={visiblePosition}
-				total={visibleIndices.length}
-				{subStepMode}
-				description={currentStep?.description}
-				evaluation={currentStep?.evaluation}
-				onprev={prev}
-				onnext={next}
-				ontogglesubstep={toggleSubStep}
-			/>
-		</div>
-	{/if}
 </main>
