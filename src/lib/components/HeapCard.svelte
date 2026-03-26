@@ -14,6 +14,8 @@
 
 	const blocks = $derived(entry.children ?? []);
 
+	let collapsed = $state(false);
+
 	// Track which blocks have their values expanded
 	let expandedValues: Record<string, boolean> = $state({});
 
@@ -36,11 +38,17 @@
 </script>
 
 <div class="rounded-lg border border-zinc-800 overflow-hidden">
-	<div class="flex items-center justify-between px-4 py-2.5 bg-zinc-900/80 border-b border-zinc-800">
-		<span class="font-mono font-semibold text-purple-400">{entry.name || 'Heap'}</span>
-	</div>
+	<button
+		onclick={() => (collapsed = !collapsed)}
+		class="w-full flex items-center justify-between px-4 py-2.5 bg-zinc-900/80 border-b border-zinc-800 cursor-pointer hover:bg-zinc-800/80 transition-colors text-left"
+	>
+		<span class="font-mono font-semibold text-purple-400 flex items-center gap-2">
+			<span class="text-zinc-600 text-xs">{collapsed ? '&#9654;' : '&#9660;'}</span>
+			{entry.name || 'Heap'}
+		</span>
+	</button>
 
-	{#if blocks.length > 0}
+	{#if !collapsed && blocks.length > 0}
 		<table class="w-full text-sm table-fixed">
 			<colgroup>
 				<col class="w-[18%]" />
@@ -115,7 +123,7 @@
 				{/each}
 			</tbody>
 		</table>
-	{:else}
+	{:else if !collapsed}
 		<div class="px-4 py-3 text-zinc-500 text-sm">No heap allocations</div>
 	{/if}
 </div>

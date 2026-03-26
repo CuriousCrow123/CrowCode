@@ -13,11 +13,19 @@
 	const variables = $derived(
 		entry.children?.filter((c) => c.kind !== 'scope') ?? []
 	);
+
+	let collapsed = $state(false);
 </script>
 
 <div class="rounded-lg border border-zinc-800 overflow-hidden">
-	<div class="flex items-center justify-between px-4 py-2.5 bg-zinc-900/80 border-b border-zinc-800">
-		<span class="font-mono font-semibold text-blue-400">{entry.name}</span>
+	<button
+		onclick={() => (collapsed = !collapsed)}
+		class="w-full flex items-center justify-between px-4 py-2.5 bg-zinc-900/80 border-b border-zinc-800 cursor-pointer hover:bg-zinc-800/80 transition-colors text-left"
+	>
+		<span class="font-mono font-semibold text-blue-400 flex items-center gap-2">
+			<span class="text-zinc-600 text-xs">{collapsed ? '&#9654;' : '&#9660;'}</span>
+			{entry.name}
+		</span>
 		<div class="flex gap-4 text-xs text-zinc-500 font-mono">
 			{#if entry.scope?.caller}
 				<span>called by <span class="text-zinc-400">{entry.scope.caller}</span></span>
@@ -32,9 +40,9 @@
 				<span class="text-zinc-600">{entry.address}</span>
 			{/if}
 		</div>
-	</div>
+	</button>
 
-	{#if variables.length > 0}
+	{#if !collapsed && variables.length > 0}
 		<table class="w-full text-sm table-fixed">
 			<colgroup>
 				<col class="w-[20%]" />
