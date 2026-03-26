@@ -1444,6 +1444,7 @@ export class Interpreter {
 
 		this.frameDepth++;
 		const savedSP = this.env.saveStackPointer();
+		const callerName = this.env.currentScope()?.name ?? '_start';
 
 		// Push scope and declare params in environment first (to get addresses)
 		this.env.pushScope(fn.name);
@@ -1517,9 +1518,8 @@ export class Interpreter {
 		);
 		this.stepCount++;
 
-		const callerScope = this.env.currentScope();
 		this.emitter.enterFunction(fn.name, params, {
-			caller: callerScope ? `${callerScope.name}()` : 'main()',
+			caller: `${callerName}()`,
 			file: '',
 			line: fn.line,
 		});
