@@ -551,8 +551,11 @@ export function convertExpression(node: Node, errors: string[]): ASTNode | null 
 	if (!node) return null;
 
 	switch (node.type) {
-		case 'number_literal':
-			return { type: 'number_literal', value: parseNumber(node.text), line: line(node) };
+		case 'number_literal': {
+			const text = node.text;
+			const isFloat = text.includes('.') || text.includes('e') || text.includes('E');
+			return { type: 'number_literal', value: parseNumber(text), isFloat, line: line(node) };
+		}
 
 		case 'string_literal':
 			return { type: 'string_literal', value: node.text.slice(1, -1), line: line(node) };

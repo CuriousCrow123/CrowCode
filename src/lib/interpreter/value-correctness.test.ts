@@ -2263,7 +2263,7 @@ describe('math functions', () => {
 	return 0;
 }`);
 		const last = snapshots[snapshots.length - 1];
-		expect(findEntry(last, 'x')?.value).toBe('5');
+		expect(findEntry(last, 'x')?.value).toBe('5.0');
 	});
 
 	it('pow returns correct value', () => {
@@ -2272,6 +2272,346 @@ describe('math functions', () => {
 	return 0;
 }`);
 		const last = snapshots[snapshots.length - 1];
-		expect(findEntry(last, 'x')?.value).toBe('1024');
+		expect(findEntry(last, 'x')?.value).toBe('1024.0');
+	});
+});
+
+// === Pipeline audit bug fixes ===
+
+describe('BUG-1: float literal detection', () => {
+	it('float division 1.0 / 2.0 produces 0.5', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float half = 1.0 / 2.0;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'half')?.value).toBe('0.5');
+	});
+
+	it('float literal 3.0 assigned to float variable shows 3.0', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = 3.0;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('3.0');
+	});
+
+	it('int / float produces float result', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = 5 / 2.0;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('2.5');
+	});
+
+	it('float multiplication 2.0 * 3.0 produces 6.0', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = 2.0 * 3.0;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('6.0');
+	});
+
+	it('float division produces correct float result even in int context', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = 1.0 / 2.0;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('0.5');
+	});
+});
+
+describe('BUG-4: nested struct initializer', () => {
+	it('nested struct initializer sets inner fields', () => {
+		const { snapshots } = interpretAndBuild(`struct Point { int x; int y; };
+struct Player { int id; struct Point pos; };
+int main() {
+	struct Player p = {1, {10, 20}};
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, '.id')?.value).toBe('1');
+		expect(findEntry(last, '.x')?.value).toBe('10');
+		expect(findEntry(last, '.y')?.value).toBe('20');
+	});
+
+	it('partial nested struct initializer fills missing fields with 0', () => {
+		const { snapshots } = interpretAndBuild(`struct Point { int x; int y; };
+struct Player { int id; struct Point pos; };
+int main() {
+	struct Player p = {1, {10}};
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, '.id')?.value).toBe('1');
+		expect(findEntry(last, '.x')?.value).toBe('10');
+		expect(findEntry(last, '.y')?.value).toBe('0');
+	});
+});
+
+describe('BUG-2: strcpy step emission', () => {
+	it('strcpy as expression statement produces a step', () => {
+		const { program } = run(`int main() {
+	char *src = "hi";
+	char *dst = malloc(8);
+	strcpy(dst, src);
+	return 0;
+}`);
+		const strcpyStep = program.steps.find(s => s.description?.includes('strcpy'));
+		expect(strcpyStep).toBeDefined();
+	});
+
+	it('strcpy followed by strlen shows consistent result', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	char *src = "hi";
+	char *dst = malloc(8);
+	strcpy(dst, src);
+	int len = strlen(dst);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'len')?.value).toBe('2');
+	});
+
+	it('strlen as expression statement produces a step', () => {
+		const { program } = run(`int main() {
+	char *s = "hello";
+	strlen(s);
+	return 0;
+}`);
+		const step = program.steps.find(s => s.description?.includes('strlen'));
+		expect(step).toBeDefined();
+	});
+
+	it('strcmp as expression statement produces a step', () => {
+		const { program } = run(`int main() {
+	char *a = "abc";
+	char *b = "def";
+	strcmp(a, b);
+	return 0;
+}`);
+		const step = program.steps.find(s => s.description?.includes('strcmp'));
+		expect(step).toBeDefined();
+	});
+});
+
+describe('BUG-5: UAF display', () => {
+	it('use-after-free read does not show variable as (uninit)', () => {
+		const { program, errors } = run(`int main() {
+	int *p = malloc(sizeof(int));
+	*p = 42;
+	free(p);
+	int x = *p;
+	return 0;
+}`);
+		expect(errors.some(e => e.includes('Use-after-free'))).toBe(true);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		const x = findEntry(last, 'x');
+		expect(x).toBeDefined();
+		expect(x?.value).not.toBe('(uninit)');
+	});
+
+	it('use-after-free write still produces error', () => {
+		const { errors } = run(`int main() {
+	int *p = malloc(sizeof(int));
+	free(p);
+	*p = 99;
+	return 0;
+}`);
+		expect(errors.some(e => e.includes('Use-after-free'))).toBe(true);
+	});
+});
+
+describe('BUG-3: chained assignment step boundaries', () => {
+	it('chained a = b = c = 42 sets all values at the assignment step', () => {
+		const { program } = run(`int main() {
+	int a = 0;
+	int b = 0;
+	int c = 0;
+	a = b = c = 42;
+	return 0;
+}`);
+		const snapshots = buildSnapshots(program);
+		const chainIdx = program.steps.findIndex(s =>
+			s.description?.includes('a =')
+		);
+		expect(chainIdx).toBeGreaterThan(-1);
+		const snap = snapshots[chainIdx];
+		expect(findEntry(snap, 'a')?.value).toBe('42');
+		expect(findEntry(snap, 'b')?.value).toBe('42');
+		expect(findEntry(snap, 'c')?.value).toBe('42');
+	});
+
+	it('chained assignment values do not bleed into previous step', () => {
+		const { program } = run(`int main() {
+	int a = 0;
+	int b = 0;
+	int c = 0;
+	a = b = c = 42;
+	return 0;
+}`);
+		const snapshots = buildSnapshots(program);
+		const chainIdx = program.steps.findIndex(s =>
+			s.description?.includes('a =')
+		);
+		const prevSnap = snapshots[chainIdx - 1];
+		expect(findEntry(prevSnap, 'a')?.value).toBe('0');
+		expect(findEntry(prevSnap, 'b')?.value).toBe('0');
+		expect(findEntry(prevSnap, 'c')?.value).toBe('0');
+	});
+});
+
+describe('BUG-7: return descriptions', () => {
+	it('intermediate recursive returns do not say "assign to X"', () => {
+		const { program } = run(`int factorial(int n) {
+	if (n <= 1) return 1;
+	return n * factorial(n - 1);
+}
+int main() {
+	int result = factorial(3);
+	return 0;
+}`);
+		const returnSteps = program.steps.filter(s =>
+			s.description?.includes('factorial() returns') && s.description?.includes('assign to')
+		);
+		expect(returnSteps.length).toBe(1);
+		expect(returnSteps[0].description).toContain('assign to result');
+	});
+
+	it('nested non-recursive call inner return does not say "assign to"', () => {
+		const { program } = run(`int inner(int x) { return x * 2; }
+int outer(int x) { return inner(x) + 1; }
+int main() {
+	int val = outer(5);
+	return 0;
+}`);
+		const innerReturns = program.steps.filter(s =>
+			s.description?.includes('inner() returns') && s.description?.includes('assign to')
+		);
+		expect(innerReturns.length).toBe(0);
+	});
+});
+
+describe('MINOR-1: prefix/postfix descriptions', () => {
+	it('prefix ++a shows description as ++a', () => {
+		const { program } = run(`int main() {
+	int a = 5;
+	++a;
+	return 0;
+}`);
+		const step = program.steps.find(s => s.description?.includes('++'));
+		expect(step?.description).toContain('++a');
+	});
+
+	it('postfix a++ still shows description as a++', () => {
+		const { program } = run(`int main() {
+	int a = 5;
+	a++;
+	return 0;
+}`);
+		const step = program.steps.find(s => s.description?.includes('++'));
+		expect(step?.description).toContain('a++');
+		expect(step?.description).not.toBe('++a');
+	});
+
+	it('prefix --a shows description as --a', () => {
+		const { program } = run(`int main() {
+	int a = 5;
+	--a;
+	return 0;
+}`);
+		const step = program.steps.find(s => s.description?.includes('--'));
+		expect(step?.description).toContain('--a');
+	});
+});
+
+describe('MINOR-2: for-loop exit condition', () => {
+	it('for loop exit shows condition evaluated to false', () => {
+		const { program } = run(`int main() {
+	for (int i = 0; i < 2; i++) {
+		int x = i;
+	}
+	return 0;
+}`);
+		const falseStep = program.steps.find(s =>
+			s.description?.includes('false') && s.description?.includes('i < 2')
+		);
+		expect(falseStep).toBeDefined();
+	});
+});
+
+describe('MINOR-7: float display', () => {
+	it('float value 5.0 displays with decimal point', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = 5.0;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('5.0');
+	});
+
+	it('float value 2.5 still displays correctly', () => {
+		const { snapshots } = interpretAndBuild(`int main() {
+	float x = 2.5;
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('2.5');
+	});
+});
+
+describe('MINOR-8: break/continue steps', () => {
+	it('break statement produces a visible step', () => {
+		const { program } = run(`int main() {
+	for (int i = 0; i < 10; i++) {
+		if (i == 2) break;
+	}
+	return 0;
+}`);
+		const breakStep = program.steps.find(s => s.description === 'break');
+		expect(breakStep).toBeDefined();
+	});
+
+	it('continue statement produces a visible step', () => {
+		const { program } = run(`int main() {
+	for (int i = 0; i < 5; i++) {
+		if (i == 2) continue;
+	}
+	return 0;
+}`);
+		const contStep = program.steps.find(s => s.description === 'continue');
+		expect(contStep).toBeDefined();
+	});
+});
+
+describe('MINOR-9: comment handling', () => {
+	it('comment nodes do not produce errors', () => {
+		const { errors } = run(`int main() {
+	int x = 5;
+	// this is a comment
+	int y = 10;
+	return 0;
+}`);
+		expect(errors.filter(e => e.includes('comment'))).toHaveLength(0);
+	});
+});
+
+describe('MINOR-6: function pointer type display', () => {
+	it('function pointer type displays without trailing star', () => {
+		const { snapshots } = interpretAndBuild(`int add(int a, int b) { return a + b; }
+int main() {
+	int (*fp)(int, int) = add;
+	int x = fp(3, 4);
+	return 0;
+}`);
+		const last = snapshots[snapshots.length - 1];
+		const fp = findEntry(last, 'fp');
+		expect(fp?.type).toBeDefined();
+		expect(fp?.type).not.toMatch(/\*$/);
 	});
 });

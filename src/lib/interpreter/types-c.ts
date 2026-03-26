@@ -150,6 +150,8 @@ export function typeToString(type: CType): string {
 		case 'primitive':
 			return type.name;
 		case 'pointer':
+			// Function pointer: don't add extra * — the function notation already includes (*)
+			if (type.pointsTo.kind === 'function') return typeToString(type.pointsTo);
 			return typeToString(type.pointsTo) + '*';
 		case 'array':
 			return `${typeToString(type.elementType)}[${type.size}]`;
