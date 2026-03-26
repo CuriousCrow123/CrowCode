@@ -429,7 +429,22 @@ export class DefaultEmitter implements OpEmitter {
 
 		// Check if root var points to heap
 		const heapBlockId = this.ptrTargetMap.get(rootVar);
-		if (!heapBlockId) return this.resolvePathId(path);
+
+		if (!heapBlockId) {
+			// Root is not a heap pointer, but a field in the path might be.
+			// Walk the path checking each segment against ptrTargetMap.
+			for (let i = 1; i < path.length; i++) {
+				const fieldHeapBlock = this.ptrTargetMap.get(path[i]);
+				if (fieldHeapBlock) {
+					// Found a pointer field — resolve remaining path from this heap block
+					const remaining = path.slice(i + 1);
+					if (remaining.length === 0) return fieldHeapBlock;
+					return this.resolvePointerPath([path[i], ...remaining]);
+				}
+			}
+			// No pointer in path — resolve as stack variable path
+			return this.resolvePathId(path);
+		}
 
 		if (path.length === 1) return heapBlockId;
 

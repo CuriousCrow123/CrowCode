@@ -342,7 +342,14 @@ export class Interpreter {
 
 			// Infer heap type from pointer type
 			if (isPointerType(declType)) {
-				heapType = declType.pointsTo;
+				const elemType = declType.pointsTo;
+				const elemSize = sizeOf(elemType);
+				// If allocating more than one element, treat as array
+				if (elemSize > 0 && totalSize > elemSize && totalSize % elemSize === 0) {
+					heapType = arrayType(elemType, totalSize / elemSize);
+				} else {
+					heapType = elemType;
+				}
 			} else {
 				heapType = primitiveType('void');
 			}
@@ -442,7 +449,13 @@ export class Interpreter {
 			totalSize = args[0]?.data ?? 0;
 			allocator = 'malloc';
 			if (targetType && isPointerType(targetType)) {
-				heapType = targetType.pointsTo;
+				const elemType = targetType.pointsTo;
+				const elemSize = sizeOf(elemType);
+				if (elemSize > 0 && totalSize > elemSize && totalSize % elemSize === 0) {
+					heapType = arrayType(elemType, totalSize / elemSize);
+				} else {
+					heapType = elemType;
+				}
 			} else {
 				heapType = primitiveType('void');
 			}
@@ -589,14 +602,23 @@ export class Interpreter {
 			}
 			const index = idxResult.value.data ?? 0;
 
-			// Bounds check for heap arrays (pointer-based access)
+			// Bounds check for arrays
 			const objResult = this.evaluator.eval(node.target.object);
-			if (!objResult.error && isPointerType(objResult.value.type)) {
-				const heapAddr = objResult.value.data ?? 0;
-				const block = this.env.getHeapBlock(heapAddr);
-				if (block && isArrayType(block.type) && (index < 0 || index >= block.type.size)) {
-					this.errors.push(`Heap buffer overflow: index ${index} out of bounds (size ${block.type.size}) at line ${node.line}`);
-					return;
+			if (!objResult.error) {
+				if (isPointerType(objResult.value.type)) {
+					// Heap array bounds check
+					const heapAddr = objResult.value.data ?? 0;
+					const block = this.env.getHeapBlock(heapAddr);
+					if (block && isArrayType(block.type) && (index < 0 || index >= block.type.size)) {
+						this.errors.push(`Heap buffer overflow: index ${index} out of bounds (size ${block.type.size}) at line ${node.line}`);
+						return;
+					}
+				} else if (isArrayType(objResult.value.type)) {
+					// Stack array bounds check
+					if (index < 0 || index >= objResult.value.type.size) {
+						this.errors.push(`Array index ${index} out of bounds (size ${objResult.value.type.size}) at line ${node.line}`);
+						return;
+					}
 				}
 			}
 

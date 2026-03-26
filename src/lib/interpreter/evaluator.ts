@@ -228,15 +228,15 @@ export class Evaluator {
 			if (result.value.data === 0 || result.value.data === null) {
 				return this.err(`Null pointer dereference at line ${node.line}`);
 			}
-			// We can't actually read memory — the interpreter handles this
-			// Return a value pointing to the address
 			const ptrType = result.value.type;
 			const pointedType = isPointerType(ptrType) ? ptrType.pointsTo : primitiveType('int');
+			const addr = result.value.data;
+			const memVal = this.memReader?.(addr);
 			return {
 				value: {
 					type: pointedType,
-					data: null,
-					address: result.value.data,
+					data: memVal ?? null,
+					address: addr,
 				},
 			};
 		}
