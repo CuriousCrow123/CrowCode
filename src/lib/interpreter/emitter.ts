@@ -532,6 +532,10 @@ export class DefaultEmitter implements OpEmitter {
 
 	// === Public utilities ===
 
+	directSetValue(id: string, value: string): void {
+		this.addOp({ op: 'setValue', id, value });
+	}
+
 	getVarEntryId(name: string): string | undefined {
 		return this.varMap.get(name);
 	}

@@ -19,7 +19,8 @@
 	}
 
 	function handleCustomProgram(program: Program) {
-		customProgram = program;
+		// Deep copy to strip any reactive proxies before passing to ProgramStepper
+		customProgram = JSON.parse(JSON.stringify(program));
 	}
 </script>
 

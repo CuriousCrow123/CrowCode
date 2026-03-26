@@ -7,8 +7,9 @@
 
 	let { program }: { program: Program } = $props();
 
-	// Pre-compute all snapshots
-	const snapshots = $derived(buildSnapshots(program));
+	// Pre-compute all snapshots — $state.snapshot() strips Svelte proxies
+	// so structuredClone inside applyOps doesn't fail
+	const snapshots = $derived(buildSnapshots($state.snapshot(program) as Program));
 
 	// Navigation state
 	let internalIndex = $state(0);

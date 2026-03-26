@@ -39,6 +39,9 @@ export class Interpreter {
 	private maxFrames: number;
 	private source: string;
 
+	// Value tracking for heap/array elements (address → numeric value)
+	private memoryValues = new Map<number, number>();
+
 	// Control flow signals
 	private breakFlag = false;
 	private continueFlag = false;
@@ -66,6 +69,9 @@ export class Interpreter {
 			// Then stdlib
 			return stdlib(name, args, line);
 		});
+
+		// Wire up memory reader so evaluator can read heap/array values
+		this.evaluator.setMemoryReader((address) => this.memoryValues.get(address));
 	}
 
 	run(): InterpretResult {
@@ -482,12 +488,19 @@ export class Interpreter {
 			const path = Evaluator.buildAccessPath(node.target);
 			const newVal = rhs.value.data ?? 0;
 			const displayVal = String(newVal);
+
+			// Store value at the field's address for future reads
+			const targetEval = this.evaluator.eval(node.target);
+			if (targetEval.value.address) {
+				this.memoryValues.set(targetEval.value.address, newVal);
+			}
+
 			const entryId = this.emitter.resolvePointerPath(path);
 			if (entryId) {
 				this.emitter.assignField(path, displayVal);
 			}
 		} else if (node.target.type === 'subscript_expression') {
-			// Element assignment: arr[i] = val, p->scores[i] = val
+			// Element assignment: arr[i] = val, scores[i] = val
 			const objPath = Evaluator.buildAccessPath(node.target.object);
 			const idxResult = this.evaluator.eval(node.target.index);
 			if (idxResult.error) {
@@ -498,10 +511,22 @@ export class Interpreter {
 			const newVal = rhs.value.data ?? 0;
 			const displayVal = String(newVal);
 
-			// Resolve through pointers
-			const parentId = this.emitter.resolvePointerPath(objPath);
-			if (parentId) {
-				this.emitter.assignElement(objPath, index, displayVal);
+			// Store the value so subsequent reads can find it
+			const targetEval = this.evaluator.eval(node.target);
+			if (targetEval.value.address) {
+				this.memoryValues.set(targetEval.value.address, newVal);
+			}
+
+			// Resolve through pointers to reach the heap block, then target child by index
+			const heapBlockId = this.emitter.resolvePointerPath(objPath);
+			if (heapBlockId) {
+				this.emitter.directSetValue(`${heapBlockId}-${index}`, displayVal);
+			} else {
+				// Stack array: resolve normally
+				const parentId = this.emitter.resolvePathId(objPath);
+				if (parentId) {
+					this.emitter.directSetValue(`${parentId}-${index}`, displayVal);
+				}
 			}
 		}
 	}

@@ -22,13 +22,20 @@ export type EvalResult = {
 };
 
 export type CallHandler = (name: string, args: CValue[], line: number) => EvalResult;
+export type MemoryReader = (address: number) => number | undefined;
 
 export class Evaluator {
+	private memReader?: MemoryReader;
+
 	constructor(
 		private env: Environment,
 		private typeReg: TypeRegistry,
 		private onCall?: CallHandler,
 	) {}
+
+	setMemoryReader(reader: MemoryReader): void {
+		this.memReader = reader;
+	}
 
 	eval(node: ASTNode): EvalResult {
 		switch (node.type) {
@@ -331,11 +338,13 @@ export class Evaluator {
 			const field = structType.fields.find((f) => f.name === node.field);
 			if (field) {
 				const baseAddr = node.arrow ? (obj.value.data ?? 0) : obj.value.address;
+				const fieldAddr = baseAddr + field.offset;
+				const memVal = this.memReader?.(fieldAddr);
 				return {
 					value: {
 						type: field.type,
-						data: null, // actual value retrieved by interpreter
-						address: baseAddr + field.offset,
+						data: memVal ?? null,
+						address: fieldAddr,
 					},
 				};
 			}
@@ -371,11 +380,13 @@ export class Evaluator {
 		}
 
 		const elemSize = sizeOf(elemType);
+		const elemAddr = baseAddr + index * elemSize;
+		const memVal = this.memReader?.(elemAddr);
 		return {
 			value: {
 				type: elemType,
-				data: null, // actual value retrieved by interpreter
-				address: baseAddr + index * elemSize,
+				data: memVal ?? null,
+				address: elemAddr,
 			},
 		};
 	}
