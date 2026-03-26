@@ -43,7 +43,7 @@ export class DefaultEmitter implements OpEmitter {
 	private errors: string[] = [];
 
 	// Scope stack: tracks current scope IDs for variable ID generation
-	private scopeStack: Array<{ id: string; name: string }> = [];
+	private scopeStack: Array<{ id: string; name: string; vars: string[]; savedVars: Map<string, string> }> = [];
 	// Variable name → entry ID mapping for path resolution
 	private varMap = new Map<string, string>();
 	// Entry ID → children entry IDs (for struct/array field lookups)
@@ -102,7 +102,7 @@ export class DefaultEmitter implements OpEmitter {
 
 	enterFunction(name: string, params: ParamSpec[], callSite?: ScopeInfo): void {
 		const scopeId = this.generateScopeId(name);
-		this.scopeStack.push({ id: scopeId, name });
+		this.scopeStack.push({ id: scopeId, name, vars: [], savedVars: new Map() });
 
 		const scopeEntry: MemoryEntry = {
 			id: scopeId,
@@ -147,14 +147,14 @@ export class DefaultEmitter implements OpEmitter {
 		const scope = this.scopeStack.pop();
 		if (scope) {
 			this.addOp({ op: 'removeEntry', id: scope.id });
-			this.cleanupScope(scope.id);
+			this.cleanupScopeVars(scope);
 		}
 	}
 
 	enterBlock(label: string): void {
 		const currentScope = this.currentScopeId();
 		const blockId = this.generateBlockId(label);
-		this.scopeStack.push({ id: blockId, name: label });
+		this.scopeStack.push({ id: blockId, name: label, vars: [], savedVars: new Map() });
 
 		const scopeEntry: MemoryEntry = {
 			id: blockId,
@@ -173,7 +173,7 @@ export class DefaultEmitter implements OpEmitter {
 		const scope = this.scopeStack.pop();
 		if (scope) {
 			this.addOp({ op: 'removeEntry', id: scope.id });
-			this.cleanupScope(scope.id);
+			this.cleanupScopeVars(scope);
 		}
 	}
 
@@ -182,6 +182,7 @@ export class DefaultEmitter implements OpEmitter {
 	declareVariable(name: string, type: CType, value: string, children?: ChildSpec[]): void {
 		const scopeId = this.currentScopeId();
 		const entryId = `${scopeId}-${name}`;
+		this.trackVarInScope(name);
 		this.varMap.set(name, entryId);
 
 		const typeStr = typeToString(type);
@@ -202,6 +203,7 @@ export class DefaultEmitter implements OpEmitter {
 	declareVariableWithAddress(name: string, type: CType, value: string, address: number, children?: ChildSpec[]): void {
 		const scopeId = this.currentScopeId();
 		const entryId = `${scopeId}-${name}`;
+		this.trackVarInScope(name);
 		this.varMap.set(name, entryId);
 
 		const typeStr = typeToString(type);
@@ -502,12 +504,27 @@ export class DefaultEmitter implements OpEmitter {
 		this.childMap.get(parentId)!.set(fieldName, childId);
 	}
 
-	// === Scope cleanup ===
+	// === Scope tracking ===
 
-	private cleanupScope(scopeId: string): void {
-		// Remove variables from this scope from the varMap
-		for (const [name, id] of this.varMap) {
-			if (id.startsWith(scopeId + '-')) {
+	private trackVarInScope(name: string): void {
+		const scope = this.scopeStack[this.scopeStack.length - 1];
+		if (scope) {
+			// Save previous mapping so we can restore on scope exit (handles shadowing)
+			const prev = this.varMap.get(name);
+			if (prev !== undefined) {
+				scope.savedVars.set(name, prev);
+			}
+			scope.vars.push(name);
+		}
+	}
+
+	private cleanupScopeVars(scope: { vars: string[]; savedVars: Map<string, string> }): void {
+		for (const name of scope.vars) {
+			const prev = scope.savedVars.get(name);
+			if (prev !== undefined) {
+				// Restore shadowed outer variable
+				this.varMap.set(name, prev);
+			} else {
 				this.varMap.delete(name);
 			}
 		}

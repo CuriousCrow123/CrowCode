@@ -11,6 +11,11 @@ import {
 	typeToString,
 } from './types-c';
 
+/** Truncate to 32-bit signed integer (C int semantics) */
+function toInt32(n: number): number {
+	return n | 0;
+}
+
 export type EvalResult = {
 	value: CValue;
 	error?: string;
@@ -154,15 +159,15 @@ export class Evaluator {
 		}
 
 		switch (node.operator) {
-			case '+': return this.ok(l + r);
-			case '-': return this.ok(l - r);
-			case '*': return this.ok(l * r);
+			case '+': return this.ok(toInt32(l + r));
+			case '-': return this.ok(toInt32(l - r));
+			case '*': return this.ok(toInt32(Math.imul(l, r)));
 			case '/':
 				if (r === 0) return this.err(`Division by zero at line ${node.line}`);
-				return this.ok(Math.trunc(l / r));
+				return this.ok(toInt32(Math.trunc(l / r)));
 			case '%':
 				if (r === 0) return this.err(`Division by zero at line ${node.line}`);
-				return this.ok(l % r);
+				return this.ok(toInt32(l % r));
 			case '<': return this.ok(l < r ? 1 : 0);
 			case '>': return this.ok(l > r ? 1 : 0);
 			case '<=': return this.ok(l <= r ? 1 : 0);
@@ -189,7 +194,10 @@ export class Evaluator {
 			const result = this.eval(operand);
 			if (result.error) return result;
 			const oldVal = result.value.data ?? 0;
-			const newVal = operator === '++' ? oldVal + 1 : oldVal - 1;
+
+			// Scale by sizeof(*ptr) for pointer types
+			const step = isPointerType(result.value.type) ? sizeOf(result.value.type.pointsTo) : 1;
+			const newVal = operator === '++' ? toInt32(oldVal + step) : toInt32(oldVal - step);
 
 			// Update the variable
 			if (operand.type === 'identifier') {
@@ -231,7 +239,7 @@ export class Evaluator {
 		const v = result.value.data ?? 0;
 
 		switch (operator) {
-			case '-': return this.ok(-v);
+			case '-': return this.ok(toInt32(-v));
 			case '+': return this.ok(v);
 			case '!': return this.ok(v === 0 ? 1 : 0);
 			case '~': return this.ok(~v);

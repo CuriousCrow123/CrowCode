@@ -360,9 +360,97 @@ export class Interpreter {
 		return true;
 	}
 
+	private executeMallocAssign(
+		node: ASTNode & { type: 'assignment' },
+		call: ASTNode & { type: 'call_expression' },
+		sharesStep: boolean,
+	): void {
+		if (node.target.type !== 'identifier') return;
+		const varName = node.target.name;
+
+		const existing = this.env.lookupVariable(varName);
+		if (!existing) {
+			this.errors.push(`Undefined variable '${varName}' at line ${node.line}`);
+			return;
+		}
+
+		// Evaluate args
+		const args = call.args.map((a) => {
+			const r = this.evaluator.eval(a);
+			if (r.error) this.errors.push(r.error);
+			return r.value;
+		});
+
+		let totalSize: number;
+		let allocator: string;
+		let heapType: CType;
+
+		if (call.callee === 'calloc') {
+			const count = args[0]?.data ?? 0;
+			const elemSize = args[1]?.data ?? 0;
+			totalSize = count * elemSize;
+			allocator = 'calloc';
+			if (isPointerType(existing.type)) {
+				heapType = arrayType(existing.type.pointsTo, count);
+			} else {
+				heapType = primitiveType('void');
+			}
+		} else {
+			totalSize = args[0]?.data ?? 0;
+			allocator = 'malloc';
+			if (isPointerType(existing.type)) {
+				heapType = existing.type.pointsTo;
+			} else {
+				heapType = primitiveType('void');
+			}
+		}
+
+		const { address, error } = this.env.malloc(totalSize, allocator, node.line);
+		if (error) {
+			this.errors.push(error);
+			return;
+		}
+
+		this.env.setVariable(varName, address);
+
+		let heapChildren: ChildSpec[] | undefined;
+		if (isStructType(heapType)) {
+			heapChildren = buildStructChildSpecs(heapType);
+		} else if (isArrayType(heapType)) {
+			heapChildren = buildArrayChildSpecs(heapType.elementType, heapType.size);
+		}
+
+		if (!sharesStep) {
+			const desc = `${allocator}(${this.formatMallocArgs(call)}) — allocate ${totalSize} bytes`;
+			this.emitter.beginStep({ line: node.line }, desc);
+			this.stepCount++;
+		}
+
+		this.emitter.allocHeapWithAddress(
+			varName,
+			heapType,
+			totalSize,
+			allocator,
+			{ line: node.line },
+			address,
+			heapChildren,
+		);
+
+		this.emitter.assignVariable(varName, formatAddress(address));
+	}
+
 	// === Assignments ===
 
 	private executeAssignment(node: ASTNode & { type: 'assignment' }, sharesStep: boolean): void {
+		// Intercept malloc/calloc in assignment RHS: p = malloc(n)
+		if (node.operator === '=' && node.target.type === 'identifier' && node.value.type === 'call_expression') {
+			const call = node.value;
+			if (call.callee === 'malloc' || call.callee === 'calloc') {
+				this.executeMallocAssign(node, call, sharesStep);
+				return;
+			}
+		}
+
 		const rhs = this.evaluator.eval(node.value);
 		if (rhs.error) {
 			this.errors.push(rhs.error);
@@ -753,6 +841,7 @@ export class Interpreter {
 		if (hasDecls) {
 			this.emitter.beginStep({ line: node.line }, 'Enter block scope');
 			this.stepCount++;
+			this.env.pushScope('block');
 			this.emitter.enterBlock('{ }');
 		}
 
@@ -765,6 +854,7 @@ export class Interpreter {
 			);
 			this.stepCount++;
 			this.emitter.exitBlock('');
+			this.env.popScope();
 		}
 	}
 
@@ -966,6 +1056,11 @@ export class Interpreter {
 			case '*=': return oldVal * newVal;
 			case '/=': return newVal === 0 ? 0 : Math.trunc(oldVal / newVal);
 			case '%=': return newVal === 0 ? 0 : oldVal % newVal;
+			case '&=': return oldVal & newVal;
+			case '|=': return oldVal | newVal;
+			case '^=': return oldVal ^ newVal;
+			case '<<=': return oldVal << newVal;
+			case '>>=': return oldVal >> newVal;
 			default: return newVal;
 		}
 	}

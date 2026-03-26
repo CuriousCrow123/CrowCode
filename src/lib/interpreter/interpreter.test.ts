@@ -453,3 +453,60 @@ int main() {
 		expectNoWarnings(program);
 	});
 });
+
+// === Review fixes: C4, S4, S5, S3 ===
+
+describe('compound bitwise assignment at interpreter level', () => {
+	it('x &= 0xFF produces correct setValue', () => {
+		const src = `int main() {
+	int x = 4660;
+	x &= 255;
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		// 4660 & 255 = 52 (0x1234 & 0xFF = 0x34)
+		const setOps = program.steps.flatMap((s) => s.ops).filter((o) => o.op === 'setValue');
+		const lastSet = setOps[setOps.length - 1];
+		if (lastSet?.op === 'setValue') {
+			expect(lastSet.value).toBe('52');
+		}
+	});
+});
+
+describe('malloc in assignment (not declaration)', () => {
+	it('p = malloc(n) produces heap block op', () => {
+		const src = `int main() {
+	int *p = malloc(sizeof(int));
+	free(p);
+	p = malloc(sizeof(int));
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		// Should have TWO heap alloc entries (one for each malloc)
+		const heapOps = program.steps.flatMap((s) => s.ops).filter(
+			(o) => o.op === 'addEntry' && 'entry' in o && (o as any).entry.heap
+		);
+		expect(heapOps.length).toBeGreaterThanOrEqual(2);
+	});
+});
+
+describe('variable shadowing across scopes', () => {
+	it('inner scope variable does not corrupt outer variable after exit', () => {
+		const src = `int main() {
+	int x = 10;
+	{
+		int x = 20;
+	}
+	x = 30;
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		expectNoWarnings(program);
+	});
+});

@@ -373,3 +373,106 @@ describe('null literal', () => {
 		expect(evaluator.eval({ type: 'null_literal', line: 1 }).value.data).toBe(0);
 	});
 });
+
+// === C1: 32-bit integer wrapping ===
+
+describe('32-bit integer wrapping', () => {
+	it('INT_MAX + 1 wraps to INT_MIN', () => {
+		const { evaluator } = setup();
+		// 2147483647 + 1 = -2147483648 in 32-bit signed
+		expect(evaluator.eval(binop('+', num(2147483647), num(1))).value.data).toBe(-2147483648);
+	});
+
+	it('INT_MIN - 1 wraps to INT_MAX', () => {
+		const { evaluator } = setup();
+		expect(evaluator.eval(binop('-', num(-2147483648), num(1))).value.data).toBe(2147483647);
+	});
+
+	it('large multiplication wraps', () => {
+		const { evaluator } = setup();
+		// 100000 * 100000 = 10000000000, which wraps to 1410065408 in 32-bit
+		expect(evaluator.eval(binop('*', num(100000), num(100000))).value.data).toBe(1410065408);
+	});
+
+	it('unary negation of INT_MIN wraps to INT_MIN', () => {
+		const { evaluator } = setup({ x: { type: 'int', value: -2147483648 } });
+		expect(evaluator.eval(unop('-', id('x'))).value.data).toBe(-2147483648);
+	});
+
+	it('prefix increment wraps at INT_MAX', () => {
+		const { evaluator } = setup({ i: { type: 'int', value: 2147483647 } });
+		const result = evaluator.eval(unop('++', id('i'), true));
+		expect(result.value.data).toBe(-2147483648);
+	});
+});
+
+// === C2: Pointer increment scales by sizeof(*ptr) ===
+
+describe('pointer increment scaling', () => {
+	it('++p on int* advances by 4', () => {
+		const env = new Environment();
+		const typeReg = new TypeRegistry();
+		env.pushScope('main');
+		env.declareVariable('p', pointerType(primitiveType('int')), 0x1000);
+		const evaluator = new Evaluator(env, typeReg);
+
+		evaluator.eval(unop('++', id('p'), true));
+		expect(env.lookupVariable('p')?.data).toBe(0x1004);
+	});
+
+	it('p-- on int* decreases by 4', () => {
+		const env = new Environment();
+		const typeReg = new TypeRegistry();
+		env.pushScope('main');
+		env.declareVariable('p', pointerType(primitiveType('int')), 0x1000);
+		const evaluator = new Evaluator(env, typeReg);
+
+		evaluator.eval(unop('--', id('p'), true));
+		expect(env.lookupVariable('p')?.data).toBe(0x0FFC);
+	});
+
+	it('++p on char* advances by 1', () => {
+		const env = new Environment();
+		const typeReg = new TypeRegistry();
+		env.pushScope('main');
+		env.declareVariable('p', pointerType(primitiveType('char')), 0x1000);
+		const evaluator = new Evaluator(env, typeReg);
+
+		evaluator.eval(unop('++', id('p'), true));
+		expect(env.lookupVariable('p')?.data).toBe(0x1001);
+	});
+});
+
+// === C4: Compound assignment operators ===
+
+describe('compound bitwise assignment', () => {
+	it('x &= 0xFF', () => {
+		const { evaluator } = setup({ x: { type: 'int', value: 0x1234 } });
+		evaluator.eval(assign(id('x'), num(0xFF), '&='));
+		expect(evaluator.eval(id('x')).value.data).toBe(0x34);
+	});
+
+	it('x |= 0xF0', () => {
+		const { evaluator } = setup({ x: { type: 'int', value: 0x0A } });
+		evaluator.eval(assign(id('x'), num(0xF0), '|='));
+		expect(evaluator.eval(id('x')).value.data).toBe(0xFA);
+	});
+
+	it('x ^= 0xFF', () => {
+		const { evaluator } = setup({ x: { type: 'int', value: 0xAA } });
+		evaluator.eval(assign(id('x'), num(0xFF), '^='));
+		expect(evaluator.eval(id('x')).value.data).toBe(0x55);
+	});
+
+	it('x <<= 4', () => {
+		const { evaluator } = setup({ x: { type: 'int', value: 1 } });
+		evaluator.eval(assign(id('x'), num(4), '<<='));
+		expect(evaluator.eval(id('x')).value.data).toBe(16);
+	});
+
+	it('x >>= 2', () => {
+		const { evaluator } = setup({ x: { type: 'int', value: 16 } });
+		evaluator.eval(assign(id('x'), num(2), '>>='));
+		expect(evaluator.eval(id('x')).value.data).toBe(4);
+	});
+});
