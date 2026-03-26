@@ -737,6 +737,153 @@ int main() {
 	});
 });
 
+describe('sprintf', () => {
+	it('sprintf with %d substitutes integer value', () => {
+		const src = `int main() {
+	char *buf = malloc(64);
+	int x = 42;
+	sprintf(buf, "value=%d", x);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		// Find the heap block for buf
+		const sprintfSnap = snapshots.find((s) => {
+			const all = walkEntries(s);
+			return all.some((e) => e.heap && e.value.includes('value=42'));
+		});
+		expect(sprintfSnap).toBeDefined();
+	});
+
+	it('sprintf with multiple %d args', () => {
+		const src = `int main() {
+	char *buf = malloc(64);
+	int a = 10;
+	int b = 20;
+	sprintf(buf, "%d+%d=%d", a, b, a + b);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const sprintfSnap = snapshots.find((s) => {
+			const all = walkEntries(s);
+			return all.some((e) => e.heap && e.value === '"10+20=30"');
+		});
+		expect(sprintfSnap).toBeDefined();
+	});
+
+	it('sprintf with %x formats as hex', () => {
+		const src = `int main() {
+	char *buf = malloc(64);
+	sprintf(buf, "hex=%x", 255);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const sprintfSnap = snapshots.find((s) => {
+			const all = walkEntries(s);
+			return all.some((e) => e.heap && e.value === '"hex=ff"');
+		});
+		expect(sprintfSnap).toBeDefined();
+	});
+
+	it('sprintf with plain string (no format specifiers)', () => {
+		const src = `int main() {
+	char *buf = malloc(64);
+	sprintf(buf, "hello world");
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const sprintfSnap = snapshots.find((s) => {
+			const all = walkEntries(s);
+			return all.some((e) => e.heap && e.value === '"hello world"');
+		});
+		expect(sprintfSnap).toBeDefined();
+	});
+
+	it('sprintf with %% literal percent', () => {
+		const src = `int main() {
+	char *buf = malloc(64);
+	sprintf(buf, "100%%");
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const sprintfSnap = snapshots.find((s) => {
+			const all = walkEntries(s);
+			return all.some((e) => e.heap && e.value === '"100%"');
+		});
+		expect(sprintfSnap).toBeDefined();
+	});
+
+	it('sprintf step description includes formatted result', () => {
+		const src = `int main() {
+	char *buf = malloc(64);
+	int d = 500;
+	sprintf(buf, "dist=%d", d);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		const sprintfStep = program.steps.find((s) => s.description?.includes('sprintf'));
+		expect(sprintfStep).toBeDefined();
+		expect(sprintfStep!.description).toContain('dist=500');
+	});
+
+	it('sprintf does not crash with zero args beyond format', () => {
+		const src = `int main() {
+	char *buf = malloc(64);
+	sprintf(buf, "no args here");
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+
+	it('printf remains a no-op (no setValue emitted)', () => {
+		const src = `int main() {
+	int x = 42;
+	printf("hello %d", x);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const printfStep = program.steps.find((s) => s.description?.includes('printf'));
+		expect(printfStep).toBeDefined();
+		expect(printfStep!.ops).toHaveLength(0);
+	});
+
+	it('sprintf with %c formats character', () => {
+		const src = `int main() {
+	char *buf = malloc(64);
+	sprintf(buf, "char=%c", 65);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const sprintfSnap = snapshots.find((s) => {
+			const all = walkEntries(s);
+			return all.some((e) => e.heap && e.value === '"char=A"');
+		});
+		expect(sprintfSnap).toBeDefined();
+	});
+});
+
 describe('C semantics edge cases', () => {
 	it('multiple mallocs to same variable targets correct block', () => {
 		const src = `

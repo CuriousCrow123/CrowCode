@@ -1224,7 +1224,10 @@ export class Interpreter {
 		for (let i = 0; i < fmt.length; i++) {
 			if (fmt[i] === '%' && i + 1 < fmt.length) {
 				i++;
-				if (argIdx < call.args.length) {
+				if (fmt[i] === '%') {
+					// Literal %
+					result += '%';
+				} else if (argIdx < call.args.length) {
 					const argResult = this.evaluator.eval(call.args[argIdx]);
 					const val = argResult.value?.data ?? 0;
 					switch (fmt[i]) {
@@ -1232,7 +1235,6 @@ export class Interpreter {
 						case 's': result += '(string)'; break;
 						case 'x': result += val.toString(16); break;
 						case 'c': result += String.fromCharCode(val); break;
-						case '%': result += '%'; argIdx--; break;
 						default: result += `%${fmt[i]}`;
 					}
 					argIdx++;
