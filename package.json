@@ -11,7 +11,8 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest run",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"postinstall": "cp node_modules/web-tree-sitter/web-tree-sitter.wasm static/tree-sitter.wasm && cp node_modules/tree-sitter-c/tree-sitter-c.wasm static/tree-sitter-c.wasm"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^7.0.0",
@@ -31,6 +32,8 @@
 		"@codemirror/state": "^6.6.0",
 		"@codemirror/theme-one-dark": "^6.1.3",
 		"@codemirror/view": "^6.40.0",
-		"codemirror": "^6.0.2"
+		"codemirror": "^6.0.2",
+		"tree-sitter-c": "^0.24.1",
+		"web-tree-sitter": "^0.26.7"
 	}
 }
