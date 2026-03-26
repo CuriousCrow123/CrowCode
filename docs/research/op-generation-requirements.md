@@ -92,7 +92,7 @@ addScope(null, heapContainer()) // first step only
 
 - Function scopes are root-level (`parentId: null`)
 - Parameters are added as `addVar` ops in the same step as `addScope`
-- Struct params are expanded with children (pass-by-value copies the entire struct)
+- Struct params are expanded with children (pass-by-value copies field values from caller's struct via `memoryValues`)
 
 ### Block Scope Entry
 
@@ -124,29 +124,39 @@ remove(scopeId)
 
 ## Variable Lifecycle
 
-| C construct | Op pattern |
-|---|---|
-| `int x = 5;` | `addVar(scopeId, variable(id, 'x', 'int', '5', addr))` |
-| `struct Point p = {0, 0};` | `addVar(scopeId, variable(id, 'p', 'struct Point', '', addr, [field, field]))` |
-| `int arr[4] = {10,20,30,40};` | `addVar(scopeId, variable(id, 'arr', 'int[4]', '', addr, [elem, elem, elem, elem]))` |
-| `int *p = &x;` | `addVar(scopeId, variable(id, 'p', 'int*', '0x7ffc0060', addr))` |
-| `x = 10;` | `set(varId, '10')` |
-| `p->field = val;` | `set(fieldId, 'val')` — targets the heap entry directly |
-| `arr[i] = val;` | `set(elemId, 'val')` — targets the array element entry directly |
+| C construct | Op pattern | Status |
+|---|---|---|
+| `int x = 5;` | `addVar(scopeId, variable(id, 'x', 'int', '5', addr))` | Implemented |
+| `struct Point p = {0, 0};` | `addVar(scopeId, variable(id, 'p', 'struct Point', '', addr, [field, field]))` | Implemented |
+| `int arr[4] = {10,20,30,40};` | `addVar(scopeId, variable(id, 'arr', 'int[4]', '', addr, [elem, elem, elem, elem]))` | Implemented |
+| `int *p = &x;` | `addVar(scopeId, variable(id, 'p', 'int*', '0x7ffc0060', addr))` | Implemented |
+| `x = 10;` | `set(varId, '10')` | Implemented |
+| `x += 5;` | `set(varId, '15')` — compound ops apply `toInt32` wrapping | Implemented |
+| `p->field = val;` | `set(fieldId, 'val')` — resolved via `resolvePointerPath` | Implemented |
+| `p->field += val;` | `set(fieldId, 'old+val')` — reads old value, applies compound op | Implemented |
+| `arr[i] = val;` | `set(elemId, 'val')` — targets the array element entry directly | Implemented |
+| `x++;` / `--x;` | `set(varId, 'new')` — standalone increment/decrement as statement | Implemented |
+| `arr[i]++;` | `set(elemId, 'new')` — increment on non-identifier lvalues | Implemented |
+| `(char)x` | Cast truncates to target type width (8/16/32 bit) | Implemented |
 
 - Compound initialization (structs, arrays) is a single step with children, not sub-steps
+- Struct/array init values are stored in `memoryValues` for subsequent reads (pass-by-value, `arr[0]++`)
 - All values are strings (display format): `'42'`, `'"hello"'`, `'0x55a0001000'`, `'NULL'`, `'(dangling)'`
 
 ## Heap Lifecycle
 
-| C construct | Op pattern |
-|---|---|
-| `malloc(size)` | `alloc('heap', heapBlock(id, type, addr, heapInfo, children?))` + `addVar` or `set` for the pointer |
-| `calloc(n, size)` | Same as malloc, children initialized to `'0'` |
-| `p->field = val` | `set(heapFieldId, 'val')` |
-| `free(ptr)` | `free(heapBlockId)` + `set(ptrVarId, '(dangling)')` |
-| Memory leak | `leak(heapBlockId)` (supported, not yet used in existing programs) |
-| Block exit with freed block | `remove(heapBlockId)` to clean up visually |
+| C construct | Op pattern | Status |
+|---|---|---|
+| `malloc(size)` | `alloc('heap', heapBlock(id, type, addr, heapInfo, children?))` + `addVar` or `set` for the pointer | Implemented |
+| `calloc(n, size)` | Same as malloc, children initialized to `'0'` | Implemented |
+| `p->field = val` | `set(heapFieldId, 'val')` | Implemented |
+| `p->ptr = malloc(n)` | `alloc` for new block + `set(fieldId, hexAddr)` — member-expression malloc target | Implemented |
+| `p->scores[i] = val` | `set(heapElementId, 'val')` — multi-level pointer chain resolution | Implemented |
+| `*p = val` | `set(heapBlockId, 'val')` — dereference assignment | Implemented |
+| `free(ptr)` | `free(heapBlockId)` + `set(ptrVarId, '(dangling)')` | Implemented |
+| `free(p->ptr)` | `directFreeHeap(blockId)` + `set(fieldId, '(dangling)')` — by field name or address lookup | Implemented |
+| Memory leak | `leak(heapBlockId)` — detected at program end for unfreed blocks | Implemented |
+| Block exit with freed block | `remove(heapBlockId)` to clean up visually | Not yet implemented |
 
 - Heap blocks are always parented to the heap container (`'heap'`)
 - `alloc` creates the block with `status: 'allocated'`
@@ -155,11 +165,15 @@ remove(scopeId)
 
 ## Function Calls
 
-### Current implementation (basics.ts — no sub-steps)
+### Current implementation
 
-Two anchor steps:
-1. `addScope` + `addVar` for each param (push frame)
-2. `remove(scopeId)` + `addVar` for return value (pop frame + assign)
+Two anchor steps per call:
+1. `addScope` + `addVar` for each param (push frame) — anchor on call-site line
+2. `remove(scopeId)` + `addVar` for return value (pop frame + assign) — anchor on call-site line
+
+For `int d = func(args)` declarations, step 2 also includes the `addVar` for the declared variable (merged into the return step, not a separate step).
+
+Struct parameters are passed by value: field values are copied from the caller's struct into the callee's parameter children via `memoryValues`.
 
 ### Full sub-step pattern (documented, not yet implemented)
 
@@ -191,7 +205,7 @@ Fully implemented pattern in loops.ts. Each iteration produces 3 steps:
 - Final failing check is the anchor for "exiting the loop"
 - `evaluation` string on check steps: `'0 < 4 → true'`, `'4 < 4 → false'`
 
-## Chained Expressions (not yet implemented)
+## Chained Expressions (not implemented)
 
 `a = b = c = 0` — right-to-left evaluation:
 
@@ -203,7 +217,7 @@ Fully implemented pattern in loops.ts. Each iteration produces 3 steps:
 
 All steps share the same `location.line`.
 
-## Short-Circuit Evaluation (not yet implemented)
+## Short-Circuit Evaluation (not implemented)
 
 ### `ptr && ptr->valid` when `ptr` is NULL:
 
@@ -220,7 +234,7 @@ All steps share the same `location.line`.
 | Evaluate RHS | `true` | none | `ptr->valid → 1` | `ptr->valid` |
 | Result | `false` (anchor) | none (or `set` if assigned) | `0x55a0001000 && 1 → true` | Full expression |
 
-## While-Loop Sub-Steps (not yet implemented, derived from for-loop pattern)
+## While-Loop Sub-Steps (not implemented, derived from for-loop pattern)
 
 | Step | subStep | Ops |
 |---|---|---|
@@ -231,7 +245,7 @@ All steps share the same `location.line`.
 
 No init or increment steps. Loop scope is optional (only if the body declares variables that should be scoped to the loop).
 
-## Do-While Sub-Steps (not yet implemented)
+## Do-While Sub-Steps (not implemented)
 
 | Step | subStep | Ops |
 |---|---|---|
@@ -243,7 +257,7 @@ No init or increment steps. Loop scope is optional (only if the body declares va
 
 Body executes before the first check.
 
-## If/Else (not yet implemented as sub-steps)
+## If/Else (not implemented as sub-steps)
 
 | Step | subStep | Ops |
 |---|---|---|
