@@ -760,7 +760,7 @@ int main() {
 });
 
 describe('function call step structure', () => {
-	it('int d = distance(...) produces no duplicate anchor steps on same line', () => {
+	it('function call steps have column highlighting', () => {
 		const src = `
 struct Point { int x; int y; };
 int distance(struct Point a, struct Point b) {
@@ -771,26 +771,23 @@ int distance(struct Point a, struct Point b) {
 int main() {
 	struct Point origin = {0, 0};
 	struct Point dest = {10, 20};
-	int d = distance(origin, dest);
+	int d = distance(origin, dest) + distance(dest, origin);
 	return 0;
 }`;
 		const { program, errors } = run(src);
 		expect(errors).toHaveLength(0);
-		// Log steps for diagnosis
-		const stepInfo = program.steps.map((s, i) =>
-			`${i}: line=${s.location.line} sub=${!!s.subStep} "${s.description}"`
-		);
-		console.log('STEPS:\n' + stepInfo.join('\n'));
 
-		// The declaration line should have at most one non-subStep anchor
-		const declLine = program.steps.find(s => s.description?.includes('distance'))?.location.line;
-		if (declLine) {
-			const anchorsOnLine = program.steps.filter(
-				s => s.location.line === declLine && !s.subStep
-			);
-			console.log(`Anchors on line ${declLine}:`, anchorsOnLine.map(s => s.description));
-			expect(anchorsOnLine.length).toBeLessThanOrEqual(2); // call + assign is ok, but 3+ is a bug
-		}
+		// Both call steps should have colStart/colEnd highlighting
+		const callSteps = program.steps.filter(s => s.description?.startsWith('Call distance'));
+		expect(callSteps.length).toBe(2);
+		// First call: distance(origin, dest)
+		expect(callSteps[0].location.colStart).toBeDefined();
+		expect(callSteps[0].location.colEnd).toBeDefined();
+		// Second call: distance(dest, origin) — different column range
+		expect(callSteps[1].location.colStart).toBeDefined();
+		expect(callSteps[1].location.colEnd).toBeDefined();
+		// The two calls should have different column positions
+		expect(callSteps[0].location.colStart).not.toBe(callSteps[1].location.colStart);
 	});
 });
 

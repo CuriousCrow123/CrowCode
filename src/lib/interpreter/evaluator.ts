@@ -21,7 +21,7 @@ export type EvalResult = {
 	error?: string;
 };
 
-export type CallHandler = (name: string, args: CValue[], line: number) => EvalResult;
+export type CallHandler = (name: string, args: CValue[], line: number, colStart?: number, colEnd?: number) => EvalResult;
 export type MemoryReader = (address: number) => number | undefined;
 
 export class Evaluator {
@@ -309,7 +309,7 @@ export class Evaluator {
 		}
 
 		if (this.onCall) {
-			return this.onCall(node.callee, args, node.line);
+			return this.onCall(node.callee, args, node.line, (node as any).colStart, (node as any).colEnd);
 		}
 
 		return this.err(`No call handler for '${node.callee}'`);

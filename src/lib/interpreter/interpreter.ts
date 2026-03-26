@@ -63,11 +63,20 @@ export class Interpreter {
 
 		const stdlib = createStdlib(this.env, this.typeReg, this.emitter);
 
-		this.evaluator = new Evaluator(this.env, this.typeReg, (name, args, line) => {
+		this.evaluator = new Evaluator(this.env, this.typeReg, (name, args, line, colStart, colEnd) => {
 			// Check user-defined functions first
 			const fn = this.env.getFunction(name);
 			if (fn) {
-				return this.callFunction(fn, args, line);
+				// Set column info from the call expression for step highlighting
+				const savedContext = this.callDeclContext;
+				this.callDeclContext = {
+					varName: savedContext?.varName ?? '',
+					colStart,
+					colEnd,
+				};
+				const result = this.callFunction(fn, args, line);
+				this.callDeclContext = savedContext;
+				return result;
 			}
 			// Then stdlib
 			return stdlib(name, args, line);
@@ -290,12 +299,9 @@ export class Interpreter {
 			return { handled };
 		}
 
-		// Regular function call — set context so callFunction can produce better descriptions
-		this.callDeclContext = {
-			varName: node.name,
-			colStart: (call as any).colStart,
-			colEnd: (call as any).colEnd,
-		};
+		// Regular function call — set varName context for return step description
+		// Column info is handled by the onCall handler in the evaluator
+		this.callDeclContext = { varName: node.name };
 		const result = this.evaluator.eval(call);
 		this.callDeclContext = null;
 		if (result.error) this.errors.push(result.error);
@@ -1125,14 +1131,7 @@ export class Interpreter {
 			return r.value;
 		});
 
-		// Set column context for highlighting the call expression
-		this.callDeclContext = {
-			varName: '',
-			colStart: (call as any).colStart,
-			colEnd: (call as any).colEnd,
-		};
 		const result = this.callFunction(fn, args, line);
-		this.callDeclContext = null;
 		if (result.error) this.errors.push(result.error);
 	}
 
