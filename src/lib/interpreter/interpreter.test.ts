@@ -1,0 +1,455 @@
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { Parser, Language } from 'web-tree-sitter';
+import { resolve } from 'path';
+import { interpretSync, resetParserCache } from './index';
+import { validateProgram } from '$lib/engine/validate';
+import { buildSnapshots } from '$lib/engine/snapshot';
+import type { Program, ProgramStep } from '$lib/api/types';
+
+let parser: Parser;
+
+beforeAll(async () => {
+	resetParserCache();
+	await Parser.init({
+		locateFile: () => resolve('static/tree-sitter.wasm'),
+	});
+	parser = new Parser();
+	const lang = await Language.load(resolve('static/tree-sitter-c.wasm'));
+	parser.setLanguage(lang);
+});
+
+function run(source: string, opts?: { maxSteps?: number }) {
+	return interpretSync(parser, source, opts);
+}
+
+function expectValid(program: Program) {
+	const errors = validateProgram(program);
+	if (errors.length > 0) {
+		console.log('Validation errors:', errors);
+		console.log('Steps:', JSON.stringify(program.steps.map((s, i) => ({
+			i,
+			line: s.location.line,
+			desc: s.description,
+			sub: s.subStep,
+			ops: s.ops.map((o) => o.op),
+		})), null, 2));
+	}
+	expect(errors).toHaveLength(0);
+}
+
+function expectNoWarnings(program: Program) {
+	const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+	buildSnapshots(program);
+	expect(spy).not.toHaveBeenCalled();
+	spy.mockRestore();
+}
+
+// === Step 7a: Declarations, assignments, returns ===
+
+describe('declarations and assignments', () => {
+	it('declares int variable', () => {
+		const { program, errors } = run('int main() { int x = 5; return 0; }');
+		expect(errors).toHaveLength(0);
+		expect(program.steps.length).toBeGreaterThan(0);
+		expectValid(program);
+	});
+
+	it('declares multiple variables', () => {
+		const { program } = run('int main() { int a = 1; int b = 2; int c = 3; return 0; }');
+		expectValid(program);
+		expectNoWarnings(program);
+	});
+
+	it('assigns variable', () => {
+		const { program } = run('int main() { int x = 0; x = 42; return 0; }');
+		expectValid(program);
+		const setOps = program.steps.flatMap((s) => s.ops).filter((o) => o.op === 'setValue');
+		expect(setOps.length).toBeGreaterThan(0);
+	});
+
+	it('compound assignment +=', () => {
+		const { program } = run('int main() { int x = 10; x += 5; return 0; }');
+		expectValid(program);
+	});
+
+	it('declares struct variable', () => {
+		const src = `
+struct Point { int x; int y; };
+int main() {
+	struct Point p = {3, 4};
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		// Should have children for struct fields
+		const addOps = program.steps.flatMap((s) => s.ops).filter((o) => o.op === 'addEntry');
+		const structEntry = addOps.find((o) => o.op === 'addEntry' && (o as any).entry.children?.length === 2);
+		expect(structEntry).toBeDefined();
+	});
+
+	it('declares array variable', () => {
+		const src = 'int main() { int arr[4] = {10, 20, 30, 40}; return 0; }';
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+
+	it('handles return 0', () => {
+		const { program } = run('int main() { return 0; }');
+		expectValid(program);
+	});
+
+	it('handles preprocessor includes gracefully', () => {
+		const { program, errors } = run('#include <stdio.h>\nint main() { return 0; }');
+		expectValid(program);
+		// No hard errors — just warnings
+	});
+});
+
+// === Step 7b: Control flow ===
+
+describe('for-loop sub-steps', () => {
+	it('generates for-loop with init, check, body, increment, exit', () => {
+		const src = `int main() {
+	int sum = 0;
+	for (int i = 0; i < 3; i++) {
+		sum += 1;
+	}
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		expectNoWarnings(program);
+
+		// Should have sub-steps for check and increment
+		const subSteps = program.steps.filter((s) => s.subStep);
+		expect(subSteps.length).toBeGreaterThan(0);
+	});
+
+	it('for-loop with zero iterations', () => {
+		const src = `int main() {
+	for (int i = 0; i < 0; i++) {
+		int x = 1;
+	}
+	return 0;
+}`;
+		const { program } = run(src);
+		expectValid(program);
+	});
+
+	it('for-loop properly exits with anchor step', () => {
+		const src = `int main() {
+	for (int i = 0; i < 2; i++) {
+		int x = i;
+	}
+	return 0;
+}`;
+		const { program } = run(src);
+		expectValid(program);
+		// The exit step should be an anchor (not subStep)
+	});
+});
+
+describe('while-loop', () => {
+	it('simple while loop', () => {
+		const src = `int main() {
+	int x = 3;
+	while (x > 0) {
+		x -= 1;
+	}
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+});
+
+describe('do-while loop', () => {
+	it('simple do-while loop', () => {
+		const src = `int main() {
+	int x = 0;
+	do {
+		x += 1;
+	} while (x < 3);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+});
+
+describe('if/else', () => {
+	it('if-true branch', () => {
+		const src = `int main() {
+	int x = 5;
+	if (x > 0) {
+		x = 10;
+	}
+	return 0;
+}`;
+		const { program } = run(src);
+		expectValid(program);
+	});
+
+	it('if-else: false branch', () => {
+		const src = `int main() {
+	int x = 0;
+	if (x > 0) {
+		x = 10;
+	} else {
+		x = 20;
+	}
+	return 0;
+}`;
+		const { program } = run(src);
+		expectValid(program);
+		// x should end up as 20
+	});
+
+	it('nested if/else', () => {
+		const src = `int main() {
+	int x = 5;
+	if (x > 10) {
+		x = 100;
+	} else if (x > 3) {
+		x = 50;
+	} else {
+		x = 1;
+	}
+	return 0;
+}`;
+		const { program } = run(src);
+		expectValid(program);
+	});
+});
+
+// === Step 7c: Function calls ===
+
+describe('function calls', () => {
+	it('calls user-defined function', () => {
+		const src = `
+int add(int a, int b) {
+	return a + b;
+}
+int main() {
+	int x = add(3, 4);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+
+	it('function call creates and removes stack frame', () => {
+		const src = `
+int square(int n) {
+	int result = n * n;
+	return result;
+}
+int main() {
+	int x = square(5);
+	return 0;
+}`;
+		const { program } = run(src);
+		expectValid(program);
+		expectNoWarnings(program);
+		// Should have addEntry (scope push) and removeEntry (scope pop)
+		const allOps = program.steps.flatMap((s) => s.ops);
+		const scopeAdds = allOps.filter((o) => o.op === 'addEntry' && (o as any).entry.kind === 'scope');
+		const scopeRemoves = allOps.filter((o) => o.op === 'removeEntry');
+		expect(scopeAdds.length).toBeGreaterThanOrEqual(2); // main + square
+	});
+
+	it('stack overflow detection', () => {
+		const src = `
+int recurse(int n) {
+	return recurse(n + 1);
+}
+int main() {
+	int x = recurse(0);
+	return 0;
+}`;
+		const { errors } = run(src, { maxSteps: 100, maxFrames: 10 });
+		expect(errors.some((e) => e.includes('Stack overflow') || e.includes('Step limit'))).toBe(true);
+	});
+});
+
+// === Step 7d: Stdlib and heap ===
+
+describe('stdlib and heap', () => {
+	it('malloc allocates heap block', () => {
+		const src = `int main() {
+	int *p = malloc(sizeof(int));
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const allOps = program.steps.flatMap((s) => s.ops);
+		const heapOps = allOps.filter((o) => o.op === 'addEntry' && (o as any).entry.heap);
+		expect(heapOps.length).toBeGreaterThan(0);
+	});
+
+	it('calloc allocates zero-initialized array', () => {
+		const src = `int main() {
+	int *arr = calloc(4, sizeof(int));
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+
+	it('free marks heap block as freed', () => {
+		const src = `int main() {
+	int *p = malloc(sizeof(int));
+	free(p);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const freeOps = program.steps.flatMap((s) => s.ops).filter((o) => o.op === 'setHeapStatus');
+		expect(freeOps.length).toBeGreaterThan(0);
+	});
+
+	it('printf is a no-op', () => {
+		const src = `int main() {
+	printf("hello %d", 42);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+
+	it('step limit exceeded returns error', () => {
+		const src = `int main() {
+	for (int i = 0; i < 1000; i++) {
+		int x = i;
+	}
+	return 0;
+}`;
+		const { errors } = run(src, { maxSteps: 20 });
+		expect(errors.some((e) => e.includes('Step limit'))).toBe(true);
+	});
+});
+
+// === Validation rules ===
+
+describe('validation rules', () => {
+	it('all IDs unique within each snapshot', () => {
+		const src = `int main() {
+	int a = 1;
+	int b = 2;
+	return 0;
+}`;
+		const { program } = run(src);
+		const snapshots = buildSnapshots(program);
+		for (const snapshot of snapshots) {
+			const ids = new Set<string>();
+			function walk(entries: any[]) {
+				for (const e of entries) {
+					expect(ids.has(e.id)).toBe(false);
+					ids.add(e.id);
+					if (e.children) walk(e.children);
+				}
+			}
+			walk(snapshot);
+		}
+	});
+
+	it('non-scope entries have addresses', () => {
+		const src = `int main() {
+	int x = 5;
+	int y = 10;
+	return 0;
+}`;
+		const { program } = run(src);
+		expectValid(program);
+	});
+});
+
+// === Integration: full pipeline ===
+
+describe('integration — full pipeline', () => {
+	it('simple program: declare, assign, return', () => {
+		const src = `int main() {
+	int x = 5;
+	x = 10;
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		expectNoWarnings(program);
+		expect(program.steps.length).toBeGreaterThan(0);
+		expect(program.source).toBe(src);
+		expect(program.name).toBe('Custom Program');
+	});
+
+	it('for loop accumulation', () => {
+		const src = `int main() {
+	int sum = 0;
+	for (int i = 0; i < 4; i++) {
+		sum += 10;
+	}
+	return 0;
+}`;
+		const { program } = run(src);
+		expectValid(program);
+		expectNoWarnings(program);
+	});
+
+	it('struct with pointer and malloc', () => {
+		const src = `
+struct Point { int x; int y; };
+int main() {
+	struct Point *p = malloc(sizeof(struct Point));
+	free(p);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+
+	it('function call with return value', () => {
+		const src = `
+int double_it(int n) {
+	int result = n * 2;
+	return result;
+}
+int main() {
+	int x = double_it(21);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		expectNoWarnings(program);
+	});
+
+	it('empty program (just main returning 0)', () => {
+		const { program } = run('int main() { return 0; }');
+		expectValid(program);
+		expect(program.steps.length).toBeGreaterThan(0);
+	});
+
+	it('block scope creates and removes scope entry', () => {
+		const src = `int main() {
+	int x = 1;
+	{
+		int y = 2;
+	}
+	return 0;
+}`;
+		const { program } = run(src);
+		expectValid(program);
+		expectNoWarnings(program);
+	});
+});

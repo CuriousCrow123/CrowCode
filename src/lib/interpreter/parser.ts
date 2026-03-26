@@ -98,6 +98,7 @@ function convertNode(node: Node, errors: string[]): ASTNode | null {
 			errors.push(`Warning: typedef is not supported (line ${line(node)})`);
 			return null;
 		case 'comment':
+		case ';':
 			return null;
 		default:
 			errors.push(`Unsupported top-level construct: ${node.type} (line ${line(node)})`);

@@ -31,6 +31,7 @@ export type ParamSpec = {
 	name: string;
 	type: CType;
 	value: string;
+	address?: number;
 	children?: ChildSpec[];
 };
 

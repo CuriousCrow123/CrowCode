@@ -135,7 +135,11 @@ export class DefaultEmitter implements OpEmitter {
 
 		// Add parameter variables
 		for (const param of params) {
-			this.declareVariable(param.name, param.type, param.value, param.children);
+			if (param.address !== undefined) {
+				this.declareVariableWithAddress(param.name, param.type, param.value, param.address, param.children);
+			} else {
+				this.declareVariable(param.name, param.type, param.value, param.children);
+			}
 		}
 	}
 
