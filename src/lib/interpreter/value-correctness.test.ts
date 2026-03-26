@@ -719,7 +719,7 @@ int main() {
 		expect(findEntry(last, '.val')?.value).toBe('42');
 	});
 
-	test.fails('struct-by-value params copy caller field values', () => {
+	it('struct-by-value params copy caller field values', () => {
 		const src = `
 struct Point { int x; int y; };
 int get_x(struct Point p) {
@@ -865,7 +865,7 @@ int main() {
 		expect(snap).toBeDefined();
 	});
 
-	test.fails('distance() returns correct value assigned to d (struct-by-value bug)', () => {
+	it('distance() returns correct value assigned to d', () => {
 		const { snapshots } = buildBasics();
 		const snap = lastSnapshotWith(snapshots, 'd');
 		expect(snap).toBeDefined();

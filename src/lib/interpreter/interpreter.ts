@@ -210,7 +210,7 @@ export class Interpreter {
 			children = buildStructChildSpecs(type);
 
 			if (node.initializer?.type === 'init_list') {
-				this.initStructFromList(type, children, node.initializer.values);
+				this.initStructFromList(type, children, node.initializer.values, value.address);
 			}
 		} else if (isArrayType(type)) {
 			// Array declaration
@@ -954,12 +954,39 @@ export class Interpreter {
 		const params = fn.params.map((p, i) => {
 			const paramType = this.typeReg.resolve(p.typeSpec);
 			const argVal = args[i]?.data ?? 0;
+			let children: ChildSpec[] | undefined;
+
+			if (isStructType(paramType)) {
+				// Copy actual field values from caller's struct for pass-by-value
+				const srcAddr = args[i]?.address ?? 0;
+				const initValues = new Map<string, string>();
+				for (const field of paramType.fields) {
+					const fieldAddr = srcAddr + field.offset;
+					const val = this.memoryValues.get(fieldAddr);
+					if (val !== undefined) {
+						initValues.set(field.name, String(val));
+					}
+				}
+				children = buildStructChildSpecs(paramType, initValues);
+
+				// Also copy field values into memoryValues for the new param's address
+				const destAddr = declaredParams[i].address;
+				for (const field of paramType.fields) {
+					const srcFieldAddr = srcAddr + field.offset;
+					const destFieldAddr = destAddr + field.offset;
+					const val = this.memoryValues.get(srcFieldAddr);
+					if (val !== undefined) {
+						this.memoryValues.set(destFieldAddr, val);
+					}
+				}
+			}
+
 			return {
 				name: p.name,
 				type: paramType,
 				value: isStructType(paramType) ? '' : String(argVal),
 				address: declaredParams[i].address,
-				children: isStructType(paramType) ? buildStructChildSpecs(paramType) : undefined,
+				children,
 			};
 		});
 
@@ -1161,11 +1188,16 @@ export class Interpreter {
 		return false;
 	}
 
-	private initStructFromList(type: CType & { kind: 'struct' }, children: ChildSpec[], values: ASTNode[]): void {
+	private initStructFromList(type: CType & { kind: 'struct' }, children: ChildSpec[], values: ASTNode[], baseAddress?: number): void {
 		for (let i = 0; i < Math.min(type.fields.length, values.length); i++) {
 			const result = this.evaluator.eval(values[i]);
 			if (result.error) this.errors.push(result.error);
-			children[i].value = String(result.value.data ?? 0);
+			const val = result.value.data ?? 0;
+			children[i].value = String(val);
+			// Store in memoryValues so field values can be read back (e.g. for pass-by-value)
+			if (baseAddress !== undefined) {
+				this.memoryValues.set(baseAddress + type.fields[i].offset, val);
+			}
 		}
 	}
 }
