@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { Program } from '$lib/types';
-	import { Parser, Language } from 'web-tree-sitter';
-	import { interpretSync } from '$lib/interpreter/index';
+	import type { Parser as ParserType } from 'web-tree-sitter';
 
 	let { onProgram }: { onProgram: (program: Program) => void } = $props();
 
@@ -32,16 +31,17 @@ int main() {
 
 	let loading = $state(false);
 	let errors = $state<string[]>([]);
-	let parser: Parser | null = null;
+	let parser: ParserType | null = null;
 
-	async function getParser(): Promise<Parser> {
+	async function getParser(): Promise<ParserType> {
 		if (parser) return parser;
 
-		await Parser.init({
+		const TreeSitter = await import('web-tree-sitter');
+		await TreeSitter.Parser.init({
 			locateFile: () => `${import.meta.env.BASE_URL}tree-sitter.wasm`,
 		});
-		parser = new Parser();
-		const lang = await Language.load(`${import.meta.env.BASE_URL}tree-sitter-c.wasm`);
+		parser = new TreeSitter.Parser();
+		const lang = await TreeSitter.Language.load(`${import.meta.env.BASE_URL}tree-sitter-c.wasm`);
 		parser.setLanguage(lang);
 		return parser;
 	}
@@ -52,6 +52,11 @@ int main() {
 
 		try {
 			const p = await getParser();
+			const { interpretSync } = await import('$lib/interpreter/index');
+
+			// Yield to let browser paint "Running..." before blocking
+			await new Promise((resolve) => requestAnimationFrame(resolve));
+
 			const result = interpretSync(p, source, { maxSteps: 500 });
 
 			if (result.errors.length > 0) {

@@ -5,7 +5,7 @@ import { Interpreter } from './interpreter';
 import type { Parser } from 'web-tree-sitter';
 
 export type { InterpreterOptions } from './types';
-export { initTreeSitter, resetParserCache } from './parser';
+export { resetParserCache } from './parser';
 
 export type InterpretResult = {
 	program: Program;

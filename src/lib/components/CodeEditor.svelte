@@ -9,15 +9,14 @@
 	let { source, location }: { source: string; location: SourceLocation } = $props();
 
 	let container: HTMLDivElement;
-	let view: EditorView | undefined = $state();
 
-	// Effect to update the highlighted location
+	// NOT $state — plain variable to avoid reactive cycles
+	let view: EditorView | undefined;
+
 	const setHighlight = StateEffect.define<SourceLocation>();
 
-	// Line highlight decoration
 	const lineDeco = Decoration.line({ class: 'cm-active-step-line' });
 
-	// StateField that produces decorations based on the current location
 	const highlightField = StateField.define<DecorationSet>({
 		create() {
 			return Decoration.none;
@@ -32,7 +31,6 @@
 					const lineObj = doc.line(loc.line);
 
 					if (loc.colStart !== undefined && loc.colEnd !== undefined) {
-						// Sub-line highlight: mark the character range
 						const from = lineObj.from + loc.colStart;
 						const to = Math.min(lineObj.from + loc.colEnd, lineObj.to);
 						const rangeDeco = Decoration.mark({ class: 'cm-active-step-range' });
@@ -50,16 +48,15 @@
 		provide: (f) => EditorView.decorations.from(f),
 	});
 
-	// Custom theme to match zinc palette
 	const crowTheme = EditorView.theme({
 		'&': {
-			backgroundColor: 'rgb(9, 9, 11)',  // zinc-950
+			backgroundColor: 'rgb(9, 9, 11)',
 			height: '100%',
 		},
 		'.cm-gutters': {
-			backgroundColor: 'rgb(24, 24, 27)',  // zinc-900
-			borderRight: '1px solid rgb(39, 39, 42)',  // zinc-800
-			color: 'rgb(113, 113, 122)',  // zinc-500
+			backgroundColor: 'rgb(24, 24, 27)',
+			borderRight: '1px solid rgb(39, 39, 42)',
+			color: 'rgb(113, 113, 122)',
 		},
 		'.cm-activeLineGutter': {
 			backgroundColor: 'transparent',
@@ -75,8 +72,9 @@
 		},
 	});
 
+	// Create editor once container is available
 	$effect(() => {
-		if (!container || view) return;
+		if (!container) return;
 
 		view = new EditorView({
 			state: EditorState.create({
@@ -93,30 +91,28 @@
 			parent: container,
 		});
 
-		// Set initial highlight
 		view.dispatch({
 			effects: setHighlight.of(location),
 		});
 
-		// Cleanup on unmount
 		return () => {
 			view?.destroy();
 			view = undefined;
 		};
 	});
 
+	// Update highlight when location changes
 	$effect(() => {
 		if (!view) return;
+		const loc = location;
 
-		// Update highlight when location changes
 		view.dispatch({
-			effects: setHighlight.of(location),
+			effects: setHighlight.of(loc),
 		});
 
-		// Scroll to the active line
 		const doc = view.state.doc;
-		if (location.line >= 1 && location.line <= doc.lines) {
-			const lineObj = doc.line(location.line);
+		if (loc.line >= 1 && loc.line <= doc.lines) {
+			const lineObj = doc.line(loc.line);
 			view.dispatch({
 				effects: EditorView.scrollIntoView(lineObj.from, { y: 'center' }),
 			});

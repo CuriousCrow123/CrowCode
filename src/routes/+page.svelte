@@ -1,6 +1,5 @@
 <script lang="ts">
 	import ProgramStepper from '$lib/components/ProgramStepper.svelte';
-	import CustomEditor from '$lib/components/CustomEditor.svelte';
 	import { basics, loops } from '$lib/programs';
 	import type { Program } from '$lib/types';
 
@@ -46,7 +45,13 @@
 	</div>
 
 	{#if customMode}
-		<CustomEditor onProgram={handleCustomProgram} />
+		{#await import('$lib/components/CustomEditor.svelte')}
+			<p class="text-zinc-500 text-sm">Loading editor...</p>
+		{:then module}
+			<module.default onProgram={handleCustomProgram} />
+		{:catch err}
+			<p class="text-red-400 text-sm">Failed to load editor: {err.message}</p>
+		{/await}
 		{#if customProgram}
 			<div class="mt-6 w-full flex justify-center">
 				{#key customProgram}

@@ -1,16 +1,17 @@
-import { Parser, Language, type Node } from 'web-tree-sitter';
+import type { Node, Parser as ParserType } from 'web-tree-sitter';
 import type { ASTNode, CTypeSpec, ASTParam, ASTStructField } from './types';
 
-let cachedParser: Parser | null = null;
+let cachedParser: ParserType | null = null;
 
-export async function initTreeSitter(wasmPath?: string, langPath?: string): Promise<Parser> {
+export async function initTreeSitter(wasmPath?: string, langPath?: string): Promise<ParserType> {
 	if (cachedParser) return cachedParser;
 
-	await Parser.init({
+	const TreeSitter = await import('web-tree-sitter');
+	await TreeSitter.Parser.init({
 		locateFile: () => wasmPath ?? '/tree-sitter.wasm',
 	});
-	const parser = new Parser();
-	const lang = await Language.load(langPath ?? '/tree-sitter-c.wasm');
+	const parser = new TreeSitter.Parser();
+	const lang = await TreeSitter.Language.load(langPath ?? '/tree-sitter-c.wasm');
 	parser.setLanguage(lang);
 	cachedParser = parser;
 	return parser;
@@ -25,7 +26,7 @@ export type ParseResult = {
 	errors: string[];
 };
 
-export function parseSource(parser: Parser, source: string): ParseResult {
+export function parseSource(parser: ParserType, source: string): ParseResult {
 	const tree = parser.parse(source);
 	if (!tree) {
 		return { result: { type: 'translation_unit', children: [] }, errors: ['Failed to parse source'] };
