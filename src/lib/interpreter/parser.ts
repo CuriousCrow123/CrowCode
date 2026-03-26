@@ -402,7 +402,13 @@ function convertIf(node: Node, errors: string[]): ASTNode {
 		}
 	}
 
-	return { type: 'if_statement', condition, consequent, alternate, line: line(node) };
+	const condNode = node.childForFieldName('condition')!;
+	const result: ASTNode & { type: 'if_statement' } = { type: 'if_statement', condition, consequent, alternate, line: line(node) };
+	if (condNode) {
+		result.condColStart = condNode.startPosition.column;
+		result.condColEnd = condNode.endPosition.column;
+	}
+	return result;
 }
 
 function convertFor(node: Node, errors: string[]): ASTNode {
@@ -439,15 +445,23 @@ function convertFor(node: Node, errors: string[]): ASTNode {
 }
 
 function convertWhile(node: Node, errors: string[]): ASTNode {
-	const condition = convertExpression(node.childForFieldName('condition')!, errors)!;
+	const condNode = node.childForFieldName('condition')!;
+	const condition = convertExpression(condNode, errors)!;
 	const body = convertNode(node.childForFieldName('body')!, errors)!;
-	return { type: 'while_statement', condition, body, line: line(node) };
+	const result: ASTNode & { type: 'while_statement' } = { type: 'while_statement', condition, body, line: line(node) };
+	result.condColStart = condNode.startPosition.column;
+	result.condColEnd = condNode.endPosition.column;
+	return result;
 }
 
 function convertDoWhile(node: Node, errors: string[]): ASTNode {
 	const body = convertNode(node.childForFieldName('body')!, errors)!;
-	const condition = convertExpression(node.childForFieldName('condition')!, errors)!;
-	return { type: 'do_while_statement', body, condition, line: line(node) };
+	const condNode = node.childForFieldName('condition')!;
+	const condition = convertExpression(condNode, errors)!;
+	const result: ASTNode & { type: 'do_while_statement' } = { type: 'do_while_statement', body, condition, line: line(node) };
+	result.condColStart = condNode.startPosition.column;
+	result.condColEnd = condNode.endPosition.column;
+	return result;
 }
 
 // === Expressions ===

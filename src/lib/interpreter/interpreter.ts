@@ -843,6 +843,14 @@ export class Interpreter {
 		}
 
 		const taken = (condResult.value.data ?? 0) !== 0;
+		const condText = this.describeExpr(node.condition);
+
+		// Condition check step
+		this.emitter.beginStep(
+			{ line: node.line, colStart: node.condColStart, colEnd: node.condColEnd },
+			`if: ${condText} → ${taken ? 'true' : 'false'}`,
+		);
+		this.stepCount++;
 
 		if (taken) {
 			this.executeStatement(node.consequent);
@@ -969,6 +977,7 @@ export class Interpreter {
 	private executeWhile(node: ASTNode & { type: 'while_statement' }): void {
 		let iteration = 0;
 		const hasDecls = this.bodyHasDeclarations(node.body);
+		const condText = this.describeExpr(node.condition);
 
 		if (hasDecls) {
 			this.emitter.beginStep({ line: node.line }, 'Enter while loop');
@@ -989,10 +998,21 @@ export class Interpreter {
 			}
 
 			if ((condResult.value.data ?? 0) === 0) {
-				this.emitter.beginStep({ line: node.line }, 'while: condition false, exit');
+				this.emitter.beginStep(
+					{ line: node.line, colStart: node.condColStart, colEnd: node.condColEnd },
+					`while: ${condText} → false, exit`,
+				);
 				this.stepCount++;
 				break;
 			}
+
+			// Condition true (sub-step)
+			this.emitter.beginStep(
+				{ line: node.line, colStart: node.condColStart, colEnd: node.condColEnd },
+				`while: check ${condText} → true`,
+			);
+			this.emitter.markSubStep();
+			this.stepCount++;
 
 			// Execute body
 			if (node.body.type === 'compound_statement') {
@@ -1016,6 +1036,7 @@ export class Interpreter {
 	private executeDoWhile(node: ASTNode & { type: 'do_while_statement' }): void {
 		let iteration = 0;
 		const hasDecls = this.bodyHasDeclarations(node.body);
+		const condText = this.describeExpr(node.condition);
 
 		if (hasDecls) {
 			this.emitter.beginStep({ line: node.line }, 'Enter do-while loop');
@@ -1048,10 +1069,21 @@ export class Interpreter {
 			}
 
 			if ((condResult.value.data ?? 0) === 0) {
-				this.emitter.beginStep({ line: node.line }, 'do-while: condition false, exit');
+				this.emitter.beginStep(
+					{ line: node.line, colStart: node.condColStart, colEnd: node.condColEnd },
+					`do-while: ${condText} → false, exit`,
+				);
 				this.stepCount++;
 				break;
 			}
+
+			// Condition true (sub-step)
+			this.emitter.beginStep(
+				{ line: node.line, colStart: node.condColStart, colEnd: node.condColEnd },
+				`do-while: check ${condText} → true`,
+			);
+			this.emitter.markSubStep();
+			this.stepCount++;
 
 			iteration++;
 		} while (iteration < this.maxSteps);

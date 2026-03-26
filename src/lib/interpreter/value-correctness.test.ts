@@ -1566,6 +1566,100 @@ int main() { int x = boom(0); return 0; }
 });
 
 // ============================================================
+// Control flow sub-steps
+// ============================================================
+
+describe('control flow sub-steps', () => {
+	it('while-loop has condition check sub-steps per iteration', () => {
+		const { program } = interpretAndBuild(`int main() {
+	int i = 0;
+	while (i < 3) { i++; }
+	return 0;
+}`);
+		const checkSteps = program.steps.filter(s => s.description?.includes('while: check'));
+		expect(checkSteps.length).toBe(3);
+		for (const s of checkSteps) {
+			expect(s.subStep).toBe(true);
+			expect(s.description).toContain('→ true');
+		}
+	});
+
+	it('while-loop exit step includes condition text', () => {
+		const { program } = interpretAndBuild(`int main() {
+	int i = 0;
+	while (i < 3) { i++; }
+	return 0;
+}`);
+		const exitStep = program.steps.find(s => s.description?.includes('while:') && s.description?.includes('false'));
+		expect(exitStep).toBeDefined();
+		expect(exitStep!.description).toContain('i < 3');
+		expect(exitStep!.subStep).toBeFalsy();
+	});
+
+	it('do-while has condition check sub-steps after body', () => {
+		const { program } = interpretAndBuild(`int main() {
+	int x = 0;
+	do { x += 10; } while (x < 30);
+	return 0;
+}`);
+		const checkSteps = program.steps.filter(s => s.description?.includes('do-while: check'));
+		// x goes 10, 20 (both < 30, so 2 true checks), then 30 (false, exit)
+		expect(checkSteps.length).toBe(2);
+		for (const s of checkSteps) {
+			expect(s.subStep).toBe(true);
+			expect(s.description).toContain('→ true');
+		}
+	});
+
+	it('do-while exit step includes condition text', () => {
+		const { program } = interpretAndBuild(`int main() {
+	int x = 0;
+	do { x += 10; } while (x < 30);
+	return 0;
+}`);
+		const exitStep = program.steps.find(s => s.description?.includes('do-while:') && s.description?.includes('false'));
+		expect(exitStep).toBeDefined();
+		expect(exitStep!.description).toContain('x < 30');
+	});
+
+	it('if condition step shows true when taken', () => {
+		const { program } = interpretAndBuild(`int main() {
+	int x = 10;
+	if (x > 5) { int y = 1; }
+	return 0;
+}`);
+		const ifStep = program.steps.find(s => s.description?.includes('if:') && s.description?.includes('x > 5'));
+		expect(ifStep).toBeDefined();
+		expect(ifStep!.description).toContain('→ true');
+	});
+
+	it('if condition step shows false when not taken', () => {
+		const { program } = interpretAndBuild(`int main() {
+	int x = 1;
+	if (x > 5) { int y = 1; }
+	return 0;
+}`);
+		const ifStep = program.steps.find(s => s.description?.includes('if:') && s.description?.includes('x > 5'));
+		expect(ifStep).toBeDefined();
+		expect(ifStep!.description).toContain('→ false');
+	});
+
+	it('if/else shows condition before branch body', () => {
+		const { program } = interpretAndBuild(`int main() {
+	int x = 10;
+	int y = 0;
+	if (x > 5) { y = 1; } else { y = 2; }
+	return 0;
+}`);
+		const steps = program.steps.map(s => s.description);
+		const ifIdx = steps.findIndex(d => d?.includes('if:') && d?.includes('x > 5'));
+		const assignIdx = steps.findIndex(d => d?.includes('y = 1'));
+		expect(ifIdx).toBeGreaterThan(-1);
+		expect(assignIdx).toBeGreaterThan(ifIdx);
+	});
+});
+
+// ============================================================
 // Step 4: Integration test — Memory Basics equivalent
 // ============================================================
 
