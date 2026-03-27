@@ -8,24 +8,24 @@ deepened: 2026-03-27
 
 # stdio Support: Interactive I/O with Buffer Visualization
 
-## Enhancement Summary
+## Summary
 
-**Deepened on:** 2026-03-27
-**Agents used:** snapshot-contract, c-semantics, test-adequacy, worker-integration, architecture-strategy, pattern-recognition, spec-flow-analysis, performance, svelte-component-patterns, c-stdio-best-practices
+**Completed:** 2026-03-27 (3 phases, 18 commits on `feat/stdio-support`)
+**Final state:** 721 tests across 21 files. All verification passes.
 
-### Key Improvements
-1. Resolved 4 critical architectural decisions (IoState separation, stdin buffer representation, scanf write-through mechanism, console state precomputation)
-2. Added 28+ specific test cases across format, buffer, regression, and integration tests
-3. Identified and resolved 2 critical C semantics gaps (scanf op emission, missing-`&` detection)
-4. Added concrete Svelte 5 component templates following project conventions
-5. Identified performance prerequisite: `indexById` optimization in `applyOps`
+### What shipped
+- **Output:** printf (with `%s` resolution), fprintf, puts, putchar, fputs — real console output via IoState + ConsolePanel
+- **Input:** scanf (with write-through ops), getchar, fgets, gets — pre-supplied stdin via StdinInput
+- **Formatting:** sprintf/snprintf with byte-by-byte writes to stack arrays and heap blocks
+- **Visualization:** ConsolePanel (stdout with step highlighting), StdinInput (consumed/remaining), stdin buffer in memory view (`kind: 'io'` entry with cursor), overflow visualization (adjacent variable clobbering)
+- **Infrastructure:** Format string parser, IoState class, `applyOps` optimization, `writeStringToBuffer`, `findEntryIdAtAddress`
 
-### Critical Decisions Made
+### Key Architectural Decisions
 1. **I/O state lives in a separate `IoState` class**, not inside `Memory` — keeps memory ops and I/O events separate
 2. **Console output is pre-computed** as `string[]` alongside snapshots — O(1) backward stepping
 3. **stdin buffer uses `kind: 'io'`** as a new MemoryEntry kind — clean validator exemption
-4. **scanf writes through a `writeVariable` callback** from the interpreter — not raw memory writes
-5. **Existing sprintf in `statements.ts` must be replaced** — no dual-path coexistence
+4. **scanf handled at `executeCallStatement` level** — needs AST access to extract variable names from `&x` and format strings from string literals
+5. **`writeStringToBuffer` is the shared infrastructure** for sprintf, snprintf, gets — writes bytes + emits ops, with optional overflow past array bounds
 
 ---
 
@@ -265,13 +265,13 @@ sprintf writes to a char array via a pointer. The implementation must resolve th
 | `src/lib/engine/console.ts` | `buildConsoleOutputs()` — pre-computes cumulative console text per step |
 | `src/lib/engine/console.test.ts` | Tests for forward accumulation and backward shrink |
 
-### Remove (from current location)
+### Modified (from original plan's "Remove" section)
 
-| Code | File | Why |
-|------|------|-----|
-| `evaluateSprintfResult()` | `handlers/statements.ts:885-919` | Replaced by format.ts parser |
-| sprintf/printf/puts interception | `handlers/statements.ts:691-718` | Consolidated into stdlib handlers |
-| `formatPrintfDesc()` | `handlers/statements.ts:850` | Replaced by step description logic in stdlib |
+| Code | Outcome | Notes |
+|------|---------|-------|
+| `evaluateSprintfResult()` | Enhanced, not removed | Parameterized with `fmtArgIdx` for snprintf, `%s` now resolves from memory |
+| sprintf/printf/puts interception | Replaced with per-function handlers | printf/puts route through stdlib; sprintf/snprintf/scanf/fgets/gets handled at statement level |
+| `formatPrintfDesc()` | Kept | Still used for initial step descriptions before enrichment |
 
 ---
 
@@ -305,105 +305,65 @@ All foundation steps are complete and shipped on `feat/stdio-support`.
 #### Step 10: Add Test Programs ✅
 - **Commit:** `d79e58c` — 4 stdio programs: Basic printf, puts/putchar, getchar loop, format specifiers. `TestProgram.stdin?` field. loadTestProgram wires stdin.
 
-**Current state:** 704 tests across 21 files. `npm test`, `npm run check`, `npm run build` all pass.
+**Phase 1 state:** 704 tests across 21 files. `npm test`, `npm run check`, `npm run build` all pass.
 
 ---
 
-### Phase 2: Remaining Work
+### Phase 2: scanf, fgets/gets, step descriptions (DONE)
 
-#### Implementation learnings that affect the remaining steps
+#### Implementation learnings from Phase 1
 
-During Phase 1 implementation, several design discoveries change the approach for remaining work:
+1. **scanf must be handled at `executeCallStatement` level** — needs AST access to extract variable names from `&x` arguments and format string from `string_literal` nodes
+2. **Variable write-through uses `memory.setValue(name, value)`** — both updates runtime state AND emits `setValue` ops. No address-to-ID reverse lookup needed for the common case.
+3. **getchar already works end-to-end** via stdlib handler + IoState (implemented in Phase 1)
 
-1. **String literals are AST-level, not CValue-level.** `CValue.stringValue` was added for string literals, but format strings for `scanf` must be extracted from the AST `string_literal` node since the evaluator returns 0 for string literal addresses. This means **scanf must be handled at the `executeCallStatement` level** (like `free` is handled), not in stdlib.
+#### Step 5: scanf write-through ✅
+- **Commit:** `a68bbb7` — `executeScanfCall()` at statement level: extracts format string from AST, parses with `parseScanfFormat()`, walks `&identifier` args to get variable names, consumes from IoState per specifier, writes via `memory.setValue(name, value)`. Missing `&` detected with clear error. `IoState` added to `HandlerContext`. 8 integration tests including `\n` residue scenario.
 
-2. **Variable write-through uses `memory.setValue(name, value)`.** This method both updates runtime state AND emits `setValue` ops. The variable name comes from the AST argument (`&x` → unary `&` → identifier `x`). No address-to-ID reverse lookup is needed — just walk the AST.
+#### Step 6: fgets/gets ✅
+- **Commit:** `a68bbb7` (same commit) — `executeFgetsCall()` and `executeGetsCall()` at statement level. fgets respects size limit, gets is unbounded. Both write to destination via `writeStringToBuffer` (added in Phase 3).
 
-3. **`evaluateSprintfResult` in `statements.ts` still works** for the existing sprintf behavior (writes quoted string to heap entry). It can be enhanced with the new format parser but the pattern is sound. Byte-by-byte writes to stack-allocated char arrays would require address-to-ID lookup which doesn't exist — defer this to v2.
+#### Step 11: Step description enrichment ✅
+- **Commit:** `53ba498` — printf/puts show output text (`→ "x = 42\n"`). scanf shows assigned values (`→ x = 42`). `%c` shows character representation (`→ c = '\n' (10)`). `Memory.updateStepDescription()` added.
 
-4. **getchar already works end-to-end** via stdlib handler + IoState. It was implemented in Phase 1.
+#### Step 12: interpreter-status.md ✅
+- **Commit:** `82475ea` — All stdio functions moved from no-op/not-implemented to working. Test count updated. Runtime limitations updated.
 
----
-
-#### Step 5: Implement scanf write-through (CRITICAL)
-- **What:** Handle `scanf` at the `executeCallStatement` level in `statements.ts`, following the pattern used for `free`. For each format specifier in the format string, consume from IoState and write to the target variable via `memory.setValue(name, value)`.
-- **Approach:**
-  1. Extract format string from AST: `call.args[0]` is a `string_literal` node → `.value` gives the format string
-  2. Parse with `parseScanfFormat()` from `format.ts` to get tokens
-  3. For each specifier token, resolve the target variable:
-     - AST argument is `unary_expression` with `operator: '&'` and `operand.type === 'identifier'` → variable name is `operand.name`
-     - If argument is NOT `&identifier`, emit error: "scanf argument must be a pointer (missing &?)"
-  4. Consume from IoState based on specifier:
-     - `%d`/`%i` → `io.readInt()`, `%c` → `io.readChar()`, `%s` → `io.readString()`, `%f` → `io.readFloat()`, `%x` → `io.readHexInt()`
-  5. Write to variable: `ctx.memory.setValue(varName, value)` — emits `setValue` op automatically
-  6. Handle `%*` (suppress): consume but don't assign, don't increment return count
-  7. Return value: count of successfully assigned items, or -1 (EOF) if input exhaustion before first match
-  8. Step description: `scanf("%d", &x) → read "42" from stdin, x = 42`
-- **Files:** `src/lib/interpreter/handlers/statements.ts`, `src/lib/interpreter/io-state.ts` (may need accessor from HandlerContext)
-- **Depends on:** Phase 1 (all done)
-- **Key constraint:** IoState currently lives on the `Interpreter` class and is passed to stdlib via `createStdlib()`. For statement-level handlers, IoState must be accessible via `HandlerContext`. Add `io: IoState` to `HandlerContext` interface.
-- **Verification:**
-  - `scanf("%d", &x)` with stdin `"42\n"` → `x` value is `'42'` in final snapshot
-  - `scanf("%d", &x); scanf("%c", &c)` with stdin `"42\nA"` → `c` value is `'10'` (newline residue!)
-  - `scanf("%d", x)` (missing `&`) → interpreter error
-  - `scanf("%d %d", &a, &b)` with stdin `"42"` → returns 1, `a` is `'42'`, `b` unchanged
-  - Non-I/O steps still have no ioEvents
-
-#### Step 6: Implement fgets/gets via statement handler
-- **What:** Handle `fgets` and `gets` at the `executeCallStatement` level. Both consume from IoState and write to a destination buffer.
-- **Approach (simplified for v1):**
-  - `fgets(buf, n, stdin)`: Extract `buf` variable name from AST arg[0]. Call `io.readLine(n)`. For heap-allocated buffers, set the heap entry value to a quoted string (same pattern as existing sprintf). For stack-allocated char arrays, write byte-by-byte if address-to-ID lookup exists, otherwise show as description text.
-  - `gets(buf)`: Call `io.readUntilNewline()`. Same write pattern as fgets but no bounds checking. Step description warns about overflow when consumed length exceeds buffer size.
-  - **v1 simplification:** Both functions show the result as a quoted string on the destination entry (matching existing sprintf behavior) rather than individual byte setValue ops. This avoids the address-to-ID reverse lookup complexity.
-- **Files:** `src/lib/interpreter/handlers/statements.ts`
-- **Depends on:** Step 5 (IoState in HandlerContext)
-- **Verification:**
-  - `fgets(buf, 10, stdin)` with stdin `"Hello\n"` → buf entry shows `"Hello\n"`
-  - `gets(buf)` with long stdin → step description warns about overflow
-  - fgets EOF returns null indicator
-
-#### Step 11: Step Description Enrichment
-- **What:** After implementing Steps 5-6, enhance step descriptions for all I/O calls using IoEvent data. The description is set when `beginStep` is called; we enhance it by appending the I/O result after the stdlib call completes.
-- **Approach:** In `executeCallStatement`, after the I/O call evaluates:
-  1. Read back the IoEvents from IoState (peek, not flush — flushing happens in `flushStep`)
-  2. For write events: append `→ wrote "text" to stdout`
-  3. For read events: append `→ read "consumed" from stdin`
-  4. For scanf: append variable assignments `→ x = 42`
-  5. Update step description via `ctx.memory.setStepDescription(newDesc)` (new method needed on Memory)
-- **Target descriptions:**
-  - `printf("x = %d\n", x) → "x = 42\n"`
-  - `scanf("%d", &x) → read "42", x = 42`
-  - `getchar() → 'A' (65)`
-  - `puts("hello") → "hello\n"`
-  - `fgets(buf, 10, stdin) → "Hello\n" (7 chars)`
-- **Files:** `src/lib/interpreter/handlers/statements.ts`, `src/lib/interpreter/memory.ts`
-- **Depends on:** Steps 5, 6
-- **Verification:** `npm test` — verify step descriptions contain expected output text
-
-#### Step 12: Update interpreter-status.md
-- **What:** Update the interpreter status document to reflect shipped stdio capabilities.
-- **Changes:**
-  - Move `printf`, `puts`, `putchar` from "No-op" to "Working" with notes about IoState/ConsolePanel
-  - Move `getchar` from "Not Implemented" to "Working"
-  - Add `scanf`, `fgets`, `gets` to "Working" once Steps 5-6 ship
-  - Add `fprintf`, `fputs` to "Working"
-  - Update test count from 599 → current
-  - Update test program count with new stdio category
-  - Remove "No I/O output" and "No stdin" from Runtime Limitations
-- **Files:** `docs/interpreter-status.md`
-- **Depends on:** Steps 5-6
+**Phase 2 state:** 716 tests across 21 files.
 
 ---
 
-### Deferred to v2
+### Phase 3: Deferred features (DONE)
 
-These items were in the original plan but are deferred based on implementation learnings:
+All previously-deferred items have been implemented.
 
-- **sprintf/snprintf byte-by-byte writes to stack char arrays** — Requires an address-to-entry-ID reverse lookup that doesn't exist in Memory. The existing sprintf behavior (quoted string on heap entry) is adequate for v1. Byte-by-byte visualization is a v2 enhancement.
-- **stdin buffer as `kind: 'io'` MemoryEntry in memory view** — The StdinInput component already shows consumed/remaining state during stepping. Adding a duplicate in the memory view adds complexity for marginal educational benefit. Revisit in v2.
-- **gets/sprintf deliberate overflow visualization** — Writing past buffer bounds and showing clobbered adjacent variables requires the same address-to-ID reverse lookup. Deferred to v2.
-- **`%s` format specifier with actual string resolution** — printf `%s` currently outputs `"(string)"` because char pointer values are numeric addresses. Resolving the string from memory requires reading bytes from the address, which needs the `MemoryAccess` interface wired through to the format application layer. Straightforward but scope-adds.
-- **snprintf** — Not intercepted in statements.ts yet. Low priority since educational programs rarely use it.
+#### Feature 1: printf `%s` with actual string resolution ✅
+- **Commit:** `6f21b94` — `applyPrintfFormat` accepts `(number | string)[]` args. New `resolvePrintfArgs()` in stdlib resolves `%s` args via `resolveStringArg` (string literals via `CValue.stringValue`, char pointers via byte-by-byte memory reads). `%.3s` precision truncation works. `(null)` for NULL pointers. `evaluateSprintfResult` also updated. 5 new tests.
+
+#### Feature 2: sprintf/snprintf byte-by-byte writes ✅
+- **Commit:** `64c5343` — New `writeStringToBuffer()` helper: writes individual chars to both `addressValues` (runtime consistency for strlen) and child entries (setValue ops for UI). Detects stack array vs heap pointer destination. Falls back to quoted string when children don't exist (large mallocs > 32 elements). `evaluateSprintfResult` parameterized with `fmtArgIdx` for snprintf (format at arg[2] vs arg[1]). `Memory.hasChildEntries()` added.
+
+#### Feature 3: gets/sprintf overflow visualization ✅
+- **Commit:** `fa7d2ff` — `Memory.findEntryIdAtAddress()` scans current scope variables to identify which entry owns a given address. `writeStringToBuffer` extended with `allowOverflow` flag: past array bounds, uses `findEntryIdAtAddress` to find adjacent variable entries and emits setValue ops on them. Capped at 256 bytes past array end. Step description names clobbered variables.
+
+#### Feature 4: stdin buffer `kind: 'io'` MemoryEntry in memory view ✅
+- **Commit:** `9f88a91` — `Memory.addStdinEntry()` and `updateStdinCursor()` emit addEntry/setValue ops. `formatStdinDisplay()` shows consumed text, cursor marker (`|`), and remaining text. IoState flusher detects read events and triggers creation/update. MemoryView renders `kind: 'io'` entries in cyan-themed cards.
+
+**Final state:** 721 tests across 21 files. All features shipped.
+
+---
+
+### Remaining future work
+
+Items that are genuinely out of scope for the current feature:
+
+- **`FILE*` struct visualization** — fopen/fclose/fread/fwrite with internal buffer display
+- **Interactive/async input mode** — blocking mid-execution for user input
+- **`sscanf` / `fscanf`** — parsing from strings/files instead of stdin
+- **`%e`/`%E`/`%g`/`%G`** format specifiers (scientific notation)
+- **Length modifiers** (`%ld`, `%lf`, `%zu`) — `%lf` is common in student code
+- **Per-tab stdin text persistence** — stdin resets on tab switch
+- **scanf `%i` octal/hex prefix** — currently treated as `%d`
 
 ---
 
@@ -571,29 +531,32 @@ it('cumulative stdout across multiple printf calls', () => {
 
 ## Verification
 
-### Phase 1 (DONE)
+### Phase 1 ✅
 - [x] `npm test` passes — 704 tests, 21 files
 - [x] `npm run check` passes — no new TypeScript errors
 - [x] `npm run build` succeeds — static build works
 - [x] printf programs produce correct console output with ioEvents
 - [x] Stepping forward/backward updates console output correctly (O(1) via precomputation)
 - [x] getchar reads from pre-supplied stdin, returns -1 on EOF
-- [x] Test programs demonstrate key educational concepts (4 stdio programs)
+- [x] Test programs demonstrate key educational concepts (6 stdio programs)
 - [x] Console highlights new output per step in emerald
 - [x] StdinInput auto-detected from source code
 
-### Phase 2 (remaining)
-- [ ] scanf programs consume pre-supplied stdin and update variable values in memory view
-- [ ] scanf `\n` residue scenario works end-to-end (the core educational demonstration)
-- [ ] Missing `&` in scanf produces clear error message
-- [ ] fgets/gets consume from stdin and show result on destination entry
-- [ ] Step descriptions show I/O results (e.g., `printf(...) → "x = 42\n"`)
-- [ ] interpreter-status.md updated to reflect new capabilities
+### Phase 2 ✅
+- [x] scanf programs consume pre-supplied stdin and update variable values in memory view
+- [x] scanf `\n` residue scenario works end-to-end (the core educational demonstration)
+- [x] Missing `&` in scanf produces clear error message
+- [x] fgets/gets consume from stdin and show result on destination entry
+- [x] Step descriptions show I/O results (e.g., `printf(...) → "x = 42\n"`)
+- [x] interpreter-status.md updated to reflect new capabilities
 
-### Deferred to v2
-- ~~stdin buffer entry visible in memory view with cursor position~~
-- ~~gets/sprintf overflow shows clobbered adjacent variable values~~
-- ~~Per-tab stdin text persistence~~ (stdin resets on tab switch — acceptable for v1)
+### Phase 3 ✅
+- [x] printf `%s` resolves actual strings from literals and memory
+- [x] sprintf/snprintf byte-by-byte writes to stack arrays and heap blocks
+- [x] gets overflow shows clobbered adjacent variable values
+- [x] stdin buffer entry visible in memory view with cursor position
+
+### Final: 721 tests across 21 files. `npm test`, `npm run check`, `npm run build` all pass.
 
 ---
 
@@ -647,8 +610,13 @@ Could mark printf/scanf as `subStep: true` to reduce step count impact on MAX_ST
 - [src/lib/components/ConsolePanel.svelte](src/lib/components/ConsolePanel.svelte) — stdout display component (new)
 - [src/lib/components/StdinInput.svelte](src/lib/components/StdinInput.svelte) — stdin input component (new)
 
+### Key patterns (for future reference)
+- `writeStringToBuffer()` in `statements.ts` — byte-by-byte buffer writes with overflow support. Reuse for any future string-writing stdlib function.
+- `findEntryIdAtAddress()` in `memory.ts` — reverse address-to-entry lookup. Reuse for any future memory corruption visualization.
+- `resolvePrintfArgs()` in `stdlib.ts` — resolves `%s` args from string literals or memory. Reuse for any function needing string resolution from CValues.
+
 ### External
-- [neatlibc scanf.c](https://github.com/aligrudi/neatlibc/blob/master/scanf.c) — simple scanf reference implementation (~220 lines) — guide for Step 5
+- [neatlibc scanf.c](https://github.com/aligrudi/neatlibc/blob/master/scanf.c) — simple scanf reference implementation (~220 lines)
 - [cppreference scanf](https://en.cppreference.com/w/c/io/fscanf.html) — authoritative C spec for scanf behavior
 - [Python Tutor stdin issue](https://github.com/pythontutor-dev/pythontutor/issues/21) — prior art showing this problem is unsolved for C
 - [JavaWiz](https://javawiz.net/) — closest analog for input buffer visualization (Java)
