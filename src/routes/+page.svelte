@@ -54,6 +54,8 @@
 
 			if (result.program.steps.length > 0) {
 				const program = JSON.parse(JSON.stringify(result.program));
+				internalIndex = 0;
+				subStepMode = false;
 				mode = {
 					state: 'viewing',
 					program,
