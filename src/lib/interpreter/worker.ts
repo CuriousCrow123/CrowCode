@@ -22,11 +22,12 @@ let parser: Parser | null = null;
 async function initParser(): Promise<Parser> {
 	if (parser) return parser;
 
+	const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
 	await Parser.init({
-		locateFile: () => '/CrowCode/tree-sitter.wasm',
+		locateFile: () => `${base}tree-sitter.wasm`,
 	});
 	parser = new Parser();
-	const lang = await Language.load('/CrowCode/tree-sitter-c.wasm');
+	const lang = await Language.load(`${base}tree-sitter-c.wasm`);
 	parser.setLanguage(lang);
 	return parser;
 }
