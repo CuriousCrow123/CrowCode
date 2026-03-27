@@ -1,7 +1,7 @@
 ---
 title: "stdio Support: Interactive I/O with Buffer Visualization"
 type: feat
-status: in-progress
+status: completed
 date: 2026-03-27
 deepened: 2026-03-27
 ---
