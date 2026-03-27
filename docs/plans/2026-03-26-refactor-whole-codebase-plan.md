@@ -1,7 +1,7 @@
 ---
 title: Whole Codebase Refactoring
 type: refactor
-status: active
+status: completed
 date: 2026-03-26
 ---
 
@@ -60,36 +60,38 @@ This plan prioritizes by impact: interpreter cleanup first, then component clean
 ### Part A: Interpreter Cleanup
 
 #### Step 1: Remove dead `interpret()` function
+> **Not done.** Dead `interpret()` export still exists at line 34 of `interpreter.ts`. Single-file fix.
+
 - **What:** Delete the `interpret()` free function and its local `InterpretResult` type from `interpreter.ts`. The canonical `InterpretResult` stays in `index.ts`.
 - **Files:** `src/lib/interpreter/interpreter.ts`
 - **Depends on:** nothing
 - **Verification:** `npm test && npm run check`
 
 #### Step 2: Deduplicate `alignUp`
-- **What:** Export `alignUp` from `types-c.ts`. In `environment.ts`, import it instead of redefining it.
-- **Files:** `src/lib/interpreter/types-c.ts`, `src/lib/interpreter/environment.ts`
-- **Depends on:** nothing
-- **Verification:** `npm test && npm run check`
+> **Moot.** `environment.ts` was deleted during the Memory unification refactor. No duplication remains.
 
 #### Step 3: Remove unused `typeReg` parameter
+> **Not done.** `typeReg` parameter still present in `handleMalloc`/`handleCalloc`. Single-file fix.
+
 - **What:** Remove `typeReg: TypeRegistry` from `handleMalloc` and `handleCalloc` signatures in `stdlib.ts`. Update 2 internal call sites in `createStdlib`.
 - **Files:** `src/lib/interpreter/stdlib.ts`
 - **Depends on:** nothing
 - **Verification:** `npm test && npm run check`
 
 #### Step 4: Fix worker.ts hardcoded paths
+> **Not done.** `worker.ts` still hardcodes `/CrowCode/` for WASM paths. Single-file fix.
+
 - **What:** Replace hardcoded `/CrowCode/tree-sitter.wasm` and `/CrowCode/tree-sitter-c.wasm` with `import.meta.env.BASE_URL` pattern.
 - **Files:** `src/lib/interpreter/worker.ts`
 - **Depends on:** nothing
 - **Verification:** `npm test && npm run check && npm run build`
 
 #### Step 5: Fix misplaced vi import
-- **What:** Move `import { vi } from 'vitest'` from line 538 to the top of `emitter.test.ts`.
-- **Files:** `src/lib/interpreter/emitter.test.ts`
-- **Depends on:** nothing
-- **Verification:** `npm test`
+> **Moot.** `emitter.test.ts` was deleted during the Memory unification refactor.
 
 #### Step 6: Normalize import paths
+> **Not done.** 5+ interpreter files still import from `$lib/api/types` instead of `$lib/types`.
+
 - **What:** Change interpreter module files that import from `$lib/api/types` to use `$lib/types` instead, matching the engine convention.
 - **Files:** All interpreter `.ts` files that import from `$lib/api/types`
 - **Depends on:** Steps 1, 3, 4 (those interpreter files are also modified)
@@ -98,6 +100,8 @@ This plan prioritizes by impact: interpreter cleanup first, then component clean
 ### Part B: Component Cleanup
 
 #### Step 7: Extract shared `MAX_VALUE_LENGTH`
+> **Not done.** Constant still duplicated locally in `MemoryRow.svelte`, `HeapCard.svelte`, `DrilldownModal.svelte`.
+
 - **What:** Create `src/lib/components/constants.ts` with `export const MAX_VALUE_LENGTH = 40`. Update `MemoryRow.svelte`, `HeapCard.svelte`, `DrilldownModal.svelte` to import it.
 - **Files:** `src/lib/components/constants.ts` (new), 3 `.svelte` files
 - **Depends on:** nothing
@@ -135,19 +139,29 @@ The interpreter is now the sole path from C source to `Program`. The hand-author
 
 ### Part D: Documentation
 
+> **Completed** by the documentation overhaul plan (`docs/plans/2026-03-27-refactor-documentation-overhaul-plan.md`) and organize-src-docs plan. All documentation (architecture.md, CLAUDE.md, CONTRIBUTING.md, interpreter-status.md) updated to reflect current codebase.
+
 #### Step 12: Update CLAUDE.md + architecture.md
-- **What:** In CLAUDE.md: update pipeline diagram (remove ProgramStepper), remove basics.ts/loops.ts from Key Files table. In architecture.md: remove CustomEditor.svelte references, remove play/speed from StepControls, remove programs directory from listing, remove ProgramStepper component section, update system overview to single interpreter path, remove hand-authored authoring section, update test counts.
-- **Files:** `CLAUDE.md`, `docs/architecture.md`
-- **Depends on:** Steps 8-11
-- **Verification:** manual review
+- Done.
 
 ### Part E: Final Verification
 
+> **Completed.** 599 tests pass across 18 files. Build and type check pass. No references to deleted files remain in active documentation.
+
 #### Step 13: Full verification
-- **What:** Run `npm test && npm run check && npm run build`. Verify no imports of `$lib/programs`, `ProgramStepper`, or builders remain.
-- **Files:** none
-- **Depends on:** all steps
-- **Verification:** expect ~37 fewer tests from deleted files; all remaining tests must pass
+- Done.
+
+---
+
+## Remaining Items (not warranting a plan)
+
+These 5 independent single-file fixes were identified but not completed. Each is a standalone change:
+
+1. **Dead `interpret()` function** — `src/lib/interpreter/interpreter.ts` line 34. Delete function and local `InterpretResult` type.
+2. **Unused `typeReg` parameter** — `src/lib/interpreter/stdlib.ts`. Remove from `handleMalloc`/`handleCalloc` signatures.
+3. **Hardcoded worker paths** — `src/lib/interpreter/worker.ts`. Replace `/CrowCode/` with `import.meta.env.BASE_URL`.
+4. **Import path normalization** — 5+ interpreter files use `$lib/api/types` instead of `$lib/types`.
+5. **Duplicated `MAX_VALUE_LENGTH`** — constant defined locally in 3 `.svelte` files, should be extracted to `components/constants.ts`.
 
 ## Edge Cases
 
