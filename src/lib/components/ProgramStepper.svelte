@@ -32,6 +32,27 @@
 		return { line: loc.line };
 	});
 
+	// Collect descriptions from all steps between previous visible and current (inclusive).
+	// In sub-step mode, just the current step. In line mode, includes skipped sub-steps.
+	const stepDescriptions = $derived.by(() => {
+		if (subStepMode) {
+			const step = program.steps[internalIndex];
+			if (!step?.description && !step?.evaluation) return [];
+			return [{ description: step.description, evaluation: step.evaluation }];
+		}
+		const pos = visiblePosition;
+		const startIdx = pos > 0 ? visibleIndices[pos - 1] + 1 : 0;
+		const endIdx = internalIndex;
+		const descs: Array<{ description?: string; evaluation?: string }> = [];
+		for (let i = startIdx; i <= endIdx; i++) {
+			const step = program.steps[i];
+			if (step?.description || step?.evaluation) {
+				descs.push({ description: step.description, evaluation: step.evaluation });
+			}
+		}
+		return descs;
+	});
+
 	// Diff from previous visible step
 	const diff: SnapshotDiff = $derived.by(() => {
 		const visPos = visiblePosition;
@@ -101,10 +122,22 @@
 		current={visiblePosition}
 		total={visibleIndices.length}
 		{subStepMode}
-		description={currentStep?.description}
-		evaluation={currentStep?.evaluation}
 		onprev={prev}
 		onnext={next}
 		ontogglesubstep={toggleSubStep}
 	/>
+	{#if stepDescriptions.length > 0}
+		<div class="mt-2 text-sm font-mono space-y-0.5">
+			{#each stepDescriptions as desc}
+				<div class="flex items-center gap-2">
+					{#if desc.description}
+						<span class="text-zinc-400">{desc.description}</span>
+					{/if}
+					{#if desc.evaluation}
+						<span class="text-emerald-500">{desc.evaluation}</span>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
 </div>
