@@ -59,7 +59,7 @@ Pre-authored programs (TypeScript) ───────────────
                                                     CodeEditor           MemoryView
                                                           ▲                    ▲
                                                           └─────────┬──────────┘
-                                                              ProgramStepper
+                                                           StepControls
 ```
 
 Programs produce steps. Each step has ops that transform the previous memory snapshot. All snapshots are pre-computed on load — stepping is just indexing into an array. See [docs/architecture.md](docs/architecture.md) for the full system design.

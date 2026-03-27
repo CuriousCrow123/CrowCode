@@ -49,7 +49,7 @@ Pre-authored programs (TypeScript) ───────────────
                                               CodeEditor           MemoryView
                                                     ▲                    ▲
                                                     └─────────┬──────────┘
-                                                        ProgramStepper
+                                                     +page.svelte (orchestrator)
                                                               │
                                                         StepControls
 ```

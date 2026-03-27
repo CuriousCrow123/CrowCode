@@ -105,6 +105,8 @@ This plan prioritizes by impact: interpreter cleanup first, then component clean
 
 ### Part C: Remove Hand-Authored Programs Layer
 
+> **Completed** by the organize-src-docs plan (`docs/plans/2026-03-27-refactor-organize-src-docs-plan.md`). Programs layer, ProgramStepper, builders, and engine barrel re-exports all deleted. integration.test.ts rewritten with inline programs. All documentation updated.
+
 The interpreter is now the sole path from C source to `Program`. The hand-authored path (TypeScript literals + builder helpers) is fully removed.
 
 #### Step 8: Delete programs layer
