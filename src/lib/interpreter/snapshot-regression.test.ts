@@ -346,3 +346,132 @@ describe('snapshot: struct on stack', () => {
 		expect(xSet!.value).toBe('10');
 	});
 });
+
+// ========================================
+// Program 8: Big integration — structs, heap, functions, loops, branching
+// ========================================
+
+const BIG_INTEGRATION_SRC = `
+struct Vec2 {
+    int x;
+    int y;
+};
+
+struct Entity {
+    int id;
+    struct Vec2 pos;
+    int *scores;
+    int numScores;
+};
+
+int dot(struct Vec2 a, struct Vec2 b) {
+    return a.x * b.x + a.y * b.y;
+}
+
+int sumScores(int *arr, int n) {
+    int total = 0;
+    for (int i = 0; i < n; i++) {
+        total += arr[i];
+    }
+    return total;
+}
+
+int main() {
+    struct Entity *player = malloc(sizeof(struct Entity));
+    player->id = 1;
+    player->pos.x = 3;
+    player->pos.y = 4;
+
+    player->scores = calloc(4, sizeof(int));
+    player->numScores = 4;
+
+    for (int i = 0; i < 4; i++) {
+        player->scores[i] = (i + 1) * 10;
+    }
+
+    struct Vec2 dir = {1, 0};
+    int d = dot(player->pos, dir);
+
+    int total = sumScores(player->scores, player->numScores);
+
+    if (total > 50) {
+        player->pos.x += d;
+    } else {
+        player->pos.y += d;
+    }
+
+    free(player->scores);
+    free(player);
+    return 0;
+}
+`;
+
+describe('snapshot: big integration', () => {
+	it('no interpreter errors', () => {
+		const { errors } = run(BIG_INTEGRATION_SRC);
+		expect(errors).toHaveLength(0);
+	});
+
+	it('passes validation', () => {
+		const { program } = run(BIG_INTEGRATION_SRC);
+		expect(validateProgram(program)).toHaveLength(0);
+	});
+
+	it('has all expected scopes', () => {
+		const { program } = run(BIG_INTEGRATION_SRC);
+		const ids = allEntryIds(program);
+		expect(ids).toContain('main');
+		expect(ids).toContain('dot');
+		expect(ids).toContain('sumScores');
+	});
+
+	it('has heap blocks for player and scores', () => {
+		const { program } = run(BIG_INTEGRATION_SRC);
+		const ids = allEntryIds(program);
+		expect(ids).toContain('heap-player');
+		expect(ids).toContain('heap-scores');
+	});
+
+	it('has nested struct fields on heap', () => {
+		const { program } = run(BIG_INTEGRATION_SRC);
+		const ids = allEntryIds(program);
+		expect(ids).toContain('heap-player-id');
+		expect(ids).toContain('heap-player-pos');
+		expect(ids).toContain('heap-player-pos-x');
+		expect(ids).toContain('heap-player-pos-y');
+	});
+
+	it('scores array gets populated via loop', () => {
+		const { program } = run(BIG_INTEGRATION_SRC);
+		const setOps = program.steps.flatMap((s) => s.ops)
+			.filter((op): op is SnapshotOp & { op: 'setValue' } => op.op === 'setValue');
+		const scoreSets = setOps.filter((op) => op.id.startsWith('heap-scores-'));
+		// scores[0]=10, scores[1]=20, scores[2]=30, scores[3]=40
+		expect(scoreSets.length).toBeGreaterThanOrEqual(4);
+	});
+
+	it('both heap blocks are freed (no leaks)', () => {
+		const { program } = run(BIG_INTEGRATION_SRC);
+		const statusOps = program.steps.flatMap((s) => s.ops)
+			.filter((op): op is SnapshotOp & { op: 'setHeapStatus' } => op.op === 'setHeapStatus');
+		const freed = statusOps.filter((op) => op.status === 'freed');
+		expect(freed.length).toBe(2);
+		const leaked = statusOps.filter((op) => op.status === 'leaked');
+		expect(leaked.length).toBe(0);
+	});
+
+	it('dot and sumScores scopes are created and removed', () => {
+		const { program } = run(BIG_INTEGRATION_SRC);
+		const allOps = program.steps.flatMap((s) => s.ops);
+		for (const fn of ['dot', 'sumScores']) {
+			expect(allOps.find((op) => op.op === 'addEntry' && (op as any).entry.id === fn)).toBeDefined();
+			expect(allOps.find((op) => op.op === 'removeEntry' && op.id === fn)).toBeDefined();
+		}
+	});
+
+	it('has sub-steps from for-loops', () => {
+		const { program } = run(BIG_INTEGRATION_SRC);
+		const subSteps = program.steps.filter((s) => s.subStep);
+		expect(subSteps.length).toBeGreaterThanOrEqual(4);
+	});
+});
