@@ -1,8 +1,7 @@
 <script lang="ts">
 	import type { MemoryEntry } from '$lib/types';
 	import { summarize } from '$lib/summary';
-
-	const MAX_VALUE_LENGTH = 40;
+	import { MAX_VALUE_LENGTH } from './constants';
 
 	let {
 		entry,
