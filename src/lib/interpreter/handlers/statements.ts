@@ -16,6 +16,7 @@ import {
 } from '../types-c';
 import { buildStructChildSpecs, buildArrayChildSpecs } from '../stdlib';
 import { parseScanfFormat } from '../format';
+import { isArrayType as isArrayCType } from '../types-c';
 
 export function executeDeclaration(ctx: HandlerContext, node: ASTNode & { type: 'declaration' }, sharesStep: boolean): void {
 	const type = ctx.typeReg.resolve(node.declType);
@@ -689,22 +690,45 @@ export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type
 		return;
 	}
 
-	// sprintf: keep existing behavior (writes quoted string to heap entry)
-	if (call.callee === 'sprintf' && call.args.length >= 2) {
+	// sprintf/snprintf: format string and write bytes to destination buffer
+	if ((call.callee === 'sprintf' || call.callee === 'snprintf') && call.args.length >= 2) {
+		const isSnprintf = call.callee === 'snprintf';
+		const fmtArgIdx = isSnprintf ? 2 : 1;
 		const destResult = ctx.evaluator.eval(call.args[0]);
-		const formatted = evaluateSprintfResult(ctx, call);
+		const formatted = evaluateSprintfResult(ctx, call, fmtArgIdx);
+
+		let maxLen: number | undefined;
+		if (isSnprintf && call.args.length >= 2) {
+			const sizeResult = ctx.evaluator.eval(call.args[1]);
+			maxLen = sizeResult.value?.data ?? 0;
+			if (maxLen <= 0) {
+				// snprintf(buf, 0, ...) writes nothing
+				if (!sharesStep) {
+					ctx.memory.beginStep({ line }, `snprintf(${ctx.describeExpr(call.args[0])}, ${maxLen}, ...)`, `→ "${formatted}" (not written)`);
+					ctx.stepCount++;
+				}
+				return;
+			}
+		}
 
 		if (!sharesStep) {
-			ctx.memory.beginStep({ line }, `sprintf(${ctx.describeExpr(call.args[0])}, ...)`, `→ "${formatted}"`);
+			ctx.memory.beginStep({ line }, `${call.callee}(${ctx.describeExpr(call.args[0])}, ...)`, `→ "${formatted}"`);
 			ctx.stepCount++;
 		}
 
-		if (!destResult.error && destResult.value.data) {
-			const destName = call.args[0].type === 'identifier' ? call.args[0].name : undefined;
-			if (destName) {
-				const blockId = ctx.memory.getHeapBlockId(destName);
-				if (blockId) {
-					ctx.memory.setValueById(blockId, `"${formatted}"`);
+		const destName = call.args[0].type === 'identifier' ? call.args[0].name : undefined;
+		if (destName) {
+			// Write bytes to children (for individual char display)
+			writeStringToBuffer(ctx, destName, formatted, maxLen);
+
+			// Also set quoted string on the parent entry (for summary display)
+			const blockId = ctx.memory.getHeapBlockId(destName);
+			if (blockId) {
+				ctx.memory.setValueById(blockId, `"${formatted}"`);
+			} else {
+				const varId = ctx.memory.getVarEntryId(destName);
+				if (varId) {
+					ctx.memory.setValueById(varId, `"${formatted}"`);
 				}
 			}
 		}
@@ -1138,17 +1162,17 @@ export function applyCompoundOp(op: string, oldVal: number, newVal: number): num
 	}
 }
 
-export function evaluateSprintfResult(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }): string {
-	if (call.args.length < 2) return '';
-	const fmtResult = ctx.evaluator.eval(call.args[1]);
+export function evaluateSprintfResult(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, fmtArgIdx = 1): string {
+	if (call.args.length <= fmtArgIdx) return '';
+	const fmtResult = ctx.evaluator.eval(call.args[fmtArgIdx]);
 	let fmt = '';
-	if (call.args[1].type === 'string_literal') {
-		fmt = (call.args[1] as any).value ?? '';
+	if (call.args[fmtArgIdx].type === 'string_literal') {
+		fmt = (call.args[fmtArgIdx] as any).value ?? '';
 	} else {
 		return '';
 	}
 
-	let argIdx = 2;
+	let argIdx = fmtArgIdx + 1;
 	let result = '';
 	for (let i = 0; i < fmt.length; i++) {
 		if (fmt[i] === '%' && i + 1 < fmt.length) {
@@ -1190,6 +1214,75 @@ export function evaluateSprintfResult(ctx: HandlerContext, call: ASTNode & { typ
 		}
 	}
 	return result;
+}
+
+/**
+ * Write a string byte-by-byte into a buffer (stack array or heap block).
+ * Emits setValue ops for each child entry AND writes to addressValues for runtime consistency.
+ */
+export function writeStringToBuffer(
+	ctx: HandlerContext,
+	destName: string,
+	str: string,
+	maxLen?: number,
+): { bytesWritten: number } {
+	const cvalue = ctx.memory.lookupVariable(destName);
+	if (!cvalue) return { bytesWritten: 0 };
+
+	// Determine base address, array size, and entry ID
+	let baseAddr: number;
+	let arraySize = 256; // default limit
+	let entryId: string | undefined;
+
+	if (isArrayCType(cvalue.type)) {
+		// Stack array: address is the array's base address
+		baseAddr = cvalue.address;
+		arraySize = cvalue.type.size;
+		entryId = ctx.memory.getVarEntryId(destName);
+	} else {
+		// Pointer to heap block: data is the heap address
+		baseAddr = cvalue.data ?? 0;
+		if (baseAddr === 0) return { bytesWritten: 0 };
+		const heapId = ctx.memory.getHeapBlockId(destName);
+		if (heapId) {
+			entryId = heapId;
+			const block = ctx.memory.getHeapBlock(baseAddr);
+			if (block) arraySize = block.size;
+		}
+	}
+
+	if (!entryId) return { bytesWritten: 0 };
+
+	// Check if children exist (heap blocks may not have children if array inference didn't fire)
+	const hasChildren = ctx.memory.hasChildEntries(entryId);
+	if (!hasChildren) {
+		// No children — write bytes to addressValues only (for strlen etc.), skip setValue ops
+		const writeLen = Math.min(str.length, maxLen !== undefined ? maxLen - 1 : arraySize);
+		for (let i = 0; i < writeLen; i++) {
+			ctx.memory.writeMemory(baseAddr + i, str.charCodeAt(i));
+		}
+		ctx.memory.writeMemory(baseAddr + writeLen, 0);
+		return { bytesWritten: writeLen };
+	}
+
+	// Compute write limit
+	const limit = maxLen !== undefined ? Math.min(maxLen - 1, arraySize) : arraySize;
+	const writeLen = Math.min(str.length, limit);
+
+	// Write each byte with setValue ops
+	for (let i = 0; i < writeLen; i++) {
+		const charCode = str.charCodeAt(i);
+		ctx.memory.writeMemory(baseAddr + i, charCode);
+		ctx.memory.setValueById(`${entryId}-${i}`, String(charCode));
+	}
+
+	// Write null terminator
+	if (writeLen < arraySize) {
+		ctx.memory.writeMemory(baseAddr + writeLen, 0);
+		ctx.memory.setValueById(`${entryId}-${writeLen}`, '0');
+	}
+
+	return { bytesWritten: writeLen };
 }
 
 export function updateHeapChildrenFromMemory(ctx: HandlerContext, destArg: ASTNode): void {

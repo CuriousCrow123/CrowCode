@@ -965,6 +965,11 @@ export class Memory implements MemoryReader {
 		this.heapEntryByPointer.set(varName, blockId);
 	}
 
+	hasChildEntries(parentId: string): boolean {
+		const children = this.childEntriesById.get(parentId);
+		return children !== undefined && children.size > 0;
+	}
+
 	getHeapBlockIdByAddress(address: number): string | undefined {
 		for (const [id, addr] of this.heapBlockAddresses) {
 			if (addr === address) return id;

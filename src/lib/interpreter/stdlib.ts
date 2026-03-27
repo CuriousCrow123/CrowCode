@@ -47,8 +47,7 @@ export function createStdlib(
 				return handleGetchar(io);
 			case 'sprintf':
 			case 'snprintf':
-				// sprintf/snprintf are handled at the interpreter level
-				// because they need to emit setValue ops on the destination array
+				// Handled at the statement level (executeCallStatement) for op emission
 				return ok(0);
 			case 'sizeof':
 				return ok(args[0]?.data ?? 0);
