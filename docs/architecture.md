@@ -58,10 +58,9 @@ Pre-authored programs (TypeScript) ───────────────
 
 | Module | Responsibility | Key files |
 |--------|---------------|-----------|
-| **Engine** (`src/lib/engine/`) | Snapshot building, diffing, validation, navigation, builder helpers | `snapshot.ts`, `diff.ts`, `validate.ts`, `navigation.ts`, `builders.ts` |
+| **Engine** (`src/lib/engine/`) | Snapshot building, diffing, validation, navigation | `snapshot.ts`, `diff.ts`, `validate.ts`, `navigation.ts` |
 | **Interpreter** (`src/lib/interpreter/`) | C source → `Program` conversion: parsing, evaluation, statement execution, memory management | `parser.ts`, `memory.ts`, `evaluator.ts`, `interpreter.ts`, `service.ts` |
-| **Components** (`src/lib/components/`) | Svelte UI: code editor, memory view, step controls, tabs | `ProgramStepper.svelte`, `CodeEditor.svelte`, `MemoryView.svelte` |
-| **Programs** (`src/lib/programs/`) | Pre-authored example programs | `basics.ts`, `loops.ts` |
+| **Components** (`src/lib/components/`) | Svelte UI: code editor, memory view, step controls, tabs | `CodeEditor.svelte`, `MemoryView.svelte`, `EditorTabs.svelte` |
 | **Stores** (`src/lib/stores/`) | Application state: editor tabs, localStorage persistence | `editor-tabs.svelte.ts` |
 
 ### Directory Structure
@@ -75,7 +74,6 @@ src/lib/
 │   ├── diff.ts                     diffSnapshots
 │   ├── validate.ts                 validateProgram
 │   ├── navigation.ts               getVisibleIndices, nearestVisibleIndex
-│   ├── builders.ts                 Authoring helpers (scope, variable, set, etc.)
 │   └── index.ts                    Barrel export
 ├── interpreter/
 │   ├── parser.ts                   tree-sitter C → AST conversion
@@ -93,12 +91,7 @@ src/lib/
 │   ├── types-c.ts                  C type system (primitives, pointers, arrays, structs)
 │   ├── stdlib.ts                   Standard library (malloc, calloc, free, sprintf, strlen, etc.)
 │   └── index.ts                    Barrel export (interpretSync, resetParserCache)
-├── programs/
-│   ├── basics.ts                   Sample: structs, pointers, malloc/free, function calls
-│   ├── loops.ts                    Sample: for-loops with sub-step granularity
-│   └── index.ts                    Barrel export
 ├── components/
-│   ├── ProgramStepper.svelte       Orchestrator — owns state, wires everything
 │   ├── CodeEditor.svelte           CodeMirror 6 wrapper, read-only, line/range highlight
 │   ├── StepControls.svelte         Navigation UI (prev/next/play/speed/sub-step)
 │   ├── MemoryView.svelte           Renders scope cards + heap card from MemoryEntry[]
@@ -206,24 +199,6 @@ Navigation is decoupled from the snapshot engine. It manages:
 
 Sub-step toggle: steps with `subStep: true` are hidden in line mode. Toggling mid-program uses `nearestVisibleIndex` to remap position.
 
-#### Builders
-
-Ergonomic helpers for authoring programs:
-
-```ts
-// Create entries
-scope(id, name, scopeInfo?)
-variable(id, name, type, value, address, children?)
-heapBlock(id, type, address, heapInfo, children?)
-
-// Create ops
-addScope(parentId, entry)    // → addEntry op
-addVar(parentId, entry)      // → addEntry op
-set(id, value)               // → setValue op
-free(id)                     // → setHeapStatus op (freed)
-remove(id)                   // → removeEntry op
-```
-
 #### Validation
 
 `validateProgram(program)` builds all snapshots and checks for:
@@ -238,7 +213,7 @@ Runs at dev/load time. Errors include step number and specific message.
 
 ### C Interpreter Pipeline
 
-The interpreter converts C source code into a `Program` (the same type used by pre-authored programs). This happens in the Custom tab when the user clicks Run.
+The interpreter converts C source code into a `Program`. This happens when the user clicks Run in the editor.
 
 ```
 C source string
@@ -262,7 +237,7 @@ C source string
       └── stdlib.ts                ← malloc, calloc, free, sprintf
       │
       ▼
-  Program { name, source, steps }  ← same type as pre-authored programs
+  Program { name, source, steps }
       │
       ▼
   buildSnapshots() → UI            ← standard pipeline from here
@@ -326,18 +301,6 @@ See [interpreter-status.md](interpreter-status.md) for the complete feature matr
 
 ### UI Components
 
-#### ProgramStepper (Orchestrator)
-
-Owns all visualization state:
-
-- `internalIndex` — position in the full step list
-- `playing`, `speed`, `subStepMode` — playback state
-- `snapshots` — pre-computed via `buildSnapshots` ($derived, runs once)
-- `editorLocation` — strips column ranges in line mode
-- `diff` — computed between previous and current visible step
-
-Provides data to children via props. Handles keyboard shortcuts (Arrow keys, Space, S).
-
 #### CodeEditor
 
 CodeMirror 6 wrapper. Props: `source` (fixed) and `location` (reactive).
@@ -347,15 +310,6 @@ CodeMirror 6 wrapper. Props: `source` (fixed) and `location` (reactive).
 - Sub-line mode adds character-range mark decoration
 - Scrolls active line into view on change
 - Cleans up `EditorView` on unmount
-
-#### CustomEditor
-
-C code editor with interpretation. Features:
-
-- Textarea for editing C source code
-- **Test program dropdown** — 26 programs across 11 categories
-- Run button — calls `service.ts` to parse and interpret, passes `Program` to ProgramStepper
-- Error display for syntax/runtime errors
 
 #### MemoryView
 
@@ -385,39 +339,7 @@ Single table row for a variable. Shows name, type, value, address. Clickable if 
 
 ---
 
-### Authoring Programs
-
-Programs can be created two ways:
-
-#### 1. Pre-authored (TypeScript)
-
-TypeScript files in `src/lib/programs/`. Use the builder helpers:
-
-```ts
-import { scope, variable, heapBlock, addScope, addVar, set, alloc, free, remove } from '$lib/engine';
-
-export const myProgram: Program = {
-    name: 'My Program',
-    source: `int main() { ... }`,
-    steps: [
-        {
-            location: { line: 2 },
-            description: 'Declare x = 5',
-            ops: [
-                addScope(null, scope('main', 'main()')),
-                addVar('main', variable('x', 'x', 'int', '5', '0x7ffc0060')),
-            ],
-        },
-        // ... more steps
-    ],
-};
-```
-
-#### 2. Custom (C interpreter)
-
-Users write C code in the Custom tab. The interpreter generates the same `Program` type automatically. See [interpreter-status.md](interpreter-status.md) for supported C features.
-
-#### Sub-steps
+### Sub-steps
 
 Mark steps with `subStep: true` for fine-grained visibility (e.g., for-loop init/check/increment). The last step for a line should be an anchor (`subStep` omitted or `false`).
 
@@ -458,11 +380,11 @@ When the memory view's `data` prop changes, the modal closes. This is the v1 beh
 
 ### EditorView lifecycle
 
-CodeMirror's `EditorView` is created in a Svelte `$effect` and destroyed in its cleanup function. When switching programs (via `{#key}` in the page), the entire ProgramStepper unmounts, triggering cleanup. Without this, switching programs leaks DOM nodes and event listeners.
+CodeMirror's `EditorView` is created in a Svelte `$effect` and destroyed in its cleanup function. When switching tabs, the editor unmounts via cleanup. Without this, switching programs leaks DOM nodes and event listeners.
 
 ### Column range stripping
 
-In line mode, `ProgramStepper` strips `colStart`/`colEnd` from the location before passing it to CodeEditor. This is done in the orchestrator (not the editor or the data) so the editor doesn't need to know about sub-step mode, and program authors don't need separate locations per mode.
+In line mode, the page orchestrator strips `colStart`/`colEnd` from the location before passing it to CodeEditor. This is done in the orchestrator (not the editor or the data) so the editor doesn't need to know about sub-step mode.
 
 ---
 
@@ -473,20 +395,18 @@ npm test          # run all tests
 npm run test:watch # watch mode
 ```
 
-645 tests across 20 test files:
+599 tests across 18 test files:
 
-### Engine tests (11 files)
+### Engine tests (9 files)
 
 - **snapshot.test.ts** — Core `applyOps` and `buildSnapshots`: add/remove/set, error reporting, immutability
 - **snapshot-edge-cases.test.ts** — `setHeapStatus`, deep nesting, multi-op interactions, empty/edge states
 - **diff.test.ts** — Added/removed/changed detection, nested entries, empty snapshots
 - **navigation.test.ts** — Visible indices filtering, nearest index mapping
 - **validate.test.ts** — Duplicate ids, missing addresses, subStep anchor rule
-- **builders.test.ts** — All entry and op builder functions
 - **substep.test.ts** — Sub-step snapshot correctness, navigation, diffing, scope lifecycle
-- **integration.test.ts** — Real programs build, snapshot isolation, scope lifecycle
+- **integration.test.ts** — Snapshot building, scope lifecycle, isolation, diffing, navigation with inline programs
 - **bugs.test.ts** — Regression tests
-- **programs.test.ts** — Per-program validation (13 checks per program)
 - **summary.test.ts** — Display summary computation
 
 ### Interpreter tests (9 files)
@@ -503,9 +423,7 @@ npm run test:watch # watch mode
 
 ### Adding tests
 
-For new pre-authored programs: add `testProgram('name', myProgram)` in `programs.test.ts` — this runs 13 validation checks automatically.
-
-For interpreter tests: use `interpretAndBuild()` in `value-correctness.test.ts` for value assertions, or write a full-program test in `manual-programs.test.ts` for integration testing.
+Use `interpretAndBuild()` in `value-correctness.test.ts` for value assertions, or write a full-program test in `manual-programs.test.ts` for integration testing.
 
 ---
 

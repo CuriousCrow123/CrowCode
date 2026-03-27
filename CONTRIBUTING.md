@@ -40,14 +40,6 @@ TypeScript strict mode. Tabs for indentation, single quotes, semicolons. Use `$l
 
 Run `npm run check` to verify.
 
-## Adding a Pre-authored Program
-
-1. Create a file in `src/lib/programs/` — see `basics.ts` or `loops.ts` as reference
-2. Export it from `src/lib/programs/index.ts`
-3. Add a `testProgram('name', myProgram)` call in `programs.test.ts`
-
-The `testProgram()` helper automatically runs 13 validation checks: line numbers, duplicate IDs, missing addresses, snapshot builds, and more.
-
 ## Adding an Interpreter Feature
 
 1. Check [docs/interpreter-status.md](docs/interpreter-status.md) for the current feature matrix

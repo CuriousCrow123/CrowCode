@@ -1,7 +1,7 @@
 # C Interpreter — Feature Status
 
 Last updated: 2026-03-27
-Test suite: 645 passing, 0 skipped (645 total across 20 files)
+Test suite: 599 passing, 0 skipped (599 total across 18 files)
 
 ---
 
@@ -294,9 +294,9 @@ Test suite: 645 passing, 0 skipped (645 total across 20 files)
 
 ## Test Coverage
 
-645 tests across 20 files:
+599 tests across 18 files:
 
-### Engine tests (11 files, 144 tests)
+### Engine tests (9 files, 98 tests)
 
 | Test file | Tests | Focus |
 |-----------|-------|-------|
@@ -305,14 +305,12 @@ Test suite: 645 passing, 0 skipped (645 total across 20 files)
 | `diff.test.ts` | 6 | Added/removed/changed detection, nested entries, empty snapshots |
 | `navigation.test.ts` | 9 | Visible indices filtering, nearest index mapping |
 | `validate.test.ts` | 8 | Duplicate ids, missing addresses, subStep anchor rule |
-| `builders.test.ts` | 17 | All entry and op builder functions |
 | `substep.test.ts` | 14 | Sub-step snapshot correctness, navigation, diffing, scope lifecycle |
-| `integration.test.ts` | 11 | Real programs build, snapshot isolation, scope lifecycle |
+| `integration.test.ts` | 10 | Snapshot building, scope lifecycle, isolation, diffing, navigation with inline programs |
 | `bugs.test.ts` | 4 | Regression tests (visiblePosition = -1, etc.) |
-| `programs.test.ts` | 28 | Per-program validation (13 checks per program × 2 programs + shared tests) |
 | `summary.test.ts` | 9 | Display summary computation for nested values |
 
-Engine subtotal: **144 tests**
+Engine subtotal: **98 tests**
 
 ### Interpreter tests (9 files, 501 tests)
 

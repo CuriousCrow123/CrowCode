@@ -6,7 +6,7 @@ Interactive C memory visualizer. Users step through C programs and see memory la
 
 See `docs/architecture.md` for full system overview.
 
-**Pipeline:** `Program → buildSnapshots() → MemoryEntry[][] → ProgramStepper → UI`
+**Pipeline:** `C source → interpreter → Program → buildSnapshots() → MemoryEntry[][] → UI`
 
 **Core types:** `src/lib/api/types.ts` — MemoryEntry, SnapshotOp, Program, ProgramStep
 
@@ -52,14 +52,11 @@ Live at: `https://CuriousCrow123.github.io/CrowCode/`
 |------|---------|
 | `src/lib/api/types.ts` | Core type definitions (MemoryEntry, SnapshotOp, Program) |
 | `src/lib/engine/snapshot.ts` | buildSnapshots(), applyOps() |
-| `src/lib/engine/builders.ts` | Op builder helpers (addScope, addVar, set, free, etc.) |
 | `src/lib/engine/validate.ts` | validateProgram() — rules all Programs must satisfy |
 | `src/lib/interpreter/memory.ts` | Unified Memory class (runtime state + op recording) |
 | `src/lib/interpreter/interpreter.ts` | Statement execution, control flow, uses Memory |
 | `src/lib/interpreter/service.ts` | Main-thread interpreter entry (WASM init, MAX_STEPS limit) |
 | `src/lib/summary.ts` | Display summaries for nested MemoryEntry values |
-| `src/lib/programs/basics.ts` | Reference program: structs, pointers, malloc/free, function calls |
-| `src/lib/programs/loops.ts` | Reference program: for-loops with sub-step granularity |
 | `docs/architecture.md` | System architecture and principles |
 | `docs/decisions/` | Architecture Decision Records (why things are the way they are) |
 | `docs/research/op-generation-requirements.md` | Full op generation contract for interpreter |
