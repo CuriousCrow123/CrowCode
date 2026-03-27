@@ -718,6 +718,73 @@ int main() {
     return 0;
 }`,
 	},
+
+	// Category: Big Integration
+	{
+		id: 'p15.1', category: 'Integration', name: 'Entity System',
+		source: `#include <stdio.h>
+#include <stdlib.h>
+
+struct Vec2 {
+    int x;
+    int y;
+};
+
+struct Entity {
+    int id;
+    struct Vec2 pos;
+    int *scores;
+    int numScores;
+};
+
+int dot(struct Vec2 a, struct Vec2 b) {
+    return a.x * b.x + a.y * b.y;
+}
+
+int sumScores(int *arr, int n) {
+    int total = 0;
+    for (int i = 0; i < n; i++) {
+        total += arr[i];
+    }
+    return total;
+}
+
+int main() {
+    // Allocate player on heap with nested struct
+    struct Entity *player = malloc(sizeof(struct Entity));
+    player->id = 1;
+    player->pos.x = 3;
+    player->pos.y = 4;
+
+    // Allocate scores array through struct field
+    player->scores = calloc(4, sizeof(int));
+    player->numScores = 4;
+
+    // Fill scores via loop
+    for (int i = 0; i < 4; i++) {
+        player->scores[i] = (i + 1) * 10;
+    }
+
+    // Stack struct + function call with pass-by-value
+    struct Vec2 dir = {1, 0};
+    int d = dot(player->pos, dir);
+
+    // Function call with pointer parameter
+    int total = sumScores(player->scores, player->numScores);
+
+    // Branch on computed value
+    if (total > 50) {
+        player->pos.x += d;
+    } else {
+        player->pos.y += d;
+    }
+
+    // Clean up both allocations
+    free(player->scores);
+    free(player);
+    return 0;
+}`,
+	},
 ];
 
 /** Get unique categories in order of appearance. */

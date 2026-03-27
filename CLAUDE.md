@@ -52,6 +52,8 @@ Live at: `https://CuriousCrow123.github.io/CrowCode/`
 | `src/lib/engine/snapshot.ts` | buildSnapshots(), applyOps() |
 | `src/lib/engine/builders.ts` | Op builder helpers (addScope, addVar, set, free, etc.) |
 | `src/lib/engine/validate.ts` | validateProgram() — rules all Programs must satisfy |
+| `src/lib/interpreter/memory.ts` | Unified Memory class (runtime state + op recording) |
+| `src/lib/interpreter/interpreter.ts` | Statement execution, control flow, uses Memory |
 | `src/lib/programs/basics.ts` | Reference program: structs, pointers, malloc/free, function calls |
 | `src/lib/programs/loops.ts` | Reference program: for-loops with sub-step granularity |
 | `docs/architecture.md` | System architecture and principles |

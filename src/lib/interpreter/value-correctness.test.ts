@@ -437,6 +437,29 @@ int main() {
 		expect(findEntry(calleeSnap!, 'b')?.value).toBe('4');
 	});
 
+	it('pointer parameter displays as hex address, not decimal', () => {
+		const src = `
+int sum(int *arr, int n) {
+	int total = 0;
+	for (int i = 0; i < n; i++) {
+		total += arr[i];
+	}
+	return total;
+}
+int main() {
+	int *data = calloc(3, sizeof(int));
+	int result = sum(data, 3);
+	free(data);
+	return 0;
+}`;
+		const { snapshots } = interpretAndBuild(src);
+		const calleeSnap = snapshots.find((s) => findEntry(s, 'arr'));
+		expect(calleeSnap).toBeDefined();
+		const arr = findEntry(calleeSnap!, 'arr');
+		expect(arr).toBeDefined();
+		expect(arr!.value).toMatch(/^0x[0-9a-f]{8}$/i);
+	});
+
 	it('callee frame is removed after return', () => {
 		const src = `
 int square(int n) {
