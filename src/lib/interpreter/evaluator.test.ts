@@ -1,13 +1,37 @@
 import { describe, it, expect } from 'vitest';
-import { Evaluator, type CallHandler, type EvalResult } from './evaluator';
-import { Environment } from './environment';
-import { TypeRegistry, primitiveType, pointerType, sizeOf } from './types-c';
-import type { ASTNode, CValue } from './types';
+import { Evaluator, type CallHandler, type EvalResult, type EvalEnv } from './evaluator';
+import { TypeRegistry, primitiveType, pointerType, sizeOf, alignOf, defaultValue } from './types-c';
+import type { ASTNode, CType, CValue } from './types';
+
+/** Lightweight EvalEnv for tests — no Memory/Environment dependency needed. */
+function makeEvalEnv(): EvalEnv & { declareVariable(name: string, type: CType, data: number): CValue } {
+	const symbols = new Map<string, CValue>();
+	let stackPointer = 0x7FFC0000;
+
+	return {
+		lookupVariable(name: string): CValue | undefined {
+			return symbols.get(name);
+		},
+		setVariable(name: string, data: number | null): void {
+			const v = symbols.get(name);
+			if (!v) throw new Error(`Variable '${name}' not found`);
+			v.data = data;
+			v.initialized = true;
+		},
+		declareVariable(name: string, type: CType, data: number): CValue {
+			const size = sizeOf(type);
+			const alignment = alignOf(type);
+			stackPointer = Math.floor((stackPointer - size) / alignment) * alignment;
+			const value: CValue = { type, data, address: stackPointer, initialized: true };
+			symbols.set(name, value);
+			return value;
+		},
+	};
+}
 
 function setup(vars?: Record<string, { type: string; value: number }>) {
-	const env = new Environment();
+	const env = makeEvalEnv();
 	const typeReg = new TypeRegistry();
-	env.pushScope('main');
 
 	if (vars) {
 		for (const [name, { type, value }] of Object.entries(vars)) {
@@ -305,9 +329,8 @@ describe('conditional (ternary)', () => {
 
 describe('call expression', () => {
 	it('calls handler with evaluated args', () => {
-		const env = new Environment();
+		const env = makeEvalEnv();
 		const typeReg = new TypeRegistry();
-		env.pushScope('main');
 		const handler: CallHandler = (name, args) => ({
 			value: { type: primitiveType('int'), data: (args[0].data ?? 0) + (args[1].data ?? 0), address: 0 },
 		});
@@ -410,9 +433,8 @@ describe('32-bit integer wrapping', () => {
 
 describe('pointer increment scaling', () => {
 	it('++p on int* advances by 4', () => {
-		const env = new Environment();
+		const env = makeEvalEnv();
 		const typeReg = new TypeRegistry();
-		env.pushScope('main');
 		env.declareVariable('p', pointerType(primitiveType('int')), 0x1000);
 		const evaluator = new Evaluator(env, typeReg);
 
@@ -421,9 +443,8 @@ describe('pointer increment scaling', () => {
 	});
 
 	it('p-- on int* decreases by 4', () => {
-		const env = new Environment();
+		const env = makeEvalEnv();
 		const typeReg = new TypeRegistry();
-		env.pushScope('main');
 		env.declareVariable('p', pointerType(primitiveType('int')), 0x1000);
 		const evaluator = new Evaluator(env, typeReg);
 
@@ -432,9 +453,8 @@ describe('pointer increment scaling', () => {
 	});
 
 	it('++p on char* advances by 1', () => {
-		const env = new Environment();
+		const env = makeEvalEnv();
 		const typeReg = new TypeRegistry();
-		env.pushScope('main');
 		env.declareVariable('p', pointerType(primitiveType('char')), 0x1000);
 		const evaluator = new Evaluator(env, typeReg);
 
