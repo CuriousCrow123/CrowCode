@@ -25,10 +25,16 @@ export type MemoryEntry = {
 	value: string;
 	address: string;
 	children?: MemoryEntry[];
-	kind?: 'scope' | 'heap';
+	kind?: 'scope' | 'heap' | 'io';
 	scope?: ScopeInfo;
 	heap?: HeapInfo;
 };
+
+// === I/O Types ===
+
+export type IoEvent =
+	| { kind: 'write'; target: 'stdout' | 'stderr'; text: string }
+	| { kind: 'read'; source: 'stdin'; consumed: string; cursorPos: number; format?: string };
 
 // === Program & Stepper Types ===
 
@@ -50,6 +56,7 @@ export type ProgramStep = {
 	evaluation?: string;
 	ops: SnapshotOp[];
 	subStep?: boolean;
+	ioEvents?: IoEvent[];
 };
 
 export type Program = {

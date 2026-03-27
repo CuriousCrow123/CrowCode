@@ -62,6 +62,7 @@ export type InterpreterOptions = {
 	maxSteps?: number;
 	maxFrames?: number;
 	maxHeapBytes?: number;
+	stdin?: string;
 };
 
 // === AST Node Types ===
