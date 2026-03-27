@@ -6,7 +6,7 @@ import type {
 	ScopeInfo,
 	HeapInfo,
 	Program,
-} from '$lib/api/types';
+} from '$lib/types';
 import type { CType, CValue, ChildSpec, ParamSpec, ASTNode, HeapBlock } from './types';
 import { sizeOf, alignOf, defaultValue, typeToString, isStructType, isArrayType } from './types-c';
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Memory, formatAddress } from './memory';
-import type { SnapshotOp, MemoryEntry, SourceLocation } from '$lib/api/types';
+import type { SnapshotOp, MemoryEntry, SourceLocation } from '$lib/types';
 import type { ChildSpec, CType } from './types';
 import { primitiveType, pointerType, arrayType, sizeOf } from './types-c';
 

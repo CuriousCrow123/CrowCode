@@ -1,4 +1,4 @@
-import type { Program } from '$lib/api/types';
+import type { Program } from '$lib/types';
 import type { InterpreterOptions, ASTNode } from './types';
 import { parseSource } from './parser';
 import { Interpreter } from './interpreter';

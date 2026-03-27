@@ -1,4 +1,4 @@
-import type { Program } from '$lib/api/types';
+import type { Program } from '$lib/types';
 import type { Parser as ParserType } from 'web-tree-sitter';
 
 export type RunResult = {

@@ -4,7 +4,7 @@ import { resolve } from 'path';
 import { interpretSync, resetParserCache } from './index';
 import { validateProgram } from '$lib/engine/validate';
 import { buildSnapshots } from '$lib/engine/snapshot';
-import type { Program, MemoryEntry } from '$lib/api/types';
+import type { Program, MemoryEntry } from '$lib/types';
 
 // === Setup ===
 

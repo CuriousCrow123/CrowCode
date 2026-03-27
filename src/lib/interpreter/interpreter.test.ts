@@ -4,7 +4,7 @@ import { resolve } from 'path';
 import { interpretSync, resetParserCache } from './index';
 import { validateProgram } from '$lib/engine/validate';
 import { buildSnapshots } from '$lib/engine/snapshot';
-import type { Program, ProgramStep, MemoryEntry } from '$lib/api/types';
+import type { Program, ProgramStep, MemoryEntry } from '$lib/types';
 
 let parser: Parser;
 

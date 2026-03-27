@@ -1,7 +1,7 @@
 import { Parser, Language } from 'web-tree-sitter';
 import { interpretSync } from './index';
 import type { InterpreterOptions } from './types';
-import type { Program } from '$lib/api/types';
+import type { Program } from '$lib/types';
 
 // === Message Types ===
 

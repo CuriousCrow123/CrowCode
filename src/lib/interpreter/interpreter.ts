@@ -7,7 +7,7 @@ import {
 	isFunctionPointerType,
 } from './types-c';
 import { createStdlib } from './stdlib';
-import type { Program } from '$lib/api/types';
+import type { Program } from '$lib/types';
 import type { HandlerContext } from './handlers/types';
 import {
 	executeDeclaration,
