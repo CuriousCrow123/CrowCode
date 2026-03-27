@@ -15,6 +15,7 @@ import {
 	isFunctionPointerType,
 } from '../types-c';
 import { buildStructChildSpecs, buildArrayChildSpecs } from '../stdlib';
+import { parseScanfFormat } from '../format';
 
 export function executeDeclaration(ctx: HandlerContext, node: ASTNode & { type: 'declaration' }, sharesStep: boolean): void {
 	const type = ctx.typeReg.resolve(node.declType);
@@ -721,8 +722,26 @@ export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type
 		return;
 	}
 
-	// I/O input functions: create a step and evaluate through stdlib (triggers IoState)
-	if (isStdioInputFunction(call.callee)) {
+	// scanf: consume from stdin and write through to variables
+	if (call.callee === 'scanf') {
+		executeScanfCall(ctx, call, line, sharesStep);
+		return;
+	}
+
+	// fgets: read line from stdin into buffer
+	if (call.callee === 'fgets') {
+		executeFgetsCall(ctx, call, line, sharesStep);
+		return;
+	}
+
+	// gets: read line from stdin (no bounds checking)
+	if (call.callee === 'gets') {
+		executeGetsCall(ctx, call, line, sharesStep);
+		return;
+	}
+
+	// getchar: handled in stdlib via evaluator (returns int value)
+	if (call.callee === 'getchar') {
 		if (!sharesStep) {
 			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
 			ctx.stepCount++;
@@ -885,6 +904,181 @@ export function isStdioInputFunction(name: string): boolean {
 
 export function isStdioFunction(name: string): boolean {
 	return STDIO_OUTPUT_FUNCTIONS.has(name) || STDIO_INPUT_FUNCTIONS.has(name);
+}
+
+// === scanf/fgets/gets statement-level handlers ===
+
+/**
+ * Extract the target variable name from a scanf pointer argument.
+ * Expects `&identifier` → returns identifier name.
+ * Returns null if the argument is not `&identifier`.
+ */
+function extractScanfTargetVar(arg: ASTNode): string | null {
+	if (arg.type === 'unary_expression' && arg.operator === '&' && arg.operand.type === 'identifier') {
+		return arg.operand.name;
+	}
+	return null;
+}
+
+function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
+	if (call.args.length < 1) {
+		ctx.errors.push('scanf: requires at least one argument');
+		return;
+	}
+
+	// Extract format string from AST
+	const fmtArg = call.args[0];
+	if (fmtArg.type !== 'string_literal') {
+		// Non-literal format string: can't parse at interpretation time
+		if (!sharesStep) {
+			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+			ctx.stepCount++;
+		}
+		return;
+	}
+	const fmtStr = (fmtArg as ASTNode & { type: 'string_literal' }).value;
+	const tokens = parseScanfFormat(fmtStr);
+
+	if (!sharesStep) {
+		ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+		ctx.stepCount++;
+	}
+
+	// Check for EOF before first read
+	if (ctx.io.isExhausted()) {
+		// scanf returns EOF (-1) when input exhaustion occurs before first match
+		// The return value is used if scanf is in an expression (handled by evaluator)
+		return;
+	}
+
+	let itemsAssigned = 0;
+	let argIdx = 1; // pointer args start at index 1
+
+	for (const token of tokens) {
+		if (token.kind === 'whitespace') {
+			// Whitespace in format = skip whitespace in input (IoState handles this in readInt etc.)
+			continue;
+		}
+		if (token.kind === 'literal') {
+			// Literal match: consume the literal char from stdin (simplified — skip for v1)
+			continue;
+		}
+		// Specifier token
+		const spec = token;
+
+		// Read value from stdin based on specifier
+		let readResult: { value: number; consumed: string } | null = null;
+		switch (spec.specifier) {
+			case 'd':
+			case 'i':
+				readResult = ctx.io.readInt();
+				break;
+			case 'f':
+				readResult = ctx.io.readFloat();
+				break;
+			case 'c':
+				readResult = ctx.io.readChar();
+				break;
+			case 's': {
+				const strResult = ctx.io.readString();
+				if (strResult) {
+					// For %s, we'd write to a char array — simplified for v1
+					// Just consume the input and note it in the description
+					readResult = { value: 0, consumed: strResult.consumed };
+				}
+				break;
+			}
+			case 'x':
+			case 'X':
+				readResult = ctx.io.readHexInt();
+				break;
+			default:
+				// Unsupported specifier — skip
+				continue;
+		}
+
+		if (!readResult) {
+			// Input exhaustion or match failure — stop processing
+			break;
+		}
+
+		if (spec.suppress) {
+			// %* — consume but don't assign, don't count
+			continue;
+		}
+
+		// Write through to target variable
+		if (argIdx < call.args.length) {
+			const targetArg = call.args[argIdx];
+			const varName = extractScanfTargetVar(targetArg);
+
+			if (varName === null) {
+				ctx.errors.push(`scanf: argument ${argIdx} must be a pointer (missing &?)`);
+			} else {
+				ctx.memory.setValue(varName, readResult.value);
+			}
+			argIdx++;
+		}
+		itemsAssigned++;
+	}
+}
+
+function executeFgetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
+	if (!sharesStep) {
+		ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+		ctx.stepCount++;
+	}
+
+	if (call.args.length < 2) {
+		ctx.errors.push('fgets: requires at least 2 arguments');
+		return;
+	}
+
+	// Evaluate size argument
+	const sizeResult = ctx.evaluator.eval(call.args[1]);
+	const maxLen = sizeResult.value?.data ?? 256;
+
+	// Read from stdin
+	const result = ctx.io.readLine(maxLen);
+	if (!result) return; // EOF
+
+	// Write to destination buffer (simplified: show as quoted string on heap entry)
+	const destArg = call.args[0];
+	if (destArg.type === 'identifier') {
+		const blockId = ctx.memory.getHeapBlockId(destArg.name);
+		if (blockId) {
+			ctx.memory.setValueById(blockId, `"${result.value}"`);
+		}
+	}
+}
+
+function executeGetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
+	if (call.args.length < 1) {
+		ctx.errors.push('gets: requires at least 1 argument');
+		return;
+	}
+
+	// Read from stdin (unbounded)
+	const result = ctx.io.readUntilNewline();
+
+	if (!sharesStep) {
+		const desc = result
+			? `gets(${ctx.describeExpr(call.args[0])}) → read "${result.value}" (${result.value.length} bytes — gets is unsafe!)`
+			: `gets(${ctx.describeExpr(call.args[0])}) → EOF`;
+		ctx.memory.beginStep({ line }, desc);
+		ctx.stepCount++;
+	}
+
+	if (!result) return; // EOF
+
+	// Write to destination buffer (simplified: show as quoted string on heap entry)
+	const destArg = call.args[0];
+	if (destArg.type === 'identifier') {
+		const blockId = ctx.memory.getHeapBlockId(destArg.name);
+		if (blockId) {
+			ctx.memory.setValueById(blockId, `"${result.value}"`);
+		}
+	}
 }
 
 /** Returns true when the assignment result isn't obvious from the description alone. */

@@ -603,13 +603,12 @@ describe('stdio — printf', () => {
 	});
 });
 
-describe('stdio — scanf', () => {
+describe('stdio — getchar', () => {
 	it('getchar reads from stdin', () => {
 		const src = `int main() { int c = getchar(); return 0; }`;
 		const { program, errors } = runWithStdin(src, 'A');
 		expect(errors).toHaveLength(0);
 		expectValid(program);
-		// getchar returns the char value, which is used in the declaration
 		const snapshots = buildSnapshots(program);
 		const last = snapshots[snapshots.length - 1];
 		const c = findEntry(last, 'c');
@@ -624,5 +623,120 @@ describe('stdio — scanf', () => {
 		const last = snapshots[snapshots.length - 1];
 		const c = findEntry(last, 'c');
 		expect(c?.value).toBe('-1');
+	});
+});
+
+describe('stdio — scanf', () => {
+	it('scanf("%d", &x) writes value to variable', () => {
+		const src = `int main() {
+	int x;
+	scanf("%d", &x);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, '42\n');
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('42');
+	});
+
+	it('scanf reads multiple values', () => {
+		const src = `int main() {
+	int a;
+	int b;
+	scanf("%d %d", &a, &b);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, '10 20\n');
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('10');
+		expect(findEntry(last, 'b')?.value).toBe('20');
+	});
+
+	it('scanf \\n residue: readInt then readChar reads newline', () => {
+		const src = `int main() {
+	int x;
+	char c;
+	scanf("%d", &x);
+	scanf("%c", &c);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, '42\nA');
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('42');
+		// The core educational scenario: %c reads the leftover \n, not 'A'
+		expect(findEntry(last, 'c')?.value).toBe('10');
+	});
+
+	it('scanf with empty stdin produces no assignment', () => {
+		const src = `int main() {
+	int x = 99;
+	scanf("%d", &x);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, '');
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		// x should keep its initialized value since scanf found EOF
+		expect(findEntry(last, 'x')?.value).toBe('99');
+	});
+
+	it('scanf missing & produces error', () => {
+		const src = `int main() {
+	int x;
+	scanf("%d", x);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, '42\n');
+		// Should have an error about missing &
+		expect(errors.some(e => e.includes('pointer') || e.includes('&'))).toBe(true);
+	});
+
+	it('scanf %c reads single character without skipping whitespace', () => {
+		const src = `int main() {
+	char c;
+	scanf("%c", &c);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, 'X');
+		expect(errors).toHaveLength(0);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'c')?.value).toBe('88'); // 'X' = 88
+	});
+
+	it('scanf %x reads hex value', () => {
+		const src = `int main() {
+	int x;
+	scanf("%x", &x);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, 'ff\n');
+		expect(errors).toHaveLength(0);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('255');
+	});
+
+	it('scanf records ioEvents', () => {
+		const src = `int main() {
+	int x;
+	scanf("%d", &x);
+	return 0;
+}`;
+		const { program } = runWithStdin(src, '42\n');
+		const scanfStep = program.steps.find(s =>
+			s.ioEvents?.some(e => e.kind === 'read')
+		);
+		expect(scanfStep).toBeDefined();
 	});
 });

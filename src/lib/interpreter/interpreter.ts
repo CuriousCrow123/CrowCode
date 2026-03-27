@@ -120,6 +120,7 @@ export class Interpreter {
 			get memory() { return self.memory; },
 			get evaluator() { return self.evaluator; },
 			get typeReg() { return self.typeReg; },
+			get io() { return self.io; },
 			get errors() { return self.errors; },
 			get maxSteps() { return self.maxSteps; },
 			get maxFrames() { return self.maxFrames; },

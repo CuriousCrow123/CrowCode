@@ -2,12 +2,14 @@ import type { ASTNode, CType, CValue, ChildSpec } from '../types';
 import type { Memory } from '../memory';
 import type { Evaluator } from '../evaluator';
 import type { TypeRegistry } from '../types-c';
+import type { IoState } from '../io-state';
 
 /** Shared context passed to all handler functions. */
 export type HandlerContext = {
 	readonly memory: Memory;
 	readonly evaluator: Evaluator;
 	readonly typeReg: TypeRegistry;
+	readonly io: IoState;
 	readonly errors: string[];
 	readonly maxSteps: number;
 	readonly maxFrames: number;
