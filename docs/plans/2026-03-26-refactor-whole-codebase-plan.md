@@ -60,7 +60,7 @@ This plan prioritizes by impact: interpreter cleanup first, then component clean
 ### Part A: Interpreter Cleanup
 
 #### Step 1: Remove dead `interpret()` function
-> **Not done.** Dead `interpret()` export still exists at line 34 of `interpreter.ts`. Single-file fix.
+> **Done.** Removed dead `interpret()` free function and made local `InterpretResult` type non-exported.
 
 - **What:** Delete the `interpret()` free function and its local `InterpretResult` type from `interpreter.ts`. The canonical `InterpretResult` stays in `index.ts`.
 - **Files:** `src/lib/interpreter/interpreter.ts`
@@ -71,7 +71,7 @@ This plan prioritizes by impact: interpreter cleanup first, then component clean
 > **Moot.** `environment.ts` was deleted during the Memory unification refactor. No duplication remains.
 
 #### Step 3: Remove unused `typeReg` parameter
-> **Not done.** `typeReg` parameter still present in `handleMalloc`/`handleCalloc`. Single-file fix.
+> **Done.** Removed from `handleMalloc`, `handleCalloc`, `createStdlib`, and the call site in `Interpreter` constructor.
 
 - **What:** Remove `typeReg: TypeRegistry` from `handleMalloc` and `handleCalloc` signatures in `stdlib.ts`. Update 2 internal call sites in `createStdlib`.
 - **Files:** `src/lib/interpreter/stdlib.ts`
@@ -79,7 +79,7 @@ This plan prioritizes by impact: interpreter cleanup first, then component clean
 - **Verification:** `npm test && npm run check`
 
 #### Step 4: Fix worker.ts hardcoded paths
-> **Not done.** `worker.ts` still hardcodes `/CrowCode/` for WASM paths. Single-file fix.
+> **Done.** Replaced hardcoded `/CrowCode/` with `import.meta.env.BASE_URL` pattern matching `service.ts`.
 
 - **What:** Replace hardcoded `/CrowCode/tree-sitter.wasm` and `/CrowCode/tree-sitter-c.wasm` with `import.meta.env.BASE_URL` pattern.
 - **Files:** `src/lib/interpreter/worker.ts`
@@ -90,7 +90,7 @@ This plan prioritizes by impact: interpreter cleanup first, then component clean
 > **Moot.** `emitter.test.ts` was deleted during the Memory unification refactor.
 
 #### Step 6: Normalize import paths
-> **Not done.** 5+ interpreter files still import from `$lib/api/types` instead of `$lib/types`.
+> **Done.** All 10 interpreter files now use `$lib/types` instead of `$lib/api/types`.
 
 - **What:** Change interpreter module files that import from `$lib/api/types` to use `$lib/types` instead, matching the engine convention.
 - **Files:** All interpreter `.ts` files that import from `$lib/api/types`
@@ -100,7 +100,7 @@ This plan prioritizes by impact: interpreter cleanup first, then component clean
 ### Part B: Component Cleanup
 
 #### Step 7: Extract shared `MAX_VALUE_LENGTH`
-> **Not done.** Constant still duplicated locally in `MemoryRow.svelte`, `HeapCard.svelte`, `DrilldownModal.svelte`.
+> **Done.** Created `components/constants.ts` and updated all 3 components to import from it.
 
 - **What:** Create `src/lib/components/constants.ts` with `export const MAX_VALUE_LENGTH = 40`. Update `MemoryRow.svelte`, `HeapCard.svelte`, `DrilldownModal.svelte` to import it.
 - **Files:** `src/lib/components/constants.ts` (new), 3 `.svelte` files
@@ -151,17 +151,6 @@ The interpreter is now the sole path from C source to `Program`. The hand-author
 #### Step 13: Full verification
 - Done.
 
----
-
-## Remaining Items (not warranting a plan)
-
-These 5 independent single-file fixes were identified but not completed. Each is a standalone change:
-
-1. **Dead `interpret()` function** — `src/lib/interpreter/interpreter.ts` line 34. Delete function and local `InterpretResult` type.
-2. **Unused `typeReg` parameter** — `src/lib/interpreter/stdlib.ts`. Remove from `handleMalloc`/`handleCalloc` signatures.
-3. **Hardcoded worker paths** — `src/lib/interpreter/worker.ts`. Replace `/CrowCode/` with `import.meta.env.BASE_URL`.
-4. **Import path normalization** — 5+ interpreter files use `$lib/api/types` instead of `$lib/types`.
-5. **Duplicated `MAX_VALUE_LENGTH`** — constant defined locally in 3 `.svelte` files, should be extracted to `components/constants.ts`.
 
 ## Edge Cases
 
