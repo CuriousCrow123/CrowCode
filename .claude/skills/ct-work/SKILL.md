@@ -1,12 +1,12 @@
 ---
 name: ct-work
-description: Execute CrowTools work plans efficiently — read plan, create todos, implement step-by-step with tests, commit, and ship. Use when ready to implement a planned feature.
+description: Execute CrowCode work plans efficiently — read plan, create todos, implement step-by-step with tests, commit, and ship. Use when ready to implement a planned feature.
 argument-hint: "[plan file path]"
 ---
 
-# CrowTools Work
+# CrowCode Work
 
-Execute a CrowTools work plan systematically. Focus on shipping complete features.
+Execute a CrowCode work plan systematically. Focus on shipping complete features.
 
 ## Input
 
@@ -63,7 +63,7 @@ for each task in priority order:
   9. Evaluate for incremental commit
 ```
 
-### CrowTools Quality Check (per task)
+### CrowCode Quality Check (per task)
 
 Before marking a task done, verify:
 

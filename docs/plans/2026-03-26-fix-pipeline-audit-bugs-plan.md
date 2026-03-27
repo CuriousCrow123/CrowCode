@@ -154,7 +154,7 @@ this.callDeclContext = {
 
 **Action:** Verify in the browser whether freed/leaked blocks show their status. If they do, this is a false positive from the audit. If not, investigate the component rendering.
 
-- **Verification:** Manual check in browser at localhost:5173/CrowTools using p10.3 "Memory Leak Detection" and p4.1 "malloc / free Lifecycle"
+- **Verification:** Manual check in browser at localhost:5173/CrowCode using p10.3 "Memory Leak Detection" and p4.1 "malloc / free Lifecycle"
 - **Files:** None (investigation only), or `ProgramStepper.svelte` / `HeapCard.svelte` if fix needed
 
 ### Step 8: MINOR-1 — Prefix `++a` described as `a++`

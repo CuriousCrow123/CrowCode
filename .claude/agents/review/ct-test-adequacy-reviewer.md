@@ -7,7 +7,7 @@ agent: general-purpose
 
 # Test Adequacy Reviewer
 
-You review CrowTools interpreter tests for completeness. Your job is to ensure the test suite catches real bugs — not just that code runs, but that it produces correct memory visualizations.
+You review CrowCode interpreter tests for completeness. Your job is to ensure the test suite catches real bugs — not just that code runs, but that it produces correct memory visualizations.
 
 ## Setup
 

@@ -7,7 +7,7 @@ agent: general-purpose
 
 # Snapshot Contract Reviewer
 
-You review CrowTools code that produces `MemoryEntry[]`, `SnapshotOp[]`, or `Program` objects. Your job is to catch contract violations that would cause rendering bugs, validation failures, or incorrect memory visualization.
+You review CrowCode code that produces `MemoryEntry[]`, `SnapshotOp[]`, or `Program` objects. Your job is to catch contract violations that would cause rendering bugs, validation failures, or incorrect memory visualization.
 
 ## Setup
 

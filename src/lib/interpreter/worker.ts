@@ -23,10 +23,10 @@ async function initParser(): Promise<Parser> {
 	if (parser) return parser;
 
 	await Parser.init({
-		locateFile: () => '/CrowTools/tree-sitter.wasm',
+		locateFile: () => '/CrowCode/tree-sitter.wasm',
 	});
 	parser = new Parser();
-	const lang = await Language.load('/CrowTools/tree-sitter-c.wasm');
+	const lang = await Language.load('/CrowCode/tree-sitter-c.wasm');
 	parser.setLanguage(lang);
 	return parser;
 }

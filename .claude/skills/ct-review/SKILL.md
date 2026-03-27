@@ -1,13 +1,13 @@
 ---
 name: ct-review
-description: Multi-agent code review for CrowTools changes. Launches parallel reviewers for snapshot contracts, C semantics, test adequacy, and worker integration. Use after implementation before shipping.
+description: Multi-agent code review for CrowCode changes. Launches parallel reviewers for snapshot contracts, C semantics, test adequacy, and worker integration. Use after implementation before shipping.
 argument-hint: "[optional: specific files or branch to review]"
 disable-model-invocation: true
 ---
 
-# CrowTools Review
+# CrowCode Review
 
-Run parallel review agents on recent CrowTools changes.
+Run parallel review agents on recent CrowCode changes.
 
 ## What to Review
 

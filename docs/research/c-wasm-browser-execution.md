@@ -8,16 +8,16 @@
 
 2. **Shipping a full C compiler (Clang) in the browser requires ~30-100MB download**, making it impractical for a lightweight static site. The compilation speed after caching (~1.3s) is acceptable, but first-load latency is a dealbreaker for casual visitors.
 
-3. **A JS-based C interpreter (PLIVET) is the most viable path for CrowTools' use case.** PLIVET supports malloc/free, pointers, arrays, structs, and step-by-step execution — covering the C subset CrowTools visualizes. It runs fully client-side with zero download overhead beyond the interpreter itself. Students using PVC.js solved tasks 1.7x faster than those using alternative tools.
+3. **A JS-based C interpreter (PLIVET) is the most viable path for CrowCode' use case.** PLIVET supports malloc/free, pointers, arrays, structs, and step-by-step execution — covering the C subset CrowCode visualizes. It runs fully client-side with zero download overhead beyond the interpreter itself. Students using PVC.js solved tasks 1.7x faster than those using alternative tools.
 
 4. **WASM sandbox security is strong enough for an educational static site.** Real sandbox escapes exist (CVE-2024-2887, Pwn2Own 2024), but they exploit JIT-compiler bugs — the risk model for a static site where users can only harm their own tab is acceptable. Infinite loops are handled by running code in a Web Worker and calling `worker.terminate()` on a timer.
 
-5. **Memory instrumentation at the C-semantic level (variable names, types, stack frames) requires source/interpreter-level hooks, not binary-level WASM instrumentation.** Binaryen's `--instrument-memory` captures raw loads/stores but loses C semantics. For CrowTools' `SnapshotOp` format, an interpreter that emits events per C statement is the right abstraction layer.
+5. **Memory instrumentation at the C-semantic level (variable names, types, stack frames) requires source/interpreter-level hooks, not binary-level WASM instrumentation.** Binaryen's `--instrument-memory` captures raw loads/stores but loses C semantics. For CrowCode' `SnapshotOp` format, an interpreter that emits events per C statement is the right abstraction layer.
 
 ## Available Tools for Running C in the Browser
 
 ### Summary
-The landscape divides into three tiers: full Clang-to-WASM toolchains (heavy, complete), TCC-based experiments (lighter, limited), and pure-JS interpreters (lightest, educational subset). For CrowTools, only the interpreter tier is practical without a server.
+The landscape divides into three tiers: full Clang-to-WASM toolchains (heavy, complete), TCC-based experiments (lighter, limited), and pure-JS interpreters (lightest, educational subset). For CrowCode, only the interpreter tier is practical without a server.
 
 ### Detail
 
@@ -49,14 +49,14 @@ TCC cannot trivially target WASM because WASM only supports reducible control fl
 | [JSCPP](https://github.com/felixhao28/JSCPP) | Limited (no structs, no malloc) | No | Yes (debugger API) | 878 |
 | [xcc](https://github.com/tyfkda/xcc) | Good (self-hosting compiler) | N/A (compiler, not interpreter) | No | Active |
 
-**PLIVET** is the standout for CrowTools' use case. It's the active successor to PVC.js, supports the C features CrowTools visualizes (variables, structs, pointers, malloc/free, arrays), and runs entirely client-side. Its supported C keywords: `break`, `case`, `char`, `const`, `continue`, `default`, `do`, `double`, `else`, `float`, `for`, `if`, `int`, `long`, `return`, `short`, `signed`, `sizeof`, `struct`, `switch`, `typedef`, `unsigned`, `void`, `while`, `_Bool`. Notable omissions: `enum`, `goto`, `union`, `static`, C11 keywords.
+**PLIVET** is the standout for CrowCode' use case. It's the active successor to PVC.js, supports the C features CrowCode visualizes (variables, structs, pointers, malloc/free, arrays), and runs entirely client-side. Its supported C keywords: `break`, `case`, `char`, `const`, `continue`, `default`, `do`, `double`, `else`, `float`, `for`, `if`, `int`, `long`, `return`, `short`, `signed`, `sizeof`, `struct`, `switch`, `typedef`, `unsigned`, `void`, `while`, `_Bool`. Notable omissions: `enum`, `goto`, `union`, `static`, C11 keywords.
 
 **JSCPP** has a useful debugger API (`debugger.next()`, `debugger.variable()`, AST node with source position) but lacks malloc and struct support — fatal gaps for memory visualization.
 
 **xcc** is a real compiler (C to WASM) that runs in the browser, but it produces opaque binaries with no step-by-step introspection. Adding memory visualization would require a separate instrumentation layer.
 
 ### Open Questions
-- PLIVET's automatic snapshot format is undocumented — direct source inspection is needed to understand whether its memory state can be mapped to CrowTools' `MemoryEntry[]` format.
+- PLIVET's automatic snapshot format is undocumented — direct source inspection is needed to understand whether its memory state can be mapped to CrowCode' `MemoryEntry[]` format.
 - libclangjs (libClang compiled to WASM) could enable Codecast's architecture to work fully client-side, but its bundle size is unknown.
 
 ---
@@ -64,7 +64,7 @@ TCC cannot trivially target WASM because WASM only supports reducible control fl
 ## Memory Instrumentation
 
 ### Summary
-Three instrumentation layers exist for capturing memory events from C code running in WASM: binary-level (Binaryen), compiler-level (Emscripten), and source/interpreter-level. For CrowTools' need to produce `SnapshotOp[]` data (named variables, typed values, scoped stack frames), only source/interpreter-level instrumentation preserves the C semantics required.
+Three instrumentation layers exist for capturing memory events from C code running in WASM: binary-level (Binaryen), compiler-level (Emscripten), and source/interpreter-level. For CrowCode' need to produce `SnapshotOp[]` data (named variables, typed values, scoped stack frames), only source/interpreter-level instrumentation preserves the C semantics required.
 
 ### Detail
 
@@ -88,7 +88,7 @@ These provide more semantic information than raw Binaryen passes but still don't
 **Source/interpreter-level instrumentation:**
 An interpreter that walks the C AST can emit events at each statement with full C semantics: variable name, type, value, scope, stack frame. This is how PVC.js/PLIVET works — the interpreter knows it's executing `int x = 5` in `main()`, not just "store 4 bytes at offset 16."
 
-For CrowTools specifically, this maps directly to the `SnapshotOp` model: the interpreter can emit `addVar('main', variable('x', 'x', 'int', '5', '0x7ffc0060'))` because it has the AST context.
+For CrowCode specifically, this maps directly to the `SnapshotOp` model: the interpreter can emit `addVar('main', variable('x', 'x', 'int', '5', '0x7ffc0060'))` because it has the AST context.
 
 **Dylibso Observe SDK** provides automatic binary instrumentation for function/memory tracing with browser JS adapters — a potential middle ground, but still WASM-level semantics.
 
@@ -142,7 +142,7 @@ WebAssembly's sandbox is architecturally strong — modules cannot access host m
 
 JIT-compiler bugs are described as "the primary sandbox escape vector." However, these exploits target the browser engine itself — they're no different in risk profile from any JavaScript the user runs. For a static educational site, this is an acceptable baseline.
 
-**Intra-sandbox vulnerabilities:** Buffer overflows and use-after-free remain exploitable within WASM's linear memory. WASM lacks stack canaries, ASLR, and safe unlinking. An empirical study found 1,088 of 17,802 C programs behave differently when compiled to WASM vs x86-64. This matters for real applications but is irrelevant for CrowTools — the interpreted C code doesn't have attack surface within the WASM sandbox.
+**Intra-sandbox vulnerabilities:** Buffer overflows and use-after-free remain exploitable within WASM's linear memory. WASM lacks stack canaries, ASLR, and safe unlinking. An empirical study found 1,088 of 17,802 C programs behave differently when compiled to WASM vs x86-64. This matters for real applications but is irrelevant for CrowCode — the interpreted C code doesn't have attack surface within the WASM sandbox.
 
 **Infinite loop mitigation:**
 No standardized WASM timeout mechanism exists (WebAssembly design issues #712 and #1380 remain unresolved). The practical pattern:
@@ -153,7 +153,7 @@ No standardized WASM timeout mechanism exists (WebAssembly design issues #712 an
 This stops execution immediately regardless of what the worker is doing. For non-browser runtimes, Wasmtime provides fuel-based (deterministic, counts instructions) and epoch-based (~10% overhead, wall-time) interruption, but neither is available as a browser API.
 
 **Memory limits:**
-WASM linear memory is capped at 4GB (wasm32 hard limit). Emscripten's `MAXIMUM_MEMORY` flag sets an explicit ceiling (default 2GB). Browsers OOM-kill tabs before 4GB. For CrowTools, setting `MAXIMUM_MEMORY` to 64-256MB is more than sufficient.
+WASM linear memory is capped at 4GB (wasm32 hard limit). Emscripten's `MAXIMUM_MEMORY` flag sets an explicit ceiling (default 2GB). Browsers OOM-kill tabs before 4GB. For CrowCode, setting `MAXIMUM_MEMORY` to 64-256MB is more than sufficient.
 
 ### Open Questions
 - Whether `worker.terminate()` guarantees immediate WASM halting across all browser engines is not formally documented.
@@ -194,7 +194,7 @@ WASM binaries compress well under gzip (>50% reduction) and stream-compile in br
 | binji/wasm-clang | Large (undoc.) | Unknown | Unknown |
 | jslinux approach | Unknown | Unknown | ~4.7s |
 
-For a static GitHub Pages site targeting students, a 30-100MB first-load download is a non-starter. This is the single strongest argument against the "real C compiler in the browser" approach for CrowTools.
+For a static GitHub Pages site targeting students, a 30-100MB first-load download is a non-starter. This is the single strongest argument against the "real C compiler in the browser" approach for CrowCode.
 
 **WASI browser polyfill situation:** Running WASI libc in the browser requires JS polyfills for syscalls: `fd_write`, `fd_read`, `environ_get`, `proc_exit`, etc. No standardized browser polyfill exists — existing third-party ones are poorly documented. WASI-SDK 23 accidentally increased output sizes by 1029% by enabling debug info by default, illustrating fragility of the toolchain.
 
@@ -207,32 +207,32 @@ For a static GitHub Pages site targeting students, a 30-100MB first-load downloa
 ## Tensions and Debates
 
 **Real compiler vs. interpreter for educational memory visualization:**
-The Clang-based approach (Wasmer, binji/wasm-clang) provides accurate C semantics — real compilation, real memory layout, real undefined behavior. Python Tutor's accuracy comes from this approach (GCC + Valgrind, server-side). Against this, PVC.js/PLIVET demonstrates that a JS interpreter covering a C subset is *sufficient* for education — students performed equivalently, and the zero-download, zero-server advantage is significant. For CrowTools specifically, which already uses a hand-authored step model (not real execution), an interpreter generating `SnapshotOp[]` is architecturally aligned.
+The Clang-based approach (Wasmer, binji/wasm-clang) provides accurate C semantics — real compilation, real memory layout, real undefined behavior. Python Tutor's accuracy comes from this approach (GCC + Valgrind, server-side). Against this, PVC.js/PLIVET demonstrates that a JS interpreter covering a C subset is *sufficient* for education — students performed equivalently, and the zero-download, zero-server advantage is significant. For CrowCode specifically, which already uses a hand-authored step model (not real execution), an interpreter generating `SnapshotOp[]` is architecturally aligned.
 
 **Binary instrumentation vs. source-level instrumentation:**
-Binary instrumentation (Binaryen passes, Emscripten SAFE_HEAP) is general and requires no compiler modification, but it captures WASM-level semantics — numbered locals, byte offsets — not C-level semantics (named variables, typed values, scoped frames). Source/interpreter-level instrumentation preserves C semantics but requires building or modifying an interpreter. For CrowTools' `MemoryEntry` model (which has `name`, `type`, `value`, `address`, `kind`, `scope`), binary-level instrumentation would require a complex DWARF-correlation layer that likely exceeds the effort of just using an interpreter.
+Binary instrumentation (Binaryen passes, Emscripten SAFE_HEAP) is general and requires no compiler modification, but it captures WASM-level semantics — numbered locals, byte offsets — not C-level semantics (named variables, typed values, scoped frames). Source/interpreter-level instrumentation preserves C semantics but requires building or modifying an interpreter. For CrowCode' `MemoryEntry` model (which has `name`, `type`, `value`, `address`, `kind`, `scope`), binary-level instrumentation would require a complex DWARF-correlation layer that likely exceeds the effort of just using an interpreter.
 
 **Download size vs. capability:**
 Wasmer frames ~30MB compressed as acceptable for an IDE-like experience. HN commenters flagged this as a dealbreaker for casual/static sites. The tension is real: cached return visits are fast (~1.3s compile), but first-visit bounce rates would be severe. A JS interpreter adds ~0 extra download for a fraction of the capability.
 
 ## Gaps and Limitations
 
-- **PLIVET snapshot format**: How PLIVET represents memory state internally and whether it can be adapted to emit CrowTools' `SnapshotOp[]` format is undocumented. Direct source code inspection is needed.
+- **PLIVET snapshot format**: How PLIVET represents memory state internally and whether it can be adapted to emit CrowCode' `SnapshotOp[]` format is undocumented. Direct source code inspection is needed.
 - **libclangjs bundle size**: Unknown. This is the critical missing data point for evaluating whether Codecast's architecture could work fully client-side.
 - **Worker.terminate() guarantees**: No formal documentation confirms immediate WASM halting across all browser engines.
-- **Performance of JS interpreters**: No benchmarks found for PLIVET/JSCPP execution speed on programs of 50-200 lines — the typical CrowTools program size.
+- **Performance of JS interpreters**: No benchmarks found for PLIVET/JSCPP execution speed on programs of 50-200 lines — the typical CrowCode program size.
 - **Blocked sources**: ~10 URLs were inaccessible (paywalls, reCAPTCHA, cert errors, binary PDFs), including the PVC.js full paper on PMC and a Stanford CS191 paper on a client-side C++ IDE.
 - **Recency**: WASM tooling evolves rapidly. Some sources are from 2019-2022 and may not reflect current capabilities.
 
-## Implications for CrowTools
+## Implications for CrowCode
 
-Given CrowTools' architecture (pre-authored `Program` objects with `SnapshotOp[]` steps, static GitHub Pages deployment), the research points to three viable paths for user-authored programs, ordered by feasibility:
+Given CrowCode' architecture (pre-authored `Program` objects with `SnapshotOp[]` steps, static GitHub Pages deployment), the research points to three viable paths for user-authored programs, ordered by feasibility:
 
 ### Path A: Adapt PLIVET as a C interpreter (recommended)
-Embed PLIVET (or its interpreter core) in CrowTools. Users write C in the browser. PLIVET interprets it step-by-step, and a translation layer converts PLIVET's execution trace into CrowTools' `Program` format (`SnapshotOp[]`). Zero additional download. Covers the C subset CrowTools already visualizes (variables, structs, pointers, malloc/free). Main risk: PLIVET's internals may not expose state cleanly enough for translation.
+Embed PLIVET (or its interpreter core) in CrowCode. Users write C in the browser. PLIVET interprets it step-by-step, and a translation layer converts PLIVET's execution trace into CrowCode' `Program` format (`SnapshotOp[]`). Zero additional download. Covers the C subset CrowCode already visualizes (variables, structs, pointers, malloc/free). Main risk: PLIVET's internals may not expose state cleanly enough for translation.
 
 ### Path B: Build a minimal C interpreter from scratch
-Write a small C interpreter in TypeScript that directly emits `SnapshotOp[]` during execution. Parse C with tree-sitter-c (compiled to WASM, ~200KB) or a hand-rolled recursive descent parser for a C subset. The interpreter only needs to handle the constructs CrowTools visualizes — no need for full C compliance. More work upfront but perfect architectural fit.
+Write a small C interpreter in TypeScript that directly emits `SnapshotOp[]` during execution. Parse C with tree-sitter-c (compiled to WASM, ~200KB) or a hand-rolled recursive descent parser for a C subset. The interpreter only needs to handle the constructs CrowCode visualizes — no need for full C compliance. More work upfront but perfect architectural fit.
 
 ### Path C: Hybrid with LLM generation
 Let users write C, send it to an LLM API to generate the `Program` JSON, validate with `validateProgram()`, let users edit. No interpreter needed. Requires API key. Non-deterministic but leverages the existing engine with zero new runtime code.

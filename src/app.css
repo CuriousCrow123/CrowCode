@@ -38,14 +38,14 @@ body::before {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	gap: 14px;
+	gap: 5px;
 	margin-bottom: 6px;
 }
 
 .crow-icon {
 	width: 52px;
 	height: 52px;
-	filter: drop-shadow(0 0 12px rgba(59, 130, 246, 0.3)) drop-shadow(0 0 4px rgba(59, 130, 246, 0.15));
+	filter: brightness(1.8) drop-shadow(0 0 8px rgba(59, 130, 246, 0.2));
 	flex-shrink: 0;
 }
 
@@ -59,6 +59,8 @@ body::before {
 	-webkit-text-fill-color: transparent;
 	background-clip: text;
 	line-height: 1;
+	position: relative;
+	top: 2px;
 }
 
 .tagline {

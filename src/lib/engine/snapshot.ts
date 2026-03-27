@@ -101,7 +101,7 @@ export function buildSnapshots(program: Program): MemoryEntry[][] {
 	for (const step of program.steps) {
 		const { snapshot, errors } = applyOps(current, step.ops);
 		if (errors.length > 0) {
-			console.warn(`[CrowTools] Step ${snapshots.length}:`, errors);
+			console.warn(`[CrowCode] Step ${snapshots.length}:`, errors);
 		}
 		snapshots.push(snapshot);
 		current = snapshot;

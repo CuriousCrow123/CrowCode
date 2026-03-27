@@ -1,6 +1,6 @@
-# CrowTools Architecture
+# CrowCode Architecture
 
-CrowTools is an interactive C memory visualizer. Users step through C programs and see the memory layout change at each instruction — stack frames, local variables, heap allocations, and scope lifecycle. Programs can be pre-authored (TypeScript) or written live in the Custom tab (parsed and interpreted via tree-sitter).
+CrowCode is an interactive C memory visualizer. Users step through C programs and see the memory layout change at each instruction — stack frames, local variables, heap allocations, and scope lifecycle. Programs can be pre-authored (TypeScript) or written live in the Custom tab (parsed and interpreted via tree-sitter).
 
 ## Principles
 
@@ -478,10 +478,10 @@ In line mode, `ProgramStepper` strips `colStart`/`colEnd` from the location befo
 Static site on GitHub Pages via `@sveltejs/adapter-static`.
 
 ```bash
-npm run dev       # local dev at localhost:5173/CrowTools
+npm run dev       # local dev at localhost:5173/CrowCode
 npm run build     # static build to build/
 npm run preview   # preview static build locally
 git push          # GitHub Actions deploys automatically
 ```
 
-Live at: `https://CuriousCrow123.github.io/CrowTools/`
+Live at: `https://CuriousCrow123.github.io/CrowCode/`

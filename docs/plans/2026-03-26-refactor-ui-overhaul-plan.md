@@ -53,7 +53,7 @@ The current UI has 3 hardcoded tabs (Memory Basics, For Loops, Custom) with diff
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  CrowTools                                          │
+│  CrowCode                                          │
 ├─────────────────────────────────────────────────────┤
 │  [ Tab 1 ] [ Tab 2 ] [ + ]  [Examples ▾] [Edit|Run]│
 ├────────────────────────┬────────────────────────────┤

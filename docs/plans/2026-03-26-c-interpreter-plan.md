@@ -5,7 +5,7 @@
 ## Context
 
 ### Why
-CrowTools programs are currently hand-authored TypeScript files with hardcoded steps and ops. Users cannot write their own C code and see its memory layout. A client-side C interpreter would let users type C source in the browser and get the same step-through visualization — no server, no 40MB compiler download, just interpretation.
+CrowCode programs are currently hand-authored TypeScript files with hardcoded steps and ops. Users cannot write their own C code and see its memory layout. A client-side C interpreter would let users type C source in the browser and get the same step-through visualization — no server, no 40MB compiler download, just interpretation.
 
 ### Background
 The existing pipeline: `Program → buildSnapshots() → MemoryEntry[][] → ProgramStepper → UI`. The interpreter slots in before this — it takes C source and produces a `Program` object. Everything downstream is unchanged.

@@ -1,12 +1,12 @@
 ---
 name: ct-plan
-description: Transform feature descriptions into structured plans for CrowTools (TypeScript/SvelteKit memory visualizer). Use when planning new features, interpreter work, or non-trivial changes.
+description: Transform feature descriptions into structured plans for CrowCode (TypeScript/SvelteKit memory visualizer). Use when planning new features, interpreter work, or non-trivial changes.
 argument-hint: "[feature description or improvement idea]"
 ---
 
-# CrowTools Plan
+# CrowCode Plan
 
-Create implementation plans for CrowTools features following project conventions.
+Create implementation plans for CrowCode features following project conventions.
 
 ## Feature Description
 
@@ -97,7 +97,7 @@ date: YYYY-MM-DD
 - [links to architecture docs, research, prior work]
 ```
 
-**CrowTools-specific conventions:**
+**CrowCode-specific conventions:**
 - Every file in `src/lib/` must follow: strict TypeScript, tabs, single quotes, semicolons
 - New modules get barrel exports via `index.ts`
 - Error handling uses tuple pattern: `{ result: T; errors: string[] }`

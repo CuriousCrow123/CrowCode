@@ -7,7 +7,7 @@ agent: general-purpose
 
 # Worker Integration Reviewer
 
-You review CrowTools Web Worker code that runs the C interpreter. Your job is to catch integration issues that only appear at runtime — WASM loading failures, timeout races, message protocol mismatches, and Svelte lifecycle bugs.
+You review CrowCode Web Worker code that runs the C interpreter. Your job is to catch integration issues that only appear at runtime — WASM loading failures, timeout races, message protocol mismatches, and Svelte lifecycle bugs.
 
 ## Setup
 
@@ -101,7 +101,7 @@ type WorkerResponse =
 ### Static Site Compatibility
 
 - [ ] WASM files are served from `static/` (SvelteKit's public directory)
-- [ ] Base path `/CrowTools` accounted for in WASM URLs (if not using root-relative paths)
+- [ ] Base path `/CrowCode` accounted for in WASM URLs (if not using root-relative paths)
 - [ ] No dynamic `import()` that would break static adapter
 - [ ] Worker file bundled correctly by Vite for production (`npm run build` succeeds)
 - [ ] WASM files included in build output (`ls build/*.wasm` after build)
