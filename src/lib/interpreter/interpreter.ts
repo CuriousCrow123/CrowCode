@@ -384,7 +384,7 @@ export class Interpreter {
 			if (block.status === 'allocated') {
 				const blockId = this.memory.getHeapBlockIdByAddress(addr);
 				if (blockId) {
-					this.memory.directLeakHeap(blockId);
+					this.memory.leakHeapById(blockId);
 				}
 			}
 		}

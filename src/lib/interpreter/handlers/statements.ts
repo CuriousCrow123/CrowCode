@@ -469,7 +469,7 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 
 		const entryId = ctx.memory.resolvePointerPath(path);
 		if (entryId) {
-			ctx.memory.directSetValue(entryId, displayVal);
+			ctx.memory.setValueById(entryId, displayVal);
 		}
 	} else if (node.target.type === 'unary_expression' && node.target.operator === '*') {
 		const ptrResult = ctx.evaluator.eval(node.target.operand);
@@ -483,7 +483,7 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 		if (ptrName) {
 			const heapBlockId = ctx.memory.getHeapBlockId(ptrName);
 			if (heapBlockId) {
-				ctx.memory.directSetValue(heapBlockId, String(newVal));
+				ctx.memory.setValueById(heapBlockId, String(newVal));
 			}
 		}
 	} else if (node.target.type === 'subscript_expression') {
@@ -531,7 +531,7 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 
 			const rootId = ctx.memory.resolvePathId([rootName]);
 			if (rootId) {
-				ctx.memory.directSetValue(`${rootId}-${flatIdx}`, displayVal);
+				ctx.memory.setValueById(`${rootId}-${flatIdx}`, displayVal);
 			}
 			return;
 		}
@@ -580,11 +580,11 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 
 		const heapBlockId = ctx.memory.resolvePointerPath(objPath);
 		if (heapBlockId) {
-			ctx.memory.directSetValue(`${heapBlockId}-${index}`, displayVal);
+			ctx.memory.setValueById(`${heapBlockId}-${index}`, displayVal);
 		} else {
 			const parentId = ctx.memory.resolvePathId(objPath);
 			if (parentId) {
-				ctx.memory.directSetValue(`${parentId}-${index}`, displayVal);
+				ctx.memory.setValueById(`${parentId}-${index}`, displayVal);
 			}
 		}
 	}
@@ -634,11 +634,11 @@ export function executeExpressionStatement(ctx: HandlerContext, node: ASTNode & 
 			const index = idxResult.value?.data ?? 0;
 			const heapBlockId = ctx.memory.resolvePointerPath(objPath);
 			if (heapBlockId) {
-				ctx.memory.directSetValue(`${heapBlockId}-${index}`, String(newVal));
+				ctx.memory.setValueById(`${heapBlockId}-${index}`, String(newVal));
 			} else {
 				const parentId = ctx.memory.resolvePathId(objPath);
 				if (parentId) {
-					ctx.memory.directSetValue(`${parentId}-${index}`, String(newVal));
+					ctx.memory.setValueById(`${parentId}-${index}`, String(newVal));
 				}
 			}
 		} else if (expr.operand.type === 'member_expression') {
@@ -675,7 +675,7 @@ export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type
 			if (destName) {
 				const blockId = ctx.memory.getHeapBlockId(destName);
 				if (blockId) {
-					ctx.memory.directSetValue(blockId, `"${formatted}"`);
+					ctx.memory.setValueById(blockId, `"${formatted}"`);
 				}
 			}
 		}
@@ -757,7 +757,7 @@ export function executeFreeCall(ctx: HandlerContext, call: ASTNode & { type: 'ca
 		// Now emit the visualization op.
 		const blockId = ctx.memory.getHeapBlockId(varName);
 		if (blockId) {
-			ctx.memory.directFreeHeap(blockId);
+			ctx.memory.freeHeapById(blockId);
 		}
 		ctx.memory.assignVariable(varName, '(dangling)');
 	} else {
@@ -765,11 +765,11 @@ export function executeFreeCall(ctx: HandlerContext, call: ASTNode & { type: 'ca
 		const blockId = ctx.memory.getHeapBlockId(fieldName)
 			?? ctx.memory.getHeapBlockIdByAddress(ptrAddr);
 		if (blockId) {
-			ctx.memory.directFreeHeap(blockId);
+			ctx.memory.freeHeapById(blockId);
 		}
 		const entryId = ctx.memory.resolvePointerPath(argPath);
 		if (entryId) {
-			ctx.memory.directSetValue(entryId, '(dangling)');
+			ctx.memory.setValueById(entryId, '(dangling)');
 		}
 	}
 }
@@ -889,7 +889,7 @@ export function updateHeapChildrenFromMemory(ctx: HandlerContext, destArg: ASTNo
 	for (let i = 0; i < block.size; i++) {
 		const val = ctx.memory.readMemory(baseAddr + i);
 		if (val !== undefined) {
-			ctx.memory.directSetValue(`${blockId}-${i}`, String(val));
+			ctx.memory.setValueById(`${blockId}-${i}`, String(val));
 		}
 	}
 }

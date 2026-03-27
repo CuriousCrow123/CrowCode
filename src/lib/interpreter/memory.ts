@@ -675,7 +675,7 @@ export class Memory implements MemoryReader {
 	}
 
 	/** Free a heap block by address (runtime only, no op emission).
-	 *  The interpreter emits the setHeapStatus op separately via directFreeHeap(). */
+	 *  The interpreter emits the setHeapStatus op separately via freeHeapById(). */
 	freeByAddress(address: number): { error?: string } {
 		const block = this.heapBlocks.get(address);
 		if (!block) {
@@ -951,21 +951,21 @@ export class Memory implements MemoryReader {
 		return undefined;
 	}
 
-	// === Direct op emission (escape hatches for migration) ===
+	// === Op emission by ID ===
 
-	directSetValue(id: string, value: string): void {
+	setValueById(id: string, value: string): void {
 		this.addOp({ op: 'setValue', id, value });
 	}
 
-	directFreeHeap(blockId: string): void {
+	freeHeapById(blockId: string): void {
 		this.addOp({ op: 'setHeapStatus', id: blockId, status: 'freed' });
 	}
 
-	directLeakHeap(blockId: string): void {
+	leakHeapById(blockId: string): void {
 		this.addOp({ op: 'setHeapStatus', id: blockId, status: 'leaked' });
 	}
 
-	directRemoveHeapBlock(blockId: string): void {
+	removeEntryById(blockId: string): void {
 		this.addOp({ op: 'removeEntry', id: blockId });
 	}
 
