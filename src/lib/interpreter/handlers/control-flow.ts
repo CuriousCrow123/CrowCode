@@ -12,9 +12,13 @@ export function executeIf(ctx: HandlerContext, node: ASTNode & { type: 'if_state
 	const taken = (condResult.value.data ?? 0) !== 0;
 	const condText = ctx.describeExpr(node.condition);
 
+	const branchDesc = taken
+		? '→ true, take if-branch'
+		: (node.alternate ? '→ false, take else-branch' : '→ false, skip');
 	ctx.memory.beginStep(
 		{ line: node.line, colStart: (node as any).condColStart, colEnd: (node as any).condColEnd },
-		`if: ${condText} → ${taken ? 'true' : 'false'}`,
+		`if: check ${condText}`,
+		branchDesc,
 	);
 	ctx.stepCount++;
 
@@ -29,7 +33,7 @@ export function executeFor(ctx: HandlerContext, node: ASTNode & { type: 'for_sta
 	const hasDecl = node.init?.type === 'declaration';
 
 	if (node.init) {
-		ctx.memory.beginStep({ line: node.line }, `for: ${describeForInit(ctx, node.init)}`);
+		ctx.memory.beginStep({ line: node.line }, `for: init ${describeForInit(ctx, node.init)}`);
 		ctx.stepCount++;
 
 		if (hasDecl) {
@@ -43,7 +47,7 @@ export function executeFor(ctx: HandlerContext, node: ASTNode & { type: 'for_sta
 			ctx.memory.pushBlock('for');
 		}
 	} else {
-		ctx.memory.beginStep({ line: node.line }, 'for: init');
+		ctx.memory.beginStep({ line: node.line }, 'for: init (empty)');
 		ctx.stepCount++;
 		ctx.memory.pushScopeRuntime('for');
 		ctx.memory.pushBlock('for');
@@ -69,8 +73,8 @@ export function executeFor(ctx: HandlerContext, node: ASTNode & { type: 'for_sta
 				const condText = ctx.describeExpr(node.condition);
 				ctx.memory.beginStep(
 					{ line: node.line, colStart: node.condColStart, colEnd: node.condColEnd },
-					`for: check ${condText} → false, exit loop`,
-					`${condText} → false`,
+					`for: check ${condText}`,
+					`→ false, exit loop`,
 				);
 				ctx.stepCount++;
 				break;
@@ -79,8 +83,8 @@ export function executeFor(ctx: HandlerContext, node: ASTNode & { type: 'for_sta
 			const condText = ctx.describeExpr(node.condition);
 			ctx.memory.beginStep(
 				{ line: node.line, colStart: node.condColStart, colEnd: node.condColEnd },
-				`for: check ${condText} → true`,
-				`${condText} → true`,
+				`for: check ${condText}`,
+				`→ true, continue`,
 			);
 			ctx.memory.markSubStep();
 			ctx.stepCount++;
@@ -116,7 +120,8 @@ export function executeFor(ctx: HandlerContext, node: ASTNode & { type: 'for_sta
 
 			ctx.memory.beginStep(
 				{ line: node.line, colStart: node.updateColStart, colEnd: node.updateColEnd },
-				`for: ${beforeVal} → ${describeUpdateResult(node.update, afterVal)}`,
+				`for: update ${beforeVal}`,
+				`→ ${describeUpdateResult(node.update, afterVal)}`,
 			);
 			ctx.memory.markSubStep();
 			ctx.stepCount++;
@@ -161,7 +166,8 @@ export function executeWhile(ctx: HandlerContext, node: ASTNode & { type: 'while
 		if ((condResult.value.data ?? 0) === 0) {
 			ctx.memory.beginStep(
 				{ line: node.line, colStart: (node as any).condColStart, colEnd: (node as any).condColEnd },
-				`while: ${condText} → false, exit`,
+				`while: check ${condText}`,
+				`→ false, exit loop`,
 			);
 			ctx.stepCount++;
 			break;
@@ -169,7 +175,8 @@ export function executeWhile(ctx: HandlerContext, node: ASTNode & { type: 'while
 
 		ctx.memory.beginStep(
 			{ line: node.line, colStart: (node as any).condColStart, colEnd: (node as any).condColEnd },
-			`while: check ${condText} → true`,
+			`while: check ${condText}`,
+			`→ true, continue`,
 		);
 		ctx.memory.markSubStep();
 		ctx.stepCount++;
@@ -230,7 +237,8 @@ export function executeDoWhile(ctx: HandlerContext, node: ASTNode & { type: 'do_
 		if ((condResult.value.data ?? 0) === 0) {
 			ctx.memory.beginStep(
 				{ line: node.line, colStart: (node as any).condColStart, colEnd: (node as any).condColEnd },
-				`do-while: ${condText} → false, exit`,
+				`do-while: check ${condText}`,
+				`→ false, exit loop`,
 			);
 			ctx.stepCount++;
 			break;
@@ -238,7 +246,8 @@ export function executeDoWhile(ctx: HandlerContext, node: ASTNode & { type: 'do_
 
 		ctx.memory.beginStep(
 			{ line: node.line, colStart: (node as any).condColStart, colEnd: (node as any).condColEnd },
-			`do-while: check ${condText} → true`,
+			`do-while: check ${condText}`,
+			`→ true, continue`,
 		);
 		ctx.memory.markSubStep();
 		ctx.stepCount++;
@@ -262,7 +271,7 @@ export function executeSwitch(ctx: HandlerContext, node: ASTNode & { type: 'swit
 	const switchValue = condResult.value.data ?? 0;
 	const condText = ctx.describeExpr(node.expression);
 
-	ctx.memory.beginStep({ line: node.line }, `switch: ${condText} = ${switchValue}`);
+	ctx.memory.beginStep({ line: node.line }, `switch on ${condText}`, `→ ${switchValue}`);
 	ctx.stepCount++;
 
 	let matchIndex = -1;

@@ -103,9 +103,11 @@ export function executeDeclaration(ctx: HandlerContext, node: ASTNode & { type: 
 	}
 
 	if (!sharesStep) {
+		const { desc, eval: evalStr } = formatDeclDescription(node.name, type, displayValue!);
 		ctx.memory.beginStep(
 			{ line: node.line },
-			formatDeclDescription(node.name, type, displayValue!),
+			desc,
+			evalStr,
 		);
 		ctx.stepCount++;
 	}
@@ -198,10 +200,9 @@ export function executeMallocDecl(
 		heapChildren = buildArrayChildSpecs(heapType.elementType, heapType.size);
 	}
 
-	const sizeDesc = `${totalSize}`;
-	const desc = `${allocator}(${formatMallocArgs(ctx, call)}) — allocate ${sizeDesc} bytes`;
+	const desc = `Allocate ${totalSize} bytes with ${allocator}`;
 
-	ctx.memory.beginStep({ line: decl.line }, desc);
+	ctx.memory.beginStep({ line: decl.line }, desc, `→ ${decl.name} = ${formatAddress(address)}`);
 	ctx.stepCount++;
 
 	ctx.memory.emitHeapEntry(
@@ -258,7 +259,7 @@ export function executeStringLiteralDecl(
 	const heapChildren = buildArrayChildSpecs(primitiveType('char'), size, charValues);
 
 	if (!sharesStep) {
-		ctx.memory.beginStep({ line: decl.line }, `char *${decl.name} = "${str}"`);
+		ctx.memory.beginStep({ line: decl.line }, `Declare char *${decl.name}`, `= "${str}"`);
 		ctx.stepCount++;
 	}
 
@@ -353,8 +354,12 @@ export function executeMallocAssign(
 	}
 
 	if (!sharesStep) {
-		const desc = `${allocator}(${formatMallocArgs(ctx, call)}) — allocate ${totalSize} bytes`;
-		ctx.memory.beginStep({ line: node.line }, desc);
+		const targetName = node.target.type === 'identifier' ? node.target.name : ctx.describeExpr(node.target);
+		ctx.memory.beginStep(
+			{ line: node.line },
+			`Allocate ${totalSize} bytes with ${allocator}`,
+			`→ ${targetName} = ${formatAddress(address)}`,
+		);
 		ctx.stepCount++;
 	}
 
@@ -432,11 +437,6 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 		return;
 	}
 
-	if (!sharesStep) {
-		ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node));
-		ctx.stepCount++;
-	}
-
 	if (node.target.type === 'identifier') {
 		const existing = ctx.memory.lookupVariable(node.target.name);
 		if (!existing) {
@@ -447,6 +447,15 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 		let newVal = rhs.value.data ?? 0;
 		const oldVal = existing.data ?? 0;
 		newVal = applyCompoundOp(node.operator, oldVal, newVal);
+
+		if (!sharesStep) {
+			const evalStr = assignNeedsEval(node, rhs.value.data ?? 0, newVal)
+				? `→ ${ctx.formatValue(existing.type, newVal)}`
+				: undefined;
+			ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node), evalStr);
+			ctx.stepCount++;
+		}
+
 		ctx.memory.setVariable(node.target.name, newVal);
 
 		const displayVal = ctx.formatValue(existing.type, newVal);
@@ -459,6 +468,14 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 			const targetEval = ctx.evaluator.eval(node.target);
 			const oldVal = targetEval.value.data ?? ctx.memory.readMemory(targetEval.value.address) ?? 0;
 			newVal = applyCompoundOp(node.operator, oldVal, newVal);
+		}
+
+		if (!sharesStep) {
+			const evalStr = assignNeedsEval(node, rhs.value.data ?? 0, newVal)
+				? `→ ${newVal}`
+				: undefined;
+			ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node), evalStr);
+			ctx.stepCount++;
 		}
 
 		const displayVal = String(newVal);
@@ -478,6 +495,10 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 		const addr = ptrResult.value.data ?? 0;
 		if (addr === 0) { ctx.errors.push(`Null pointer dereference at line ${node.line}`); return; }
 		if (ctx.memory.isFreedAddress(addr)) { ctx.errors.push(`Use-after-free: writing to freed memory at ${formatAddress(addr)}`); return; }
+		if (!sharesStep) {
+			ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node));
+			ctx.stepCount++;
+		}
 		const newVal = rhs.value.data ?? 0;
 		ctx.memory.writeMemory(addr, newVal);
 		const ptrName = node.target.operand.type === 'identifier' ? node.target.operand.name : undefined;
@@ -488,6 +509,10 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 			}
 		}
 	} else if (node.target.type === 'subscript_expression') {
+		if (!sharesStep) {
+			ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node));
+			ctx.stepCount++;
+		}
 		// Nested subscript: m[i][j] = val (2D array)
 		if (node.target.object.type === 'subscript_expression') {
 			const innerSub = node.target;
@@ -617,7 +642,8 @@ export function executeExpressionStatement(ctx: HandlerContext, node: ASTNode & 
 			const desc = name
 				? (expr.prefix ? `${expr.operator}${name}` : `${name}${expr.operator}`)
 				: `${expr.operator}`;
-			ctx.memory.beginStep({ line: node.line }, desc);
+			const evalStr = name ? `→ ${name} = ${newVal}` : `→ ${newVal}`;
+			ctx.memory.beginStep({ line: node.line }, desc, evalStr);
 			ctx.stepCount++;
 		}
 
@@ -667,7 +693,7 @@ export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type
 		const formatted = evaluateSprintfResult(ctx, call);
 
 		if (!sharesStep) {
-			ctx.memory.beginStep({ line }, `sprintf(${ctx.describeExpr(call.args[0])}, ...) — write "${formatted}"`);
+			ctx.memory.beginStep({ line }, `sprintf(${ctx.describeExpr(call.args[0])}, ...)`, `→ "${formatted}"`);
 			ctx.stepCount++;
 		}
 
@@ -748,7 +774,7 @@ export function executeFreeCall(ctx: HandlerContext, call: ASTNode & { type: 'ca
 
 	if (!sharesStep) {
 		const argText = ctx.describeExpr(call.args[0]);
-		ctx.memory.beginStep({ line }, `free(${argText}) — deallocate memory`);
+		ctx.memory.beginStep({ line }, `Free memory at ${argText}`);
 		ctx.stepCount++;
 	}
 
@@ -795,15 +821,16 @@ export function executeReturn(ctx: HandlerContext, node: ASTNode & { type: 'retu
 	ctx.returnValue = value;
 }
 
-export function formatDeclDescription(name: string, type: CType, value: string): string {
+export function formatDeclDescription(name: string, type: CType, value: string): { desc: string; eval?: string } {
 	const typeStr = typeToString(type);
+	const desc = `Declare ${typeStr} ${name}`;
 	if (isStructType(type)) {
-		return `${typeStr} ${name} = {...}`;
+		return { desc, eval: `= {...}` };
 	}
 	if (isArrayType(type)) {
-		return `${typeStr} ${name} = {...}`;
+		return { desc, eval: `= {...}` };
 	}
-	return `${typeStr} ${name} = ${value}`;
+	return { desc, eval: `= ${value}` };
 }
 
 export function formatAssignDesc(ctx: HandlerContext, node: ASTNode & { type: 'assignment' }): string {
@@ -811,9 +838,9 @@ export function formatAssignDesc(ctx: HandlerContext, node: ASTNode & { type: 'a
 	const value = ctx.describeExpr(node.value);
 
 	if (node.operator === '=') {
-		return `${target} = ${value}`;
+		return `Set ${target} = ${value}`;
 	}
-	return `${target} ${node.operator} ${value}`;
+	return `Set ${target} ${node.operator} ${value}`;
 }
 
 export function formatMallocArgs(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }): string {
@@ -823,6 +850,19 @@ export function formatMallocArgs(ctx: HandlerContext, call: ASTNode & { type: 'c
 export function formatPrintfDesc(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }): string {
 	const args = call.args.map((a) => ctx.describeExpr(a)).join(', ');
 	return `${call.callee}(${args})`;
+}
+
+/** Returns true when the assignment result isn't obvious from the description alone. */
+export function assignNeedsEval(node: ASTNode & { type: 'assignment' }, rhsData: number, finalVal: number): boolean {
+	// Compound operators always need eval — result isn't obvious
+	if (node.operator !== '=') return true;
+	// If RHS is a simple literal or identifier, the description says it all
+	if (node.value.type === 'number_literal') return false;
+	if (node.value.type === 'identifier') return false;
+	if (node.value.type === 'null_literal') return false;
+	if (node.value.type === 'string_literal') return false;
+	// Expression — show the computed result
+	return true;
 }
 
 export function applyCompoundOp(op: string, oldVal: number, newVal: number): number {
@@ -1006,7 +1046,7 @@ export function callFunction(
 	const callColEnd = ctx.callContext?.colEnd;
 	ctx.memory.beginStep(
 		{ line, colStart: callColStart, colEnd: callColEnd },
-		`Call ${fn.name}(${params.map((p) => p.name).join(', ')}) — push stack frame`,
+		`Call ${fn.name}(${params.map((p) => p.name).join(', ')})`,
 	);
 	ctx.stepCount++;
 
@@ -1034,10 +1074,10 @@ export function callFunction(
 	ctx.returnValue = null;
 
 	const declVar = ctx.callContext?.varName;
-	const retDesc = declVar
-		? `${fn.name}() returns ${retVal.data ?? 0}, assign to ${declVar}`
-		: `${fn.name}() returns ${retVal.data ?? 0}`;
-	ctx.memory.beginStep({ line }, retDesc);
+	const retEval = declVar
+		? `→ ${declVar} = ${retVal.data ?? 0}`
+		: `→ ${retVal.data ?? 0}`;
+	ctx.memory.beginStep({ line }, `Return from ${fn.name}()`, retEval);
 	ctx.stepCount++;
 	ctx.memory.emitScopeExit();
 
