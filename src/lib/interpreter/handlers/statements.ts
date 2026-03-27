@@ -898,15 +898,16 @@ export function updateHeapChildrenFromMemory(ctx: HandlerContext, destArg: ASTNo
 export function initStructFromList(ctx: HandlerContext, type: CType & { kind: 'struct' }, children: ChildSpec[], values: ASTNode[], baseAddress?: number): void {
 	for (let i = 0; i < Math.min(type.fields.length, values.length); i++) {
 		const field = type.fields[i];
-		if (isStructType(field.type) && values[i].type === 'init_list') {
+		const init = values[i];
+		if (isStructType(field.type) && init.type === 'init_list') {
 			const nestedChildren = children[i].children;
 			if (nestedChildren) {
 				const nestedBase = baseAddress !== undefined ? baseAddress + field.offset : undefined;
-				initStructFromList(ctx, field.type, nestedChildren, values[i].values, nestedBase);
+				initStructFromList(ctx, field.type, nestedChildren, init.values, nestedBase);
 			}
 			continue;
 		}
-		const result = ctx.evaluator.eval(values[i]);
+		const result = ctx.evaluator.eval(init);
 		if (result.error) ctx.errors.push(result.error);
 		const val = result.value.data ?? 0;
 		children[i].value = String(val);
