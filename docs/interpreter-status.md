@@ -1,7 +1,7 @@
 # C Interpreter — Feature Status
 
 Last updated: 2026-03-27
-Test suite: 599 passing, 0 skipped (599 total across 18 files)
+Test suite: 716 passing, 0 skipped (716 total across 21 files)
 
 ---
 
@@ -146,6 +146,15 @@ Test suite: 599 passing, 0 skipped (599 total across 18 files)
 | `malloc(size)` | Step emission with allocation description |
 | `calloc(count, size)` | Zero-init children visible |
 | `free(ptr)` | Status change + dangling pointer display |
+| `printf(fmt, ...)` | Real output via IoState → ConsolePanel. Supports `%d`, `%i`, `%u`, `%x`, `%X`, `%c`, `%f`, `%p`, `%%`, field width, precision, flags. Step description shows output produced. |
+| `scanf(fmt, ...)` | Reads from pre-supplied stdin via IoState. Writes through to variables with `setValue` ops. Supports `%d`, `%i`, `%c`, `%f`, `%x`, `%*` (suppression). Correct whitespace semantics per specifier. Missing `&` detected with error. Step description shows assigned values. |
+| `puts(str)` | Writes string + `\n` to stdout. |
+| `putchar(c)` | Writes single character to stdout. |
+| `getchar()` | Reads single character from stdin. Returns `int` (-1 on EOF). |
+| `fprintf(stream, fmt, ...)` | Routes to stdout or stderr based on first argument. |
+| `fputs(str, stream)` | Writes string to stdout or stderr. |
+| `fgets(buf, n, stdin)` | Reads up to n-1 chars from stdin (fgets semantics: includes `\n`, null-terminates). Result shown as quoted string on heap entry. |
+| `gets(buf)` | Reads until newline (no bounds checking). Step description warns about unsafe usage. |
 | `sprintf(buf, fmt, ...)` | Supports `%d`, `%i`, `%x`, `%c`, `%s`, `%%`. Result shown as heap value. |
 | `strlen(s)` | Walks char bytes from pointer address. Max 10,000 bytes. |
 | `strcpy(dst, src)` | Copies bytes including null terminator. Updates heap display. |
@@ -155,14 +164,6 @@ Test suite: 599 passing, 0 skipped (599 total across 18 files)
 | `sqrt(x)` | Returns double via `Math.sqrt` |
 | `pow(x, y)` | Returns double via `Math.pow` |
 
-### No-op (recognized, step emitted, no output)
-| Function | Notes |
-|----------|-------|
-| `printf(fmt, ...)` | Step shown but no console output |
-| `puts(str)` | Step shown but no console output |
-| `putchar(c)` | Recognized but ignored |
-| `fprintf(stream, fmt, ...)` | Recognized but ignored |
-
 ### Not Implemented
 | Category | Functions |
 |----------|-----------|
@@ -171,7 +172,7 @@ Test suite: 599 passing, 0 skipped (599 total across 18 files)
 | Conversion | `atoi`, `atof`, `strtol`, `strtoul`, `strtod` |
 | Math | `sin`, `cos`, `tan`, `log`, `exp`, `ceil`, `floor`, `fabs`, `fmod`, `round` |
 | Character | `isalpha`, `isdigit`, `isspace`, `toupper`, `tolower` |
-| I/O | `scanf`, `getchar`, `fgets`, `fopen`, `fclose`, `fread`, `fwrite` |
+| I/O (advanced) | `sscanf`, `fscanf`, `snprintf`, `fopen`, `fclose`, `fread`, `fwrite` |
 | Process | `exit`, `abort`, `atexit`, `system` |
 | Random | `rand`, `srand` |
 | Search/Sort | `qsort`, `bsearch` |
@@ -199,6 +200,9 @@ Test suite: 599 passing, 0 skipped (599 total across 18 files)
 | Column highlighting | Working | Condition and update expressions in loops and if statements |
 | Drilldown modal | Working | Navigate into nested structs/arrays via breadcrumb path |
 | Changed-value highlighting | Working | `diffSnapshots()` marks values that changed between steps |
+| Console output panel | Working | ConsolePanel shows cumulative stdout with per-step emerald highlighting. Pre-computed for O(1) stepping. |
+| stdin input panel | Working | StdinInput textarea auto-detected from source. Shows consumed/remaining during stepping with strikethrough. |
+| I/O step descriptions | Working | printf shows output produced (`→ "x = 42\n"`), scanf shows assigned values (`→ x = 42`). |
 
 ---
 
@@ -209,7 +213,7 @@ Test suite: 599 passing, 0 skipped (599 total across 18 files)
 | `long` (64-bit) | Parsed and sized (8 bytes) | Arithmetic treated as 32-bit in evaluator | Would need BigInt or separate evaluation path |
 | Preprocessor | `#include` ignored gracefully | `#define`, `#ifdef`, etc. ignored with warning | By design — not a real preprocessor |
 | 3D+ arrays | Type system supports nesting | Only 2D write/init tested; 3D untested | Medium difficulty to fix |
-| `sprintf` format specifiers | `%d`, `%i`, `%x`, `%c`, `%s`, `%%` | `%f`, `%g`, `%e`, `%p`, `%u`, `%o`, `%ld` not supported | |
+| `sprintf` format specifiers | `%d`, `%i`, `%x`, `%c`, `%s`, `%%` | `%f`, `%p`, `%u` not supported in sprintf (they work in printf). Byte-by-byte writes to stack arrays not yet implemented. | |
 | Empty loop bodies | Doesn't crash, loop variable advances | May produce interpreter errors internally | |
 
 ---
@@ -243,8 +247,9 @@ Test suite: 599 passing, 0 skipped (599 total across 18 files)
 ### Runtime Limitations
 | Limitation | Notes |
 |-----------|-------|
-| No I/O output | `printf`/`puts`/`putchar` are no-ops — no console |
-| No stdin | `scanf`, `getchar`, `fgets` not available |
+| Pre-supplied stdin only | stdin must be provided before execution (no interactive/blocking input) |
+| No FILE* operations | `fopen`/`fclose`/`fread`/`fwrite` not supported — only stdin/stdout/stderr |
+| `printf %s` shows `(string)` | String pointer resolution from memory not yet implemented for `%s` format specifier |
 | Single source file | No multi-file compilation or linking |
 | No recursive struct pointer types | `struct Node { struct Node *next; }` — pointer fields work but self-referential layout depends on registry order |
 
@@ -272,7 +277,7 @@ Test suite: 599 passing, 0 skipped (599 total across 18 files)
 
 ## Test Programs
 
-39 programs in the Custom tab dropdown across 13 categories:
+45 programs in the Custom tab dropdown across 14 categories:
 
 | Category | Count | Programs |
 |----------|-------|----------|
@@ -289,14 +294,15 @@ Test suite: 599 passing, 0 skipped (599 total across 18 files)
 | New Features | 8 | Switch/Case, String Literal, Float Arithmetic, Uninitialized Variable, Chained Assignment, Function Pointer, 2D Array, Array-to-Pointer Decay |
 | Runtime Safety | 3 | Use-After-Free, String Functions, Math Functions |
 | Integration | 6 | Matrix Identity, Fibonacci Array, Bubble Sort, Multi-Function Clamp, Recursive Fibonacci, Entity System |
+| stdio | 6 | Basic printf, puts/putchar, getchar Loop, scanf + printf, scanf \\n Residue, printf Format Specifiers |
 
 ---
 
 ## Test Coverage
 
-599 tests across 18 files:
+716 tests across 21 files:
 
-### Engine tests (9 files, 98 tests)
+### Engine tests (10 files, 103 tests)
 
 | Test file | Tests | Focus |
 |-----------|-------|-------|
@@ -309,21 +315,24 @@ Test suite: 599 passing, 0 skipped (599 total across 18 files)
 | `integration.test.ts` | 10 | Snapshot building, scope lifecycle, isolation, diffing, navigation with inline programs |
 | `bugs.test.ts` | 4 | Regression tests (visiblePosition = -1, etc.) |
 | `summary.test.ts` | 9 | Display summary computation for nested values |
+| `console.test.ts` | 5 | `buildConsoleOutputs()` accumulation, backward stepping, stdin echo |
 
-Engine subtotal: **98 tests**
+Engine subtotal: **103 tests**
 
-### Interpreter tests (9 files, 501 tests)
+### Interpreter tests (11 files, 613 tests)
 
 | Test file | Tests | Focus |
 |-----------|-------|-------|
 | `parser.test.ts` | 35 | AST conversion for all node types |
 | `evaluator.test.ts` | 60 | Expression evaluation, operators, 32-bit wrapping, pointer scaling |
-| `interpreter.test.ts` | 35 | Statement handling, stdlib, validation, integration pipelines |
+| `interpreter.test.ts` | 55 | Statement handling, stdlib, validation, integration pipelines, **stdio integration (printf ioEvents, scanf write-through, \\n residue, step descriptions)** |
 | `memory.test.ts` | 41 | Unified Memory class: scopes, heap, op recording, ID generation |
 | `types-c.test.ts` | 32 | Type sizes, alignment, struct layout, TypeRegistry |
 | `snapshot-regression.test.ts` | 34 | Regression safety net: 7 programs captured before Memory refactor |
 | `worker.test.ts` | 6 | Worker message contract |
 | `value-correctness.test.ts` | 198 | Value assertions: scalars, structs, arrays, pointers, functions, control flow, sprintf, bounds checking, sub-steps, edge cases, BUG-1 through BUG-7 regressions |
 | `manual-programs.test.ts` | 60 | 44 full C programs through complete pipeline (parse → interpret → validate → buildSnapshots → verify values) |
+| `format.test.ts` | 47 | Printf/scanf format string parser: specifiers, width/precision, flags, tokenization, whitespace rules |
+| `io-state.test.ts` | 45 | IoState: stdin consumption (readInt/readChar/readString/readLine), \\n residue, stdout/stderr, step event lifecycle |
 
-Interpreter subtotal: **501 tests**
+Interpreter subtotal: **613 tests**
