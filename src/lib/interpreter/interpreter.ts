@@ -26,15 +26,10 @@ import {
 	describeExpr,
 } from './handlers';
 
-export type InterpretResult = {
+type InterpretResult = {
 	program: Program;
 	errors: string[];
 };
-
-export function interpret(source: string, opts?: InterpreterOptions): InterpretResult {
-	const interpreter = new Interpreter(source, opts);
-	return interpreter.run();
-}
 
 export class Interpreter {
 	private memory: Memory;
