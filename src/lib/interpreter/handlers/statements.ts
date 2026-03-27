@@ -996,7 +996,7 @@ export function callFunction(
 		return {
 			name: p.name,
 			type: paramType,
-			value: isStructType(paramType) ? '' : String(argVal),
+			value: isStructType(paramType) ? '' : formatValue(ctx.memory, paramType, argVal),
 			address: declaredParams[i].address,
 			children,
 		};
