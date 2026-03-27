@@ -132,6 +132,15 @@ export class Memory implements MemoryReader {
 		}
 	}
 
+	updateStepDescription(description: string, evaluation?: string): void {
+		if (this.currentStep) {
+			this.currentStep.description = description;
+			if (evaluation !== undefined) {
+				this.currentStep.evaluation = evaluation;
+			}
+		}
+	}
+
 	flushStep(): void {
 		if (this.currentStep) {
 			if (this.ioEventsFlusher) {

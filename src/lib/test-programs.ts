@@ -830,7 +830,41 @@ int main() {
 		stdin: 'Hello\n',
 	},
 	{
-		id: 'p16.4', category: 'stdio', name: 'printf Format Specifiers',
+		id: 'p16.4', category: 'stdio', name: 'scanf + printf',
+		source: `#include <stdio.h>
+
+int main() {
+    int x;
+    int y;
+    printf("Enter two numbers:\\n");
+    scanf("%d", &x);
+    scanf("%d", &y);
+    printf("Sum = %d\\n", x + y);
+    return 0;
+}`,
+		stdin: '10\n20\n',
+	},
+	{
+		id: 'p16.5', category: 'stdio', name: 'scanf \\\\n Residue',
+		source: `#include <stdio.h>
+
+// The classic scanf pitfall:
+// %d skips whitespace, %c does NOT.
+// After scanf("%d"), the \\n stays in the buffer.
+// The next scanf("%c") reads that \\n, not the next real char.
+
+int main() {
+    int num;
+    char ch;
+    scanf("%d", &num);
+    scanf("%c", &ch);
+    // ch is now 10 ('\\n'), not 'A'!
+    return 0;
+}`,
+		stdin: '42\nA',
+	},
+	{
+		id: 'p16.6', category: 'stdio', name: 'printf Format Specifiers',
 		source: `#include <stdio.h>
 
 int main() {

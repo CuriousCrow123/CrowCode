@@ -717,8 +717,18 @@ export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type
 			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
 			ctx.stepCount++;
 		}
+		const stdoutBefore = ctx.io.getStdout();
 		const result = ctx.evaluator.eval(call);
 		if (result.error) ctx.errors.push(result.error);
+
+		// Enrich step description with output produced
+		const stdoutAfter = ctx.io.getStdout();
+		if (stdoutAfter.length > stdoutBefore.length) {
+			const produced = stdoutAfter.slice(stdoutBefore.length);
+			const escaped = produced.replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+			const desc = formatPrintfDesc(ctx, call);
+			ctx.memory.updateStepDescription(desc, `→ "${escaped}"`);
+		}
 		return;
 	}
 
@@ -953,6 +963,7 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 
 	let itemsAssigned = 0;
 	let argIdx = 1; // pointer args start at index 1
+	const assignments: string[] = [];
 
 	for (const token of tokens) {
 		if (token.kind === 'whitespace') {
@@ -1016,10 +1027,26 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 				ctx.errors.push(`scanf: argument ${argIdx} must be a pointer (missing &?)`);
 			} else {
 				ctx.memory.setValue(varName, readResult.value);
+				// Track for description enrichment
+				if (spec.specifier === 'c') {
+					const charRepr = readResult.value === 10 ? "'\\n'" : readResult.value === 9 ? "'\\t'" : `'${String.fromCharCode(readResult.value)}'`;
+					assignments.push(`${varName} = ${charRepr} (${readResult.value})`);
+				} else {
+					assignments.push(`${varName} = ${readResult.value}`);
+				}
 			}
 			argIdx++;
 		}
 		itemsAssigned++;
+	}
+
+	// Enrich step description with read results
+	if (assignments.length > 0) {
+		const desc = formatPrintfDesc(ctx, call);
+		ctx.memory.updateStepDescription(desc, `→ ${assignments.join(', ')}`);
+	} else if (ctx.io.isExhausted()) {
+		const desc = formatPrintfDesc(ctx, call);
+		ctx.memory.updateStepDescription(desc, '→ EOF');
 	}
 }
 

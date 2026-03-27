@@ -739,4 +739,46 @@ describe('stdio — scanf', () => {
 		);
 		expect(scanfStep).toBeDefined();
 	});
+
+	it('scanf step description shows assigned values', () => {
+		const src = `int main() {
+	int x;
+	scanf("%d", &x);
+	return 0;
+}`;
+		const { program } = runWithStdin(src, '42\n');
+		const scanfStep = program.steps.find(s => s.description?.includes('scanf'));
+		expect(scanfStep).toBeDefined();
+		expect(scanfStep!.evaluation).toContain('x = 42');
+	});
+
+	it('scanf %c description shows character representation', () => {
+		const src = `int main() {
+	char c;
+	scanf("%c", &c);
+	return 0;
+}`;
+		const { program } = runWithStdin(src, '\n');
+		const scanfStep = program.steps.find(s => s.description?.includes('scanf'));
+		expect(scanfStep).toBeDefined();
+		expect(scanfStep!.evaluation).toContain("'\\n'");
+	});
+});
+
+describe('stdio — step descriptions', () => {
+	it('printf description shows output text', () => {
+		const src = `int main() { printf("hello %d", 42); return 0; }`;
+		const { program } = run(src);
+		const printfStep = program.steps.find(s => s.description?.includes('printf'));
+		expect(printfStep).toBeDefined();
+		expect(printfStep!.evaluation).toContain('hello 42');
+	});
+
+	it('puts description shows output text', () => {
+		const src = `int main() { puts("world"); return 0; }`;
+		const { program } = run(src);
+		const putsStep = program.steps.find(s => s.description?.includes('puts'));
+		expect(putsStep).toBeDefined();
+		expect(putsStep!.evaluation).toContain('world\\n');
+	});
 });
