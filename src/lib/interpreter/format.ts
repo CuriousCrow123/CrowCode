@@ -64,8 +64,9 @@ export type PrintfResult = {
 	warnings: string[];
 };
 
-/** Format a printf-style string with the given arguments. */
-export function applyPrintfFormat(format: string, args: number[]): PrintfResult {
+/** Format a printf-style string with the given arguments.
+ *  Args can be numbers or pre-resolved strings (for %s). */
+export function applyPrintfFormat(format: string, args: (number | string)[]): PrintfResult {
 	const tokens = parseFormatString(format);
 	const warnings: string[] = [];
 	let output = '';
@@ -94,38 +95,48 @@ export function applyPrintfFormat(format: string, args: number[]): PrintfResult 
 }
 
 /** Format a single value according to a specifier token. */
-function formatValue(val: number, token: FormatToken & { kind: 'specifier' }, warnings: string[]): string {
+function formatValue(val: number | string, token: FormatToken & { kind: 'specifier' }, warnings: string[]): string {
 	const { specifier, flags, width, precision } = token;
 	let result: string;
+
+	// Handle %s with pre-resolved string values
+	if (specifier === 's') {
+		if (typeof val === 'string') {
+			result = applyStringPrecision(val, precision);
+		} else if (val === 0) {
+			result = '(null)';
+		} else {
+			result = '(string)';
+		}
+		return applyWidthAndFlags(result, flags ?? '', width, specifier);
+	}
+
+	// All other specifiers expect numeric values
+	const num = typeof val === 'number' ? val : 0;
 
 	switch (specifier) {
 		case 'd':
 		case 'i':
-			result = String(Math.trunc(val));
+			result = String(Math.trunc(num));
 			break;
 		case 'u':
-			result = String(val < 0 ? (val >>> 0) : Math.trunc(val));
+			result = String(num < 0 ? (num >>> 0) : Math.trunc(num));
 			break;
 		case 'x':
-			result = (val < 0 ? (val >>> 0) : Math.trunc(val)).toString(16);
+			result = (num < 0 ? (num >>> 0) : Math.trunc(num)).toString(16);
 			break;
 		case 'X':
-			result = (val < 0 ? (val >>> 0) : Math.trunc(val)).toString(16).toUpperCase();
+			result = (num < 0 ? (num >>> 0) : Math.trunc(num)).toString(16).toUpperCase();
 			break;
 		case 'f':
 		case 'F':
-			result = val.toFixed(precision ?? 6);
+			result = num.toFixed(precision ?? 6);
 			break;
 		case 'c':
-			result = String.fromCharCode(val & 0xff);
-			break;
-		case 's':
-			// For the interpreter, string values are passed as address; display as (string)
-			// The actual string formatting is handled at a higher level with string resolution
-			result = '(string)';
+			result = String.fromCharCode(num & 0xff);
 			break;
 		case 'p':
-			result = '0x' + (val < 0 ? (val >>> 0) : val).toString(16);
+			result = '0x' + (num < 0 ? (num >>> 0) : num).toString(16);
 			break;
 		default:
 			result = `%${specifier}`;

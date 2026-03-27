@@ -95,6 +95,26 @@ describe('applyPrintfFormat', () => {
 			expect(applyPrintfFormat('%c', [65]).output).toBe('A');
 		});
 
+		it('%s with pre-resolved string', () => {
+			expect(applyPrintfFormat('%s', ['hello']).output).toBe('hello');
+		});
+
+		it('%s with NULL (0)', () => {
+			expect(applyPrintfFormat('%s', [0]).output).toBe('(null)');
+		});
+
+		it('%s with unresolved numeric address', () => {
+			expect(applyPrintfFormat('%s', [12345]).output).toBe('(string)');
+		});
+
+		it('%.3s truncates string', () => {
+			expect(applyPrintfFormat('%.3s', ['hello']).output).toBe('hel');
+		});
+
+		it('%s mixed with other specifiers', () => {
+			expect(applyPrintfFormat('name=%s, age=%d', ['Alice', 30]).output).toBe('name=Alice, age=30');
+		});
+
 		it('%f default precision', () => {
 			expect(applyPrintfFormat('%f', [3.14]).output).toBe('3.140000');
 		});

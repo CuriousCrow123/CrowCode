@@ -1,7 +1,7 @@
 import type { CType, CValue, ChildSpec } from './types';
 import { sizeOf, primitiveType, isStructType, isArrayType } from './types-c';
 import type { IoState } from './io-state';
-import { applyPrintfFormat } from './format';
+import { applyPrintfFormat, parseFormatString } from './format';
 
 export type StdlibHandler = (
 	name: string,
@@ -292,8 +292,8 @@ function handlePrintf(io: IoState | undefined, args: CValue[], mem?: MemoryAcces
 	const fmtStr = resolveStringArg(args[0], mem);
 	if (fmtStr === null) return { value: voidVal(), error: 'printf: first argument must be a string' };
 
-	const numericArgs = args.slice(1).map((a) => a.data ?? 0);
-	const { output } = applyPrintfFormat(fmtStr, numericArgs);
+	const resolvedArgs = resolvePrintfArgs(fmtStr, args.slice(1), mem);
+	const { output } = applyPrintfFormat(fmtStr, resolvedArgs);
 	io.writeStdout(output);
 	return ok(output.length);
 }
@@ -307,8 +307,8 @@ function handleFprintf(io: IoState | undefined, args: CValue[], mem?: MemoryAcce
 	const fmtStr = resolveStringArg(args[1], mem);
 	if (fmtStr === null) return ok(0);
 
-	const numericArgs = args.slice(2).map((a) => a.data ?? 0);
-	const { output } = applyPrintfFormat(fmtStr, numericArgs);
+	const resolvedArgs = resolvePrintfArgs(fmtStr, args.slice(2), mem);
+	const { output } = applyPrintfFormat(fmtStr, resolvedArgs);
 
 	if (stream === 2) {
 		io.writeStderr(output);
@@ -354,6 +354,28 @@ function handleGetchar(io: IoState | undefined): { value: CValue; error?: string
 	const result = io.readChar();
 	if (!result) return ok(-1);
 	return ok(result.value);
+}
+
+/** Resolve printf arguments, converting %s args to strings and others to numbers. */
+function resolvePrintfArgs(fmtStr: string, args: CValue[], mem?: MemoryAccess): (number | string)[] {
+	const tokens = parseFormatString(fmtStr);
+	const resolved: (number | string)[] = [];
+	let argIdx = 0;
+
+	for (const token of tokens) {
+		if (token.kind !== 'specifier') continue;
+		if (argIdx >= args.length) break;
+
+		if (token.specifier === 's') {
+			const str = resolveStringArg(args[argIdx], mem);
+			resolved.push(str ?? '(null)');
+		} else {
+			resolved.push(args[argIdx].data ?? 0);
+		}
+		argIdx++;
+	}
+
+	return resolved;
 }
 
 /** Resolve a CValue to a string (for format strings and string args).

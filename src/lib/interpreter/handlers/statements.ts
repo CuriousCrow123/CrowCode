@@ -1160,7 +1160,25 @@ export function evaluateSprintfResult(ctx: HandlerContext, call: ASTNode & { typ
 				const val = argResult.value?.data ?? 0;
 				switch (fmt[i]) {
 					case 'd': case 'i': result += String(val); break;
-					case 's': result += '(string)'; break;
+					case 's': {
+						// Resolve string from stringValue or memory
+						const strVal = argResult.value?.stringValue;
+						if (strVal !== undefined) {
+							result += strVal;
+						} else if (val !== 0) {
+							// Read from memory address
+							let str = '';
+							for (let j = 0; j < 10000; j++) {
+								const byte = ctx.memory.readMemory(val + j);
+								if (byte === undefined || byte === 0) break;
+								str += String.fromCharCode(byte);
+							}
+							result += str;
+						} else {
+							result += '(null)';
+						}
+						break;
+					}
 					case 'x': result += val.toString(16); break;
 					case 'c': result += String.fromCharCode(val); break;
 					default: result += `%${fmt[i]}`;
