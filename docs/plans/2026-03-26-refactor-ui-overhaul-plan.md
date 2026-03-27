@@ -1,7 +1,7 @@
 ---
 title: UI Overhaul — Unified Editor with Tabs and Persistent Code
 type: refactor
-status: active
+status: completed
 date: 2026-03-26
 deepened: 2026-03-26
 ---

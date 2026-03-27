@@ -1,7 +1,7 @@
 ---
 title: Manual Visual Test Suite — Full C Programs for Custom Tab
 type: test
-status: active
+status: completed
 date: 2026-03-26
 ---
 
