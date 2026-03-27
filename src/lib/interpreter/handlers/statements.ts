@@ -1113,21 +1113,36 @@ function executeGetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expr
 	const result = ctx.io.readUntilNewline();
 
 	if (!sharesStep) {
-		const desc = result
-			? `gets(${ctx.describeExpr(call.args[0])}) → read "${result.value}" (${result.value.length} bytes — gets is unsafe!)`
-			: `gets(${ctx.describeExpr(call.args[0])}) → EOF`;
-		ctx.memory.beginStep({ line }, desc);
+		ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
 		ctx.stepCount++;
 	}
 
-	if (!result) return; // EOF
+	if (!result) {
+		ctx.memory.updateStepDescription(formatPrintfDesc(ctx, call), '→ EOF');
+		return;
+	}
 
-	// Write to destination buffer (simplified: show as quoted string on heap entry)
+	// Write to destination buffer using writeStringToBuffer with overflow enabled
 	const destArg = call.args[0];
 	if (destArg.type === 'identifier') {
+		const writeResult = writeStringToBuffer(ctx, destArg.name, result.value, undefined, true);
+
+		// Enrich description
+		let evalText = `→ read "${result.value}" (${result.value.length} bytes)`;
+		if (writeResult.overflowVars.length > 0) {
+			evalText += ` — overflow! clobbered ${writeResult.overflowVars.join(', ')}`;
+		}
+		ctx.memory.updateStepDescription(`gets(${ctx.describeExpr(call.args[0])})`, evalText);
+
+		// Also set parent entry for summary display
 		const blockId = ctx.memory.getHeapBlockId(destArg.name);
 		if (blockId) {
 			ctx.memory.setValueById(blockId, `"${result.value}"`);
+		} else {
+			const varId = ctx.memory.getVarEntryId(destArg.name);
+			if (varId) {
+				ctx.memory.setValueById(varId, `"${result.value}"`);
+			}
 		}
 	}
 }
@@ -1225,9 +1240,10 @@ export function writeStringToBuffer(
 	destName: string,
 	str: string,
 	maxLen?: number,
-): { bytesWritten: number } {
+	allowOverflow?: boolean,
+): { bytesWritten: number; overflowVars: string[] } {
 	const cvalue = ctx.memory.lookupVariable(destName);
-	if (!cvalue) return { bytesWritten: 0 };
+	if (!cvalue) return { bytesWritten: 0, overflowVars: [] };
 
 	// Determine base address, array size, and entry ID
 	let baseAddr: number;
@@ -1242,7 +1258,7 @@ export function writeStringToBuffer(
 	} else {
 		// Pointer to heap block: data is the heap address
 		baseAddr = cvalue.data ?? 0;
-		if (baseAddr === 0) return { bytesWritten: 0 };
+		if (baseAddr === 0) return { bytesWritten: 0, overflowVars: [] };
 		const heapId = ctx.memory.getHeapBlockId(destName);
 		if (heapId) {
 			entryId = heapId;
@@ -1251,7 +1267,7 @@ export function writeStringToBuffer(
 		}
 	}
 
-	if (!entryId) return { bytesWritten: 0 };
+	if (!entryId) return { bytesWritten: 0, overflowVars: [] };
 
 	// Check if children exist (heap blocks may not have children if array inference didn't fire)
 	const hasChildren = ctx.memory.hasChildEntries(entryId);
@@ -1262,27 +1278,53 @@ export function writeStringToBuffer(
 			ctx.memory.writeMemory(baseAddr + i, str.charCodeAt(i));
 		}
 		ctx.memory.writeMemory(baseAddr + writeLen, 0);
-		return { bytesWritten: writeLen };
+		return { bytesWritten: writeLen, overflowVars: [] };
 	}
 
-	// Compute write limit
-	const limit = maxLen !== undefined ? Math.min(maxLen - 1, arraySize) : arraySize;
-	const writeLen = Math.min(str.length, limit);
+	// Compute write limit (for bounded writes)
+	const boundsLimit = maxLen !== undefined ? Math.min(maxLen - 1, arraySize) : arraySize;
+	// For overflow: write up to str.length, capped at 256 past array end
+	const maxOverflow = allowOverflow ? Math.min(str.length, arraySize + 256) : boundsLimit;
+	const writeLen = Math.min(str.length, maxOverflow);
+	const overflowVars: string[] = [];
 
 	// Write each byte with setValue ops
 	for (let i = 0; i < writeLen; i++) {
 		const charCode = str.charCodeAt(i);
 		ctx.memory.writeMemory(baseAddr + i, charCode);
-		ctx.memory.setValueById(`${entryId}-${i}`, String(charCode));
+
+		if (i < arraySize) {
+			// Within bounds: update own children
+			ctx.memory.setValueById(`${entryId}-${i}`, String(charCode));
+		} else if (allowOverflow) {
+			// Overflow: find adjacent variable at this address
+			const target = ctx.memory.findEntryIdAtAddress(baseAddr + i);
+			if (target) {
+				if (!overflowVars.includes(target.varName)) {
+					overflowVars.push(target.varName);
+				}
+				if (isArrayCType(cvalue.type) || target.elemSize === 1) {
+					// Array child: emit setValue on the child entry
+					const childIdx = Math.floor(target.offset / target.elemSize);
+					ctx.memory.setValueById(`${target.entryId}-${childIdx}`, String(charCode));
+				} else {
+					// Scalar variable: overwrite its value
+					ctx.memory.setValueById(target.entryId, String(charCode));
+				}
+			}
+		}
 	}
 
 	// Write null terminator
-	if (writeLen < arraySize) {
-		ctx.memory.writeMemory(baseAddr + writeLen, 0);
-		ctx.memory.setValueById(`${entryId}-${writeLen}`, '0');
+	const nullPos = writeLen;
+	if (nullPos < arraySize) {
+		ctx.memory.writeMemory(baseAddr + nullPos, 0);
+		ctx.memory.setValueById(`${entryId}-${nullPos}`, '0');
+	} else if (allowOverflow) {
+		ctx.memory.writeMemory(baseAddr + nullPos, 0);
 	}
 
-	return { bytesWritten: writeLen };
+	return { bytesWritten: writeLen, overflowVars };
 }
 
 export function updateHeapChildrenFromMemory(ctx: HandlerContext, destArg: ASTNode): void {

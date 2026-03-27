@@ -965,6 +965,25 @@ export class Memory implements MemoryReader {
 		this.heapEntryByPointer.set(varName, blockId);
 	}
 
+	/** Find which variable/entry owns a given memory address. For overflow visualization. */
+	findEntryIdAtAddress(address: number): { varName: string; entryId: string; offset: number; elemSize: number } | undefined {
+		// Search current scope's variables
+		for (const scope of this.scopes) {
+			for (const [name, cvalue] of scope.symbols) {
+				const varSize = sizeOf(cvalue.type);
+				if (varSize <= 0) continue;
+				if (address >= cvalue.address && address < cvalue.address + varSize) {
+					const offset = address - cvalue.address;
+					const entryId = this.entryIdByVar.get(name);
+					if (!entryId) continue;
+					const elemSize = isArrayType(cvalue.type) ? sizeOf(cvalue.type.elementType) : varSize;
+					return { varName: name, entryId, offset, elemSize };
+				}
+			}
+		}
+		return undefined;
+	}
+
 	hasChildEntries(parentId: string): boolean {
 		const children = this.childEntriesById.get(parentId);
 		return children !== undefined && children.size > 0;
