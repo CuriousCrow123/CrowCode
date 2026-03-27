@@ -57,7 +57,18 @@ export class Interpreter {
 		this.memory = new Memory('Custom Program', source, maxHeap);
 		this.typeReg = new TypeRegistry();
 		this.io = new IoState(opts?.stdin ?? '');
-		this.memory.setIoEventsFlusher(() => this.io.flushEvents());
+		this.memory.setIoEventsFlusher(() => {
+			const events = this.io.flushEvents();
+			// Add/update stdin buffer entry in memory view when reads occur
+			if (events) {
+				const hasReads = events.some((e) => e.kind === 'read');
+				if (hasReads) {
+					this.memory.addStdinEntry(this.io.getStdinFull());
+					this.memory.updateStdinCursor(this.io.getStdinPos(), this.io.getStdinFull());
+				}
+			}
+			return events;
+		});
 
 		const memAccess = {
 			read: (addr: number) => this.memory.readMemory(addr),

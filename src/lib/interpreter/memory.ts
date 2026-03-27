@@ -32,6 +32,15 @@ export function formatAddress(address: number): string {
 	return '0x' + address.toString(16).padStart(8, '0');
 }
 
+/** Format stdin buffer for display: consumed text, cursor marker, remaining text. */
+function formatStdinDisplay(fullBuffer: string, cursorPos: number): string {
+	const consumed = fullBuffer.slice(0, cursorPos).replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+	const remaining = fullBuffer.slice(cursorPos).replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+	if (cursorPos === 0) return remaining;
+	if (cursorPos >= fullBuffer.length) return consumed + ' (exhausted)';
+	return consumed + '|' + remaining;
+}
+
 // === ScopeFrame ===
 
 type ScopeFrame = {
@@ -86,6 +95,7 @@ export class Memory implements MemoryReader {
 
 	// === Heap container tracking ===
 	private heapContainerAdded = false;
+	private stdinEntryAdded = false;
 
 	// === Heap block address → ID mapping ===
 	private heapBlockAddresses = new Map<string, number>();
@@ -963,6 +973,32 @@ export class Memory implements MemoryReader {
 
 	setPointerTarget(varName: string, blockId: string): void {
 		this.heapEntryByPointer.set(varName, blockId);
+	}
+
+	// === stdin buffer entry ===
+
+	addStdinEntry(buffer: string): void {
+		if (this.stdinEntryAdded || buffer.length === 0) return;
+		this.stdinEntryAdded = true;
+		const display = formatStdinDisplay(buffer, 0);
+		this.addOp({
+			op: 'addEntry',
+			parentId: null,
+			entry: {
+				id: 'stdin',
+				name: 'stdin',
+				type: 'char[]',
+				value: display,
+				address: '',
+				kind: 'io',
+			},
+		});
+	}
+
+	updateStdinCursor(cursorPos: number, fullBuffer: string): void {
+		if (!this.stdinEntryAdded) return;
+		const display = formatStdinDisplay(fullBuffer, cursorPos);
+		this.addOp({ op: 'setValue', id: 'stdin', value: display });
 	}
 
 	/** Find which variable/entry owns a given memory address. For overflow visualization. */
