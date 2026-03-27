@@ -143,6 +143,7 @@
 		const prog = testPrograms.find((p) => p.id === id);
 		if (prog) {
 			store.updateSource(store.active, prog.source);
+			stdinInput = prog.stdin ?? '';
 			runCache.delete(store.active);
 			mode = { state: 'editing' };
 			errors = [];

@@ -4,6 +4,7 @@ export interface TestProgram {
 	name: string;
 	category: string;
 	source: string;
+	stdin?: string;
 }
 
 export const testPrograms: TestProgram[] = [
@@ -782,6 +783,65 @@ int main() {
     // Clean up both allocations
     free(player->scores);
     free(player);
+    return 0;
+}`,
+	},
+
+	// Category: stdio
+	{
+		id: 'p16.1', category: 'stdio', name: 'Basic printf',
+		source: `#include <stdio.h>
+
+int main() {
+    int x = 42;
+    int y = -7;
+    printf("x = %d\\n", x);
+    printf("y = %d, hex = %x\\n", y, y);
+    printf("sum = %d\\n", x + y);
+    return 0;
+}`,
+	},
+	{
+		id: 'p16.2', category: 'stdio', name: 'puts and putchar',
+		source: `#include <stdio.h>
+
+int main() {
+    puts("Hello, World!");
+    putchar('A');
+    putchar('\\n');
+    puts("Done.");
+    return 0;
+}`,
+	},
+	{
+		id: 'p16.3', category: 'stdio', name: 'getchar Loop',
+		source: `#include <stdio.h>
+
+int main() {
+    int c;
+    int count = 0;
+    c = getchar();
+    while (c != -1) {
+        count++;
+        c = getchar();
+    }
+    return 0;
+}`,
+		stdin: 'Hello\n',
+	},
+	{
+		id: 'p16.4', category: 'stdio', name: 'printf Format Specifiers',
+		source: `#include <stdio.h>
+
+int main() {
+    int i = 255;
+    printf("decimal: %d\\n", i);
+    printf("hex:     %x\\n", i);
+    printf("HEX:     %X\\n", i);
+    printf("char:    %c\\n", 65);
+    printf("padded:  %05d\\n", 42);
+    printf("left:    %-10d|\\n", 42);
+    printf("percent: 100%%\\n");
     return 0;
 }`,
 	},
