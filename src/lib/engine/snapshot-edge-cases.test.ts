@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { applyOps, buildSnapshots, indexById } from './snapshot';
-import type { MemoryEntry, Program } from '$lib/api/types';
+import type { MemoryEntry, Program } from '$lib/types';
 
 function entry(id: string, name: string, value: string = '', children?: MemoryEntry[]): MemoryEntry {
 	return { id, name, type: 'int', value, address: '0x00', children };

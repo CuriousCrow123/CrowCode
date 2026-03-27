@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { buildSnapshots } from './snapshot';
 import { diffSnapshots } from './diff';
 import { getVisibleIndices, nearestVisibleIndex } from './navigation';
-import type { MemoryEntry, Program, ProgramStep } from '$lib/api/types';
+import type { MemoryEntry, Program, ProgramStep } from '$lib/types';
 
 function entry(id: string, value: string = '', opts: Partial<MemoryEntry> = {}): MemoryEntry {
 	return { id, name: id, type: 'int', value, address: '0x00', ...opts };

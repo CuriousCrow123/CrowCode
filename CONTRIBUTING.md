@@ -18,7 +18,7 @@ The dev server runs at `localhost:5173/CrowCode` (not `/`) because of the GitHub
 ## Running Tests
 
 ```bash
-npm test                            # all 600+ tests
+npm test                            # all ~600 tests
 npm run test:watch                  # watch mode
 npx vitest run src/lib/engine/      # target a directory
 npx vitest run src/lib/interpreter/evaluator.test.ts  # single file

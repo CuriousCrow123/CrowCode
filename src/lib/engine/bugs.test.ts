@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getVisibleIndices, nearestVisibleIndex } from './navigation';
-import type { ProgramStep } from '$lib/api/types';
+import type { ProgramStep } from '$lib/types';
 
 function step(line: number, subStep?: boolean): ProgramStep {
 	return { location: { line }, ops: [], subStep };

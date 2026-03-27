@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { diffSnapshots } from './diff';
-import type { MemoryEntry } from '$lib/api/types';
+import type { MemoryEntry } from '$lib/types';
 
 function entry(id: string, value: string, children?: MemoryEntry[]): MemoryEntry {
 	return { id, name: id, type: 'int', value, address: '0x00', children };

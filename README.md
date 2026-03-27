@@ -35,7 +35,7 @@ Open [localhost:5173/CrowCode](http://localhost:5173/CrowCode) in your browser.
 npm run dev        # Dev server at localhost:5173/CrowCode
 npm run build      # Static build to build/
 npm run preview    # Preview the static build
-npm test           # Run all tests (600+ via Vitest)
+npm test           # Run all tests (~600 via Vitest)
 npm run test:watch # Watch mode
 npm run check      # TypeScript + Svelte type verification
 ```
@@ -44,8 +44,6 @@ npm run check      # TypeScript + Svelte type verification
 
 ```
 C source code ──→ tree-sitter parser ──→ AST ──→ interpreter ──→ Program
-                                                                    │
-Pre-authored programs (TypeScript) ─────────────────────────────────┘
                                                                     │
                                                                     ▼
                                                             buildSnapshots()

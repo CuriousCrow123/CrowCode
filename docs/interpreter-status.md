@@ -324,6 +324,6 @@ Engine subtotal: **98 tests**
 | `snapshot-regression.test.ts` | 34 | Regression safety net: 7 programs captured before Memory refactor |
 | `worker.test.ts` | 6 | Worker message contract |
 | `value-correctness.test.ts` | 198 | Value assertions: scalars, structs, arrays, pointers, functions, control flow, sprintf, bounds checking, sub-steps, edge cases, BUG-1 through BUG-7 regressions |
-| `manual-programs.test.ts` | 60 | 37 full C programs through complete pipeline (parse → interpret → validate → buildSnapshots → verify values) |
+| `manual-programs.test.ts` | 60 | 44 full C programs through complete pipeline (parse → interpret → validate → buildSnapshots → verify values) |
 
 Interpreter subtotal: **501 tests**

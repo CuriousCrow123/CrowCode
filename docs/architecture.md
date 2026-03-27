@@ -14,11 +14,7 @@
 
 CrowCode is an interactive C memory visualizer. Users step through C programs and see the memory layout change at each instruction — stack frames, local variables, heap allocations, and scope lifecycle.
 
-Programs can come from two sources:
-1. **Pre-authored** — TypeScript files in `src/lib/programs/` that define steps manually using builder helpers
-2. **Custom** — C source code written by the user in the Custom tab, parsed and interpreted via tree-sitter in the browser
-
-Both produce the same `Program` type. From there, the pipeline is identical.
+Users write C code in the editor. The interpreter (tree-sitter parser + AST walker) converts it into a `Program` — a list of steps with ops that describe memory changes. The engine pre-computes all snapshots, and the UI renders them.
 
 ### Principles
 
@@ -34,8 +30,6 @@ Both produce the same `Program` type. From there, the pipeline is identical.
 
 ```
 C source code ──→ tree-sitter ──→ AST ──→ Interpreter ──→ Program
-                                                              │
-Pre-authored programs (TypeScript) ───────────────────────────┘
                                                               │
                                                               ▼
                                                       buildSnapshots()
@@ -100,10 +94,10 @@ src/lib/
 │   ├── MemoryRow.svelte            Single variable row (name, type, value, address)
 │   ├── DrilldownModal.svelte       Modal for navigating into nested structs/arrays
 │   ├── EditorTabs.svelte           Tab bar for switching between programs
-│   └── CustomEditor.svelte         C code editor with test program dropdown and Run button
+│   └── constants.ts                Shared constants (MAX_VALUE_LENGTH)
 ├── stores/
 │   └── editor-tabs.svelte.ts       Multi-tab state, localStorage persistence, run cache
-├── test-programs.ts                26 test programs for Custom tab dropdown
+├── test-programs.ts                39 test programs for the editor dropdown
 ├── summary.ts                      Computes display summaries for nested values
 └── types.ts                        Re-exports from api/types.ts
 ```
@@ -419,7 +413,7 @@ npm run test:watch # watch mode
 - **snapshot-regression.test.ts** — Regression safety net (7 programs captured before Memory refactor)
 - **worker.test.ts** — Worker message contract
 - **value-correctness.test.ts** — Value assertions across all features
-- **manual-programs.test.ts** — 38 full C programs through complete pipeline
+- **manual-programs.test.ts** — 44 full C programs through complete pipeline
 
 ### Adding tests
 

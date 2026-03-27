@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateProgram } from './validate';
-import type { Program, MemoryEntry } from '$lib/api/types';
+import type { Program, MemoryEntry } from '$lib/types';
 
 function entry(id: string, name: string, address: string = '0x00'): MemoryEntry {
 	return { id, name, type: 'int', value: '0', address };
