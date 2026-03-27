@@ -688,6 +688,7 @@ export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type
 		return;
 	}
 
+	// sprintf: keep existing behavior (writes quoted string to heap entry)
 	if (call.callee === 'sprintf' && call.args.length >= 2) {
 		const destResult = ctx.evaluator.eval(call.args[0]);
 		const formatted = evaluateSprintfResult(ctx, call);
@@ -709,11 +710,25 @@ export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type
 		return;
 	}
 
-	if (call.callee === 'printf' || call.callee === 'puts') {
+	// I/O output functions: create a step and evaluate through stdlib (triggers IoState)
+	if (isStdioOutputFunction(call.callee)) {
 		if (!sharesStep) {
 			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
 			ctx.stepCount++;
 		}
+		const result = ctx.evaluator.eval(call);
+		if (result.error) ctx.errors.push(result.error);
+		return;
+	}
+
+	// I/O input functions: create a step and evaluate through stdlib (triggers IoState)
+	if (isStdioInputFunction(call.callee)) {
+		if (!sharesStep) {
+			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+			ctx.stepCount++;
+		}
+		const result = ctx.evaluator.eval(call);
+		if (result.error) ctx.errors.push(result.error);
 		return;
 	}
 
@@ -850,6 +865,26 @@ export function formatMallocArgs(ctx: HandlerContext, call: ASTNode & { type: 'c
 export function formatPrintfDesc(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }): string {
 	const args = call.args.map((a) => ctx.describeExpr(a)).join(', ');
 	return `${call.callee}(${args})`;
+}
+
+const STDIO_OUTPUT_FUNCTIONS = new Set([
+	'printf', 'fprintf', 'puts', 'putchar', 'fputs',
+]);
+
+const STDIO_INPUT_FUNCTIONS = new Set([
+	'scanf', 'getchar', 'fgets', 'gets',
+]);
+
+export function isStdioOutputFunction(name: string): boolean {
+	return STDIO_OUTPUT_FUNCTIONS.has(name);
+}
+
+export function isStdioInputFunction(name: string): boolean {
+	return STDIO_INPUT_FUNCTIONS.has(name);
+}
+
+export function isStdioFunction(name: string): boolean {
+	return STDIO_OUTPUT_FUNCTIONS.has(name) || STDIO_INPUT_FUNCTIONS.has(name);
 }
 
 /** Returns true when the assignment result isn't obvious from the description alone. */

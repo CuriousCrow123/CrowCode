@@ -1,5 +1,7 @@
 import type { CType, CValue, ChildSpec } from './types';
 import { sizeOf, primitiveType, isStructType, isArrayType } from './types-c';
+import type { IoState } from './io-state';
+import { applyPrintfFormat } from './format';
 
 export type StdlibHandler = (
 	name: string,
@@ -21,6 +23,7 @@ export interface StdlibEnv {
 export function createStdlib(
 	env: StdlibEnv,
 	mem?: MemoryAccess,
+	io?: IoState,
 ): StdlibHandler {
 	return (name: string, args: CValue[], line: number) => {
 		switch (name) {
@@ -31,11 +34,21 @@ export function createStdlib(
 			case 'free':
 				return handleFree(env, args, line);
 			case 'printf':
-			case 'sprintf':
+				return handlePrintf(io, args, mem);
 			case 'fprintf':
+				return handleFprintf(io, args, mem);
 			case 'puts':
+				return handlePuts(io, args, mem);
 			case 'putchar':
-				// I/O functions are no-ops
+				return handlePutchar(io, args);
+			case 'fputs':
+				return handleFputs(io, args, mem);
+			case 'getchar':
+				return handleGetchar(io);
+			case 'sprintf':
+			case 'snprintf':
+				// sprintf/snprintf are handled at the interpreter level
+				// because they need to emit setValue ops on the destination array
 				return ok(0);
 			case 'sizeof':
 				return ok(args[0]?.data ?? 0);
@@ -268,6 +281,100 @@ function handleStrcat(mem: MemoryAccess | undefined, args: CValue[]): { value: C
 		i++;
 	}
 	return ptrVal(dst);
+}
+
+// === I/O output functions ===
+
+function handlePrintf(io: IoState | undefined, args: CValue[], mem?: MemoryAccess): { value: CValue; error?: string } {
+	if (!io) return ok(0);
+	if (args.length === 0) return { value: voidVal(), error: 'printf: requires at least one argument' };
+
+	const fmtStr = resolveStringArg(args[0], mem);
+	if (fmtStr === null) return { value: voidVal(), error: 'printf: first argument must be a string' };
+
+	const numericArgs = args.slice(1).map((a) => a.data ?? 0);
+	const { output } = applyPrintfFormat(fmtStr, numericArgs);
+	io.writeStdout(output);
+	return ok(output.length);
+}
+
+function handleFprintf(io: IoState | undefined, args: CValue[], mem?: MemoryAccess): { value: CValue; error?: string } {
+	if (!io) return ok(0);
+	if (args.length < 2) return { value: voidVal(), error: 'fprintf: requires at least two arguments' };
+
+	// First arg is the stream (1 = stdout, 2 = stderr in our model)
+	const stream = args[0]?.data ?? 1;
+	const fmtStr = resolveStringArg(args[1], mem);
+	if (fmtStr === null) return ok(0);
+
+	const numericArgs = args.slice(2).map((a) => a.data ?? 0);
+	const { output } = applyPrintfFormat(fmtStr, numericArgs);
+
+	if (stream === 2) {
+		io.writeStderr(output);
+	} else {
+		io.writeStdout(output);
+	}
+	return ok(output.length);
+}
+
+function handlePuts(io: IoState | undefined, args: CValue[], mem?: MemoryAccess): { value: CValue; error?: string } {
+	if (!io) return ok(0);
+	const str = resolveStringArg(args[0], mem);
+	const output = (str ?? '') + '\n';
+	io.writeStdout(output);
+	return ok(1); // puts returns non-negative on success
+}
+
+function handlePutchar(io: IoState | undefined, args: CValue[]): { value: CValue; error?: string } {
+	if (!io) return ok(0);
+	const ch = args[0]?.data ?? 0;
+	io.writeStdout(String.fromCharCode(ch & 0xff));
+	return ok(ch & 0xff);
+}
+
+function handleFputs(io: IoState | undefined, args: CValue[], mem?: MemoryAccess): { value: CValue; error?: string } {
+	if (!io) return ok(0);
+	const str = resolveStringArg(args[0], mem);
+	if (str === null) return ok(0);
+	// Second arg is stream (1 = stdout, 2 = stderr)
+	const stream = args[1]?.data ?? 1;
+	if (stream === 2) {
+		io.writeStderr(str);
+	} else {
+		io.writeStdout(str);
+	}
+	return ok(1);
+}
+
+// === I/O input functions ===
+
+function handleGetchar(io: IoState | undefined): { value: CValue; error?: string } {
+	if (!io || io.isExhausted()) return ok(-1); // EOF
+	const result = io.readChar();
+	if (!result) return ok(-1);
+	return ok(result.value);
+}
+
+/** Resolve a CValue to a string (for format strings and string args).
+ *  Handles string literals (via stringValue field) and char* pointers (via memory reads). */
+function resolveStringArg(arg: CValue | undefined, mem?: MemoryAccess): string | null {
+	if (!arg) return null;
+	// String literals carry their value directly
+	if (arg.stringValue !== undefined) return arg.stringValue;
+	// Char pointers: read from memory until null terminator
+	if (arg.data && mem) {
+		let str = '';
+		let addr = arg.data;
+		const maxLen = 10000;
+		for (let i = 0; i < maxLen; i++) {
+			const byte = mem.read(addr + i);
+			if (byte === undefined || byte === 0) break;
+			str += String.fromCharCode(byte);
+		}
+		return str;
+	}
+	return null;
 }
 
 // === Math functions ===

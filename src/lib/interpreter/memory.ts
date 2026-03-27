@@ -6,6 +6,7 @@ import type {
 	ScopeInfo,
 	HeapInfo,
 	Program,
+	IoEvent,
 } from '$lib/types';
 import type { CType, CValue, ChildSpec, ParamSpec, ASTNode, HeapBlock } from './types';
 import { sizeOf, alignOf, defaultValue, typeToString, isStructType, isArrayType } from './types-c';
@@ -95,6 +96,7 @@ export class Memory implements MemoryReader {
 	private steps: ProgramStep[] = [];
 	private currentStep: ProgramStep | null = null;
 	private errors: string[] = [];
+	private ioEventsFlusher: (() => IoEvent[] | undefined) | null = null;
 
 	// === Program metadata ===
 	private programName: string;
@@ -109,6 +111,10 @@ export class Memory implements MemoryReader {
 	// ========================================
 	// Step lifecycle
 	// ========================================
+
+	setIoEventsFlusher(flusher: () => IoEvent[] | undefined): void {
+		this.ioEventsFlusher = flusher;
+	}
 
 	beginStep(location: SourceLocation, description?: string, evaluation?: string): void {
 		this.flushStep();
@@ -128,6 +134,12 @@ export class Memory implements MemoryReader {
 
 	flushStep(): void {
 		if (this.currentStep) {
+			if (this.ioEventsFlusher) {
+				const events = this.ioEventsFlusher();
+				if (events) {
+					this.currentStep.ioEvents = events;
+				}
+			}
 			this.steps.push(this.currentStep);
 		}
 		this.currentStep = null;

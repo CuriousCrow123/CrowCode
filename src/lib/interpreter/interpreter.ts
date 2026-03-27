@@ -7,6 +7,7 @@ import {
 	isFunctionPointerType,
 } from './types-c';
 import { createStdlib } from './stdlib';
+import { IoState } from './io-state';
 import type { Program } from '$lib/types';
 import type { HandlerContext } from './handlers/types';
 import {
@@ -35,6 +36,7 @@ export class Interpreter {
 	private memory: Memory;
 	private evaluator: Evaluator;
 	private typeReg: TypeRegistry;
+	private io: IoState;
 	private errors: string[] = [];
 	private stepCount = 0;
 	private frameDepth = 0;
@@ -54,16 +56,21 @@ export class Interpreter {
 
 		this.memory = new Memory('Custom Program', source, maxHeap);
 		this.typeReg = new TypeRegistry();
+		this.io = new IoState(opts?.stdin ?? '');
+		this.memory.setIoEventsFlusher(() => this.io.flushEvents());
+
+		const memAccess = {
+			read: (addr: number) => this.memory.readMemory(addr),
+			write: (addr: number, val: number) => this.memory.writeMemory(addr, val),
+		};
 
 		const stdlib = createStdlib(
 			{
 				malloc: (size, allocator, line) => this.memory.mallocRuntime(size, allocator, line),
 				free: (address) => this.memory.freeByAddress(address),
 			},
-			{
-				read: (addr) => this.memory.readMemory(addr),
-				write: (addr, val) => this.memory.writeMemory(addr, val),
-			},
+			memAccess,
+			this.io,
 		);
 
 		this.evaluator = new Evaluator(this.memory, this.typeReg, (name, args, line, colStart, colEnd) => {

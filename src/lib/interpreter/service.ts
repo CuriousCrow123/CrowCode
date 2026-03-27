@@ -32,14 +32,14 @@ async function getParser(): Promise<ParserType> {
  * Lazy-loaded interpreter service.
  * Initializes tree-sitter on first call, caches parser for subsequent calls.
  */
-export async function runProgram(source: string): Promise<RunResult> {
+export async function runProgram(source: string, stdin?: string): Promise<RunResult> {
 	const p = await getParser();
 	const { interpretSync } = await import('$lib/interpreter/index');
 
 	// Yield to let browser paint before blocking
 	await new Promise((resolve) => requestAnimationFrame(resolve));
 
-	const result = interpretSync(p, source, { maxSteps: MAX_STEPS });
+	const result = interpretSync(p, source, { maxSteps: MAX_STEPS, stdin });
 
 	const warnings: string[] = [];
 	if (result.program.steps.length >= MAX_STEPS) {

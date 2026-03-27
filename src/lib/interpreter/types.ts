@@ -14,6 +14,7 @@ export type CValue = {
 	data: number | null;
 	address: number;
 	initialized?: boolean;
+	stringValue?: string;
 };
 
 // === Child Specification (for emitter) ===

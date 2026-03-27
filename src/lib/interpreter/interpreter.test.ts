@@ -2,8 +2,10 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { Parser, Language } from 'web-tree-sitter';
 import { resolve } from 'path';
 import { interpretSync, resetParserCache } from './index';
+import type { InterpreterOptions } from './types';
 import { validateProgram } from '$lib/engine/validate';
 import { buildSnapshots } from '$lib/engine/snapshot';
+import { buildConsoleOutputs } from '$lib/engine/console';
 import type { Program, ProgramStep, MemoryEntry } from '$lib/types';
 
 let parser: Parser;
@@ -537,5 +539,90 @@ describe('variable shadowing across scopes', () => {
 		const snapshots = buildSnapshots(program);
 		const last = snapshots[snapshots.length - 1];
 		expect(findEntry(last, 'x')?.value).toBe('30');
+	});
+});
+
+// === stdio integration tests ===
+
+function runWithStdin(source: string, stdin: string, opts?: { maxSteps?: number }) {
+	return interpretSync(parser, source, { ...opts, stdin });
+}
+
+describe('stdio — printf', () => {
+	it('printf step has ioEvent with stdout text', () => {
+		const src = `int main() { printf("hi %d", 3); return 0; }`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		const printfStep = program.steps.find((s) =>
+			s.ioEvents?.some((e) => e.kind === 'write')
+		);
+		expect(printfStep).toBeDefined();
+		expect(printfStep!.ioEvents![0]).toMatchObject({ kind: 'write', target: 'stdout', text: 'hi 3' });
+	});
+
+	it('non-I/O steps have no ioEvents', () => {
+		const src = `int main() { int x = 5; return 0; }`;
+		const { program } = run(src);
+		const ioSteps = program.steps.filter((s) => s.ioEvents && s.ioEvents.length > 0);
+		expect(ioSteps).toHaveLength(0);
+	});
+
+	it('cumulative stdout across multiple printf calls', () => {
+		const src = `int main() { printf("a"); printf("b"); printf("c"); return 0; }`;
+		const { program } = run(src);
+		const outputs = buildConsoleOutputs(program.steps);
+		expect(outputs[outputs.length - 1]).toContain('abc');
+	});
+
+	it('puts appends newline', () => {
+		const src = `int main() { puts("hello"); return 0; }`;
+		const { program } = run(src);
+		const putsStep = program.steps.find((s) =>
+			s.ioEvents?.some((e) => e.kind === 'write' && e.text === 'hello\n')
+		);
+		expect(putsStep).toBeDefined();
+	});
+
+	it('printf with format specifiers', () => {
+		const src = `int main() {
+	int x = 42;
+	printf("x=%d, hex=%x", x, x);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		const outputs = buildConsoleOutputs(program.steps);
+		expect(outputs[outputs.length - 1]).toContain('x=42, hex=2a');
+	});
+
+	it('printf with no args still creates valid step', () => {
+		const src = `int main() { printf("hello world"); return 0; }`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+});
+
+describe('stdio — scanf', () => {
+	it('getchar reads from stdin', () => {
+		const src = `int main() { int c = getchar(); return 0; }`;
+		const { program, errors } = runWithStdin(src, 'A');
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		// getchar returns the char value, which is used in the declaration
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		const c = findEntry(last, 'c');
+		expect(c?.value).toBe('65');
+	});
+
+	it('getchar returns -1 on empty stdin', () => {
+		const src = `int main() { int c = getchar(); return 0; }`;
+		const { program, errors } = runWithStdin(src, '');
+		expect(errors).toHaveLength(0);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		const c = findEntry(last, 'c');
+		expect(c?.value).toBe('-1');
 	});
 });
