@@ -1,7 +1,7 @@
 ---
 title: Organize src/ and docs/ Directories
 type: refactor
-status: active
+status: completed
 date: 2026-03-27
 ---
 
