@@ -1,5 +1,5 @@
 import type { CType, CValue, ChildSpec } from './types';
-import { TypeRegistry, sizeOf, primitiveType, isStructType, isArrayType } from './types-c';
+import { sizeOf, primitiveType, isStructType, isArrayType } from './types-c';
 
 export type StdlibHandler = (
 	name: string,
@@ -20,15 +20,14 @@ export interface StdlibEnv {
 
 export function createStdlib(
 	env: StdlibEnv,
-	typeReg: TypeRegistry,
 	mem?: MemoryAccess,
 ): StdlibHandler {
 	return (name: string, args: CValue[], line: number) => {
 		switch (name) {
 			case 'malloc':
-				return handleMalloc(env, typeReg, args, line);
+				return handleMalloc(env, args, line);
 			case 'calloc':
-				return handleCalloc(env, typeReg, args, line);
+				return handleCalloc(env, args, line);
 			case 'free':
 				return handleFree(env, args, line);
 			case 'printf':
@@ -62,7 +61,6 @@ export function createStdlib(
 
 function handleMalloc(
 	env: StdlibEnv,
-	typeReg: TypeRegistry,
 	args: CValue[],
 	line: number,
 ): { value: CValue; error?: string } {
@@ -82,7 +80,6 @@ function handleMalloc(
 
 function handleCalloc(
 	env: StdlibEnv,
-	typeReg: TypeRegistry,
 	args: CValue[],
 	line: number,
 ): { value: CValue; error?: string } {

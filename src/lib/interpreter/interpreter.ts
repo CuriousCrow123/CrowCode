@@ -60,7 +60,6 @@ export class Interpreter {
 				malloc: (size, allocator, line) => this.memory.mallocRuntime(size, allocator, line),
 				free: (address) => this.memory.freeByAddress(address),
 			},
-			this.typeReg,
 			{
 				read: (addr) => this.memory.readMemory(addr),
 				write: (addr, val) => this.memory.writeMemory(addr, val),
