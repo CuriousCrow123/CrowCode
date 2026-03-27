@@ -63,21 +63,24 @@ src/lib/
 │   └── bugs.test.ts                Regression: visiblePosition = -1
 ├── interpreter/
 │   ├── parser.ts                   tree-sitter C → AST conversion
+│   ├── memory.ts                   Unified runtime state + op recording (replaces env+emitter)
 │   ├── evaluator.ts                Expression evaluation (arithmetic, pointers, casts)
 │   ├── interpreter.ts              Statement execution, control flow, memory management
-│   ├── emitter.ts                  Step/op emission, ID generation, path resolution
-│   ├── environment.ts              Scope chain, stack/heap allocation, function table
+│   ├── emitter.ts                  (legacy) Step/op emission — retained for tests
+│   ├── environment.ts              (legacy) Scope chain, stack/heap allocation — retained for tests
 │   ├── types.ts                    AST node types, interpreter options
 │   ├── types-c.ts                  C type system (primitives, pointers, arrays, structs)
 │   ├── stdlib.ts                   Standard library functions (malloc, calloc, free, etc.)
 │   ├── worker.ts                   Web Worker entry for async interpretation
 │   ├── index.ts                    Barrel export (interpretSync, resetParserCache)
+│   ├── memory.test.ts              Unified Memory class tests (41 scenarios)
+│   ├── snapshot-regression.test.ts Regression safety net for refactor (7 programs)
 │   ├── parser.test.ts              AST conversion for all node types
 │   ├── evaluator.test.ts           Expression evaluation, operators, 32-bit semantics
 │   ├── interpreter.test.ts         Statement handling, stdlib, validation, integration
-│   ├── environment.test.ts         Scope chain, stack/heap allocation
+│   ├── environment.test.ts         (legacy) Scope chain, stack/heap allocation
 │   ├── types-c.test.ts             Type sizes, alignment, struct layout
-│   ├── emitter.test.ts             Op emission, ID generation, path resolution
+│   ├── emitter.test.ts             (legacy) Op emission, ID generation, path resolution
 │   ├── worker.test.ts              Worker message contract
 │   ├── value-correctness.test.ts   Value assertions across all features (~130 tests)
 │   └── manual-programs.test.ts     Full-program integration (38 programs, 60 tests)
@@ -121,9 +124,8 @@ C source string
       ▼
   interpreter.ts: interpretAST()   ← walks AST, executes statements
       │
+      ├── memory.ts                ← unified runtime state + op recording
       ├── evaluator.ts             ← evaluates expressions (arithmetic, pointers)
-      ├── emitter.ts               ← emits steps and ops (addEntry, setValue, etc.)
-      ├── environment.ts           ← tracks scopes, variables, stack/heap addresses
       ├── types-c.ts               ← C type system (sizeof, alignment, struct layout)
       └── stdlib.ts                ← malloc, calloc, free, sprintf
       │
@@ -138,13 +140,13 @@ C source string
 
 **Parser** (`parser.ts`): Converts tree-sitter's concrete syntax tree to a simplified AST. Handles: function/struct definitions, declarations, assignments, expressions (binary, unary, call, member, subscript, cast, sizeof, ternary, comma), control flow (if/else, for, while, do-while, break, continue, return). Stores column ranges for condition highlighting.
 
-**Evaluator** (`evaluator.ts`): Pure expression evaluation. Handles all operators (arithmetic, comparison, logical with short-circuit, bitwise), pointer arithmetic with element-size scaling, dereference with memReader, cast truncation (char/short/int), sizeof. Returns `{ value: CValue, error?: string }`.
+**Memory** (`memory.ts`): Unified runtime state and visualization op recording. Replaces the former three-way split of Environment (runtime state) + DefaultEmitter (op recording) + memoryValues (address→value bridge). Every mutation (pushScope, declareVariable, malloc, free, etc.) updates runtime state AND records the corresponding `SnapshotOp`. Manages: scope chain with variable shadowing, stack/heap allocation (stack down from `0x7FFC0000`, heap up from `0x55A00000` with 16-byte alignment), variable→ID mapping, pointer→heap-block mapping, child registration, path resolution through pointers, function table. Generates deterministic IDs like `main-x`, `heap-p-pos-x`, `for1-i`. Implements `MemoryReader` interface for the Evaluator.
 
-**Interpreter** (`interpreter.ts`): Statement execution engine. Walks the AST top-down, calling evaluator for expressions and emitter for visualization steps. Handles: declarations (scalar, struct, array), assignments (variable, field, element, dereference), control flow with sub-steps, function calls with stack frames, malloc/calloc/free with heap tracking, sprintf string formatting, bounds checking, leak detection.
+**Evaluator** (`evaluator.ts`): Pure expression evaluation. Depends on `EvalEnv` interface (lookupVariable, setVariable). Handles all operators (arithmetic, comparison, logical with short-circuit, bitwise), pointer arithmetic with element-size scaling, dereference with memReader, cast truncation (char/short/int), sizeof. Returns `{ value: CValue, error?: string }`.
 
-**Emitter** (`emitter.ts`): Converts interpreter actions into `ProgramStep`s with `SnapshotOp`s. Manages: scope stack, variable→ID mapping, pointer→heap-block mapping, child registration, path resolution through pointers. Generates deterministic IDs like `main-x`, `heap-p-pos-x`, `for1-i`.
+**Interpreter** (`interpreter.ts`): Statement execution engine. Walks the AST top-down, calling evaluator for expressions and Memory for both runtime state changes and visualization steps. Handles: declarations (scalar, struct, array), assignments (variable, field, element, dereference), control flow with sub-steps, function calls with stack frames, malloc/calloc/free with heap tracking, sprintf string formatting, bounds checking, leak detection.
 
-**Environment** (`environment.ts`): Runtime memory model. Stack grows downward from `0x7FFC0000`, heap grows upward from `0x55A00000` with 16-byte alignment. Manages: scope chain with variable shadowing, function table, heap block metadata (address, size, status, allocator, type).
+**Legacy files** (`environment.ts`, `emitter.ts`): Original separated runtime state and op recording. No longer imported by the interpreter — retained only for their test files during transition. Will be deleted once their test coverage is fully absorbed into `memory.test.ts`.
 
 **Type System** (`types-c.ts`): 32-bit ILP32 model. Primitives (char=1, short=2, int=4, long=8, float=4, double=8, void=0), pointers (4 bytes), arrays (N × element), structs (fields with alignment padding). TypeRegistry resolves parser type specs to runtime types.
 
