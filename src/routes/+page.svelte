@@ -6,7 +6,9 @@
 	import CodeEditor from '$lib/components/CodeEditor.svelte';
 	import MemoryView from '$lib/components/MemoryView.svelte';
 	import StepControls from '$lib/components/StepControls.svelte';
-	import { buildSnapshots, getVisibleIndices, nearestVisibleIndex } from '$lib/engine';
+	import ConsolePanel from '$lib/components/ConsolePanel.svelte';
+	import StdinInput from '$lib/components/StdinInput.svelte';
+	import { buildSnapshots, buildConsoleOutputs, getVisibleIndices, nearestVisibleIndex } from '$lib/engine';
 
 	const store = createEditorTabStore();
 	initPersistence(store);
@@ -46,7 +48,7 @@
 			const { runProgram } = await import('$lib/interpreter/service');
 			if (thisRun !== runGeneration) return;
 
-			const result = await runProgram(store.activeTab.source);
+			const result = await runProgram(store.activeTab.source, stdinInput || undefined);
 			if (thisRun !== runGeneration) return;
 
 			errors = result.errors;
@@ -149,6 +151,10 @@
 		select.value = '';
 	}
 
+	// stdin state (per-tab)
+	let stdinInput = $state('');
+	const needsStdin = $derived(/\b(scanf|getchar|fgets|gets)\s*\(/.test(store.activeTab.source));
+
 	// Stepping state (only used in viewing mode)
 	let internalIndex = $state(0);
 	let subStepMode = $state(false);
@@ -157,6 +163,7 @@
 	// $state.snapshot() strips Svelte proxies so structuredClone inside buildSnapshots works
 	const snapshots = $derived(viewingProgram ? buildSnapshots($state.snapshot(viewingProgram) as Program) : []);
 	const steps = $derived(viewingProgram?.steps ?? []);
+	const consoleOutputs = $derived(viewingProgram ? buildConsoleOutputs(viewingProgram.steps) : []);
 	const visibleIndices = $derived(getVisibleIndices(steps, subStepMode));
 
 	const visiblePosition = $derived.by(() => {
@@ -168,6 +175,32 @@
 
 	const currentStep = $derived(steps[internalIndex]);
 	const currentSnapshot = $derived(snapshots[internalIndex] ?? []);
+	const currentConsoleOutput = $derived(consoleOutputs[internalIndex] ?? '');
+	const previousConsoleOutput = $derived(internalIndex > 0 ? (consoleOutputs[internalIndex - 1] ?? '') : '');
+	const newConsoleOutput = $derived(
+		currentConsoleOutput.length > previousConsoleOutput.length
+			? currentConsoleOutput.slice(previousConsoleOutput.length)
+			: ''
+	);
+	const hasConsoleOutput = $derived(consoleOutputs.some((o) => o.length > 0));
+
+	// stdin consumption tracking
+	const stdinConsumed = $derived.by(() => {
+		if (mode.state !== 'viewing') return 0;
+		const step = steps[internalIndex];
+		if (!step?.ioEvents) return 0;
+		// Find the last stdin-read event up to current step
+		let pos = 0;
+		for (let i = 0; i <= internalIndex; i++) {
+			const events = steps[i]?.ioEvents;
+			if (events) {
+				for (const e of events) {
+					if (e.kind === 'read') pos = e.cursorPos;
+				}
+			}
+		}
+		return pos;
+	});
 
 	const editorLocation = $derived.by(() => {
 		if (mode.state !== 'viewing') return undefined;
@@ -311,14 +344,30 @@
 
 	<!-- Main area: editor + memory view -->
 	<div class="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-4">
-		<!-- Code Editor -->
-		<div class="h-[70vh]">
-			<CodeEditor
-				source={store.activeTab.source}
-				location={editorLocation}
-				readOnly={mode.state === 'viewing'}
-				onchange={mode.state === 'editing' ? handleSourceChange : undefined}
-			/>
+		<!-- Left column: Code Editor + I/O -->
+		<div class="flex flex-col gap-3">
+			<div class="h-[55vh]">
+				<CodeEditor
+					source={store.activeTab.source}
+					location={editorLocation}
+					readOnly={mode.state === 'viewing'}
+					onchange={mode.state === 'editing' ? handleSourceChange : undefined}
+				/>
+			</div>
+			{#if needsStdin}
+				<StdinInput
+					value={stdinInput}
+					onchange={(v) => stdinInput = v}
+					disabled={mode.state === 'viewing'}
+					consumed={stdinConsumed}
+				/>
+			{/if}
+			{#if mode.state === 'viewing' && hasConsoleOutput}
+				<ConsolePanel
+					stdout={currentConsoleOutput}
+					newOutput={newConsoleOutput}
+				/>
+			{/if}
 		</div>
 
 		<!-- Memory View -->
