@@ -1,5 +1,6 @@
 import type { ASTNode, CType, CValue, ChildSpec } from '../types';
 import type { HandlerContext } from './types';
+import type { Memory } from '../memory';
 import { formatAddress } from '../memory';
 import { Evaluator } from '../evaluator';
 import {
@@ -130,9 +131,9 @@ export function evaluateCallForDecl(
 	}
 
 	const isUserFunc = !!ctx.memory.getFunction(call.callee);
-	ctx.callDeclContext = { varName: node.name };
+	ctx.callContext = { varName: node.name };
 	const result = ctx.evaluator.eval(call);
-	ctx.callDeclContext = null;
+	ctx.callContext = null;
 	if (result.error) ctx.errors.push(result.error);
 	return { handled: false, value: result.value.data, isUserFunc };
 }
@@ -930,4 +931,176 @@ export function executeUserFunctionCall(
 
 	const result = ctx.callFunction(fn, args, line);
 	if (result.error) ctx.errors.push(result.error);
+}
+
+// === Function calls ===
+
+export function callFunction(
+	ctx: HandlerContext,
+	fn: ASTNode & { type: 'function_definition' },
+	args: CValue[],
+	line: number,
+): { value: CValue; error?: string } {
+	if (ctx.frameDepth >= ctx.maxFrames) {
+		return {
+			value: { type: primitiveType('int'), data: 0, address: 0 },
+			error: `Stack overflow: exceeded ${ctx.maxFrames} frames`,
+		};
+	}
+
+	ctx.frameDepth++;
+	const savedSP = ctx.memory.saveStackPointer();
+	const callerName = ctx.memory.currentScopeName() ?? '_start';
+
+	ctx.memory.pushScopeRuntime(fn.name);
+	const declaredParams: CValue[] = [];
+	for (let i = 0; i < fn.params.length; i++) {
+		const paramType = ctx.typeReg.resolve(fn.params[i].typeSpec);
+		const arg = args[i] ? Evaluator.decayArrayToPointer(args[i]) : undefined;
+		const v = ctx.memory.declareVariableRuntime(fn.params[i].name, paramType, arg?.data ?? 0);
+		declaredParams.push(v);
+	}
+
+	for (let i = 0; i < fn.params.length; i++) {
+		const paramType = ctx.typeReg.resolve(fn.params[i].typeSpec);
+		if (isPointerType(paramType) && args[i]?.data != null && args[i].data !== 0) {
+			const blockId = ctx.memory.getHeapBlockIdByAddress(args[i].data!);
+			if (blockId) {
+				ctx.memory.setPointerTarget(fn.params[i].name, blockId);
+			}
+		}
+	}
+
+	const params = fn.params.map((p, i) => {
+		const paramType = ctx.typeReg.resolve(p.typeSpec);
+		const argVal = args[i]?.data ?? 0;
+		let children: ChildSpec[] | undefined;
+
+		if (isStructType(paramType)) {
+			const srcAddr = args[i]?.address ?? 0;
+			const initValues = new Map<string, string>();
+			for (const field of paramType.fields) {
+				const val = ctx.memory.readMemory(srcAddr + field.offset);
+				if (val !== undefined) initValues.set(field.name, String(val));
+			}
+			children = buildStructChildSpecs(paramType, initValues);
+
+			const destAddr = declaredParams[i].address;
+			for (const field of paramType.fields) {
+				const val = ctx.memory.readMemory(srcAddr + field.offset);
+				if (val !== undefined) ctx.memory.writeMemory(destAddr + field.offset, val);
+			}
+		}
+
+		return {
+			name: p.name,
+			type: paramType,
+			value: isStructType(paramType) ? '' : String(argVal),
+			address: declaredParams[i].address,
+			children,
+		};
+	});
+
+	const callColStart = ctx.callContext?.colStart;
+	const callColEnd = ctx.callContext?.colEnd;
+	ctx.memory.beginStep(
+		{ line, colStart: callColStart, colEnd: callColEnd },
+		`Call ${fn.name}(${params.map((p) => p.name).join(', ')}) — push stack frame`,
+	);
+	ctx.stepCount++;
+
+	ctx.memory.emitScopeEntry(fn.name, params, {
+		caller: `${callerName}()`,
+		file: '',
+		line: fn.line,
+	});
+
+	for (const param of params) {
+		if (param.address !== undefined) {
+			ctx.memory.emitVariableEntry(param.name, param.type, param.value, param.address, param.children);
+		}
+	}
+
+	ctx.returnFlag = false;
+	ctx.returnValue = null;
+
+	if (fn.body.type === 'compound_statement') {
+		ctx.dispatchStatements(fn.body.children);
+	}
+
+	const retVal = ctx.returnValue ?? { type: primitiveType('int'), data: 0, address: 0 };
+	ctx.returnFlag = false;
+	ctx.returnValue = null;
+
+	const declVar = ctx.callContext?.varName;
+	const retDesc = declVar
+		? `${fn.name}() returns ${retVal.data ?? 0}, assign to ${declVar}`
+		: `${fn.name}() returns ${retVal.data ?? 0}`;
+	ctx.memory.beginStep({ line }, retDesc);
+	ctx.stepCount++;
+	ctx.memory.emitScopeExit();
+
+	ctx.memory.popScopeRuntime();
+	ctx.memory.restoreStackPointer(savedSP);
+	ctx.frameDepth--;
+
+	return { value: retVal };
+}
+
+// === Leak detection ===
+
+export function detectLeaks(memory: Memory): void {
+	const blocks = memory.getAllHeapBlocks();
+	for (const [addr, block] of blocks) {
+		if (block.status === 'allocated') {
+			const blockId = memory.getHeapBlockIdByAddress(addr);
+			if (blockId) {
+				memory.leakHeapById(blockId);
+			}
+		}
+	}
+}
+
+// === Shared helpers ===
+
+export function formatValue(memory: Memory, type: CType, data: number | null, initialized = true): string {
+	if (!initialized) return '(uninit)';
+	if (data === null) return '0';
+	if (isFunctionPointerType(type) && data !== 0) {
+		const target = memory.getFunctionByIndex(data);
+		if (target) return `→ ${target.name}`;
+	}
+	if (isPointerType(type)) {
+		if (data === 0) return 'NULL';
+		return formatAddress(data);
+	}
+	if (type.kind === 'primitive' && (type.name === 'float' || type.name === 'double')) {
+		const s = parseFloat(data.toFixed(6)).toString();
+		return s.includes('.') ? s : s + '.0';
+	}
+	return String(data);
+}
+
+export function describeExpr(node: ASTNode): string {
+	switch (node.type) {
+		case 'identifier': return node.name;
+		case 'number_literal': return String(node.value);
+		case 'string_literal': return `"${node.value}"`;
+		case 'null_literal': return 'NULL';
+		case 'binary_expression':
+			return `${describeExpr(node.left)} ${node.operator} ${describeExpr(node.right)}`;
+		case 'unary_expression':
+			if (node.prefix) return `${node.operator}${describeExpr(node.operand)}`;
+			return `${describeExpr(node.operand)}${node.operator}`;
+		case 'call_expression':
+			return `${node.callee}(${node.args.map((a) => describeExpr(a)).join(', ')})`;
+		case 'member_expression':
+			return `${describeExpr(node.object)}${node.arrow ? '->' : '.'}${node.field}`;
+		case 'subscript_expression':
+			return `${describeExpr(node.object)}[${describeExpr(node.index)}]`;
+		case 'sizeof_expression':
+			return `sizeof(${node.targetType.structName ?? node.targetType.base})`;
+		default:
+			return '...';
+	}
 }

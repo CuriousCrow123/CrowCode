@@ -17,7 +17,8 @@ export type HandlerContext = {
 	continueFlag: boolean;
 	returnFlag: boolean;
 	returnValue: CValue | null;
-	callDeclContext: { varName: string; colStart?: number; colEnd?: number } | null;
+	/** Active function-call context: which variable receives the return value, and column ranges for highlighting. */
+	callContext: { varName: string; colStart?: number; colEnd?: number } | null;
 
 	/** Dispatch a single statement. */
 	dispatch(node: ASTNode, sharesStep?: boolean): void;
