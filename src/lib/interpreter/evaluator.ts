@@ -1,5 +1,4 @@
 import type { ASTNode, CType, CValue } from './types';
-import { Environment, formatAddress } from './environment';
 import {
 	sizeOf,
 	primitiveType,
@@ -8,7 +7,6 @@ import {
 	isStructType,
 	isArrayType,
 	TypeRegistry,
-	typeToString,
 } from './types-c';
 
 /** Truncate to 32-bit signed integer (C int semantics) */
@@ -24,11 +22,17 @@ export type EvalResult = {
 export type CallHandler = (name: string, args: CValue[], line: number, colStart?: number, colEnd?: number) => EvalResult;
 export type MemoryReader = (address: number) => number | undefined;
 
+/** Interface for the subset of Memory/Environment that the Evaluator needs. */
+export interface EvalEnv {
+	lookupVariable(name: string): CValue | undefined;
+	setVariable(name: string, data: number | null): void;
+}
+
 export class Evaluator {
 	private memReader?: MemoryReader;
 
 	constructor(
-		private env: Environment,
+		private env: EvalEnv,
 		private typeReg: TypeRegistry,
 		private onCall?: CallHandler,
 	) {}

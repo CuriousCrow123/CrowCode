@@ -1,7 +1,5 @@
 import type { CType, CValue, ChildSpec } from './types';
-import { Environment, formatAddress } from './environment';
-import { TypeRegistry, sizeOf, primitiveType, isStructType, isArrayType, typeToString } from './types-c';
-import type { DefaultEmitter } from './emitter';
+import { TypeRegistry, sizeOf, primitiveType, isStructType, isArrayType } from './types-c';
 
 export type StdlibHandler = (
 	name: string,
@@ -14,20 +12,25 @@ export type MemoryAccess = {
 	write: (address: number, value: number) => void;
 };
 
+/** Interface for the subset of Memory/Environment that stdlib needs. */
+export interface StdlibEnv {
+	malloc(size: number, allocator: string, line: number): { address: number; error?: string };
+	free(address: number): { error?: string };
+}
+
 export function createStdlib(
-	env: Environment,
+	env: StdlibEnv,
 	typeReg: TypeRegistry,
-	emitter: DefaultEmitter,
 	mem?: MemoryAccess,
 ): StdlibHandler {
 	return (name: string, args: CValue[], line: number) => {
 		switch (name) {
 			case 'malloc':
-				return handleMalloc(env, typeReg, emitter, args, line);
+				return handleMalloc(env, typeReg, args, line);
 			case 'calloc':
-				return handleCalloc(env, typeReg, emitter, args, line);
+				return handleCalloc(env, typeReg, args, line);
 			case 'free':
-				return handleFree(env, emitter, args, line);
+				return handleFree(env, args, line);
 			case 'printf':
 			case 'sprintf':
 			case 'fprintf':
@@ -58,9 +61,8 @@ export function createStdlib(
 }
 
 function handleMalloc(
-	env: Environment,
+	env: StdlibEnv,
 	typeReg: TypeRegistry,
-	emitter: DefaultEmitter,
 	args: CValue[],
 	line: number,
 ): { value: CValue; error?: string } {
@@ -79,9 +81,8 @@ function handleMalloc(
 }
 
 function handleCalloc(
-	env: Environment,
+	env: StdlibEnv,
 	typeReg: TypeRegistry,
-	emitter: DefaultEmitter,
 	args: CValue[],
 	line: number,
 ): { value: CValue; error?: string } {
@@ -102,8 +103,7 @@ function handleCalloc(
 }
 
 function handleFree(
-	env: Environment,
-	emitter: DefaultEmitter,
+	env: StdlibEnv,
 	args: CValue[],
 	line: number,
 ): { value: CValue; error?: string } {

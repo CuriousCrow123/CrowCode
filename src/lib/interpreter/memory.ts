@@ -353,6 +353,151 @@ export class Memory implements MemoryReader {
 		return cvalue;
 	}
 
+	/** Emit addEntry op for a variable without modifying runtime scope.
+	 *  Use when the variable was already declared via declareVariableRuntime(). */
+	emitVariableEntry(name: string, type: CType, value: string, address: number, children?: ChildSpec[]): void {
+		const scopeId = this.currentScopeId();
+		const entryId = `${scopeId}-${name}`;
+		this.trackVarInFrame(name, entryId);
+		this.entryIdByVar.set(name, entryId);
+
+		const typeStr = typeToString(type);
+		const addrStr = formatAddress(address);
+		const childEntries = children ? this.buildChildrenWithAddress(entryId, children, address) : undefined;
+
+		const entry: MemoryEntry = {
+			id: entryId,
+			name,
+			type: typeStr,
+			value,
+			address: addrStr,
+			children: childEntries,
+		};
+
+		this.addOp({ op: 'addEntry', parentId: scopeId, entry });
+	}
+
+	/** Emit scope addEntry + heap container without pushing runtime scope.
+	 *  Use when you need to manage runtime scope separately. */
+	emitScopeEntry(name: string, params: ParamSpec[], callSite?: ScopeInfo): string {
+		const scopeId = this.generateScopeId(name);
+
+		// Emit scope entry op
+		const scopeEntry: MemoryEntry = {
+			id: scopeId,
+			name: params.length > 0 ? `${name}(${params.map((p) => p.name).join(', ')})` : name,
+			kind: 'scope',
+			type: '',
+			value: '',
+			address: '',
+			scope: callSite,
+		};
+		this.addOp({ op: 'addEntry', parentId: null, entry: scopeEntry });
+
+		// Add heap container on first scope entry
+		if (!this.heapContainerAdded) {
+			this.addOp({
+				op: 'addEntry',
+				parentId: null,
+				entry: {
+					id: 'heap',
+					name: 'Heap',
+					kind: 'heap',
+					type: '',
+					value: '',
+					address: '',
+				},
+			});
+			this.heapContainerAdded = true;
+		}
+
+		// Push a scope frame for ID tracking (without runtime scope)
+		const frame: ScopeFrame = {
+			id: scopeId,
+			name,
+			vars: [],
+			savedVarIds: new Map(),
+			savedPointerTargets: new Map(),
+			savedStackPointer: this.stackPointer,
+		};
+		this.scopeFrames.push(frame);
+
+		return scopeId;
+	}
+
+	/** Emit removeEntry op and restore scope frame without popping runtime scope. */
+	emitScopeExit(): void {
+		const frame = this.scopeFrames.pop();
+		if (!frame) return;
+
+		this.addOp({ op: 'removeEntry', id: frame.id });
+
+		// Restore variable ID mappings
+		for (const name of frame.vars) {
+			const prev = frame.savedVarIds.get(name);
+			if (prev !== undefined) {
+				this.entryIdByVar.set(name, prev);
+			} else {
+				this.entryIdByVar.delete(name);
+			}
+		}
+
+		// Restore pointer target mappings
+		for (const [name, prev] of frame.savedPointerTargets) {
+			this.heapEntryByPointer.set(name, prev);
+		}
+		for (const name of frame.vars) {
+			if (!frame.savedPointerTargets.has(name) && this.heapEntryByPointer.has(name)) {
+				this.heapEntryByPointer.delete(name);
+			}
+		}
+	}
+
+	/** Emit a heap allocation op without allocating heap memory.
+	 *  Use when env.malloc() was already called. */
+	emitHeapEntry(pointer: string, type: CType, size: number, allocator: string, line: number, address: number, children?: ChildSpec[]): string {
+		const blockId = this.generateHeapId(type, pointer);
+		this.heapBlockTypes.set(blockId, type);
+		this.heapBlockAddresses.set(blockId, address);
+		this.savePointerTargetInFrame(pointer);
+		this.heapEntryByPointer.set(pointer, blockId);
+
+		const typeStr = typeToString(type);
+		const addrStr = formatAddress(address);
+		const childEntries = children ? this.buildChildrenWithAddress(blockId, children, address) : undefined;
+
+		const heapInfo: HeapInfo = {
+			size,
+			status: 'allocated',
+			allocator,
+			allocSite: { file: '', line },
+		};
+
+		const entry: MemoryEntry = {
+			id: blockId,
+			name: '',
+			type: typeStr,
+			value: '',
+			address: addrStr,
+			heap: heapInfo,
+			children: childEntries,
+		};
+
+		this.addOp({ op: 'addEntry', parentId: 'heap', entry });
+
+		return blockId;
+	}
+
+	/** Push a runtime scope without emitting ops. */
+	pushScopeRuntime(name: string): void {
+		this.scopes.push({ name, symbols: new Map() });
+	}
+
+	/** Pop a runtime scope without emitting ops. */
+	popScopeRuntime(): void {
+		this.scopes.pop();
+	}
+
 	setValue(name: string, value: number): void {
 		// Update runtime state
 		const cvalue = this.lookupVariable(name);
@@ -396,7 +541,9 @@ export class Memory implements MemoryReader {
 	}
 
 	assignField(path: string[], value: string): void {
-		const entryId = this.resolvePointerPath(path);
+		// Use resolvePathId (like the old emitter) — resolvePointerPath would
+		// follow pointer targets for field names, which is wrong for struct field assignment
+		const entryId = this.resolvePathId(path);
 		if (!entryId) {
 			this.errors.push(`Cannot resolve path [${path.join(', ')}] for field assignment`);
 			return;
@@ -476,6 +623,32 @@ export class Memory implements MemoryReader {
 		return { address };
 	}
 
+	/** Allocate heap memory without emitting ops.
+	 *  Use when the interpreter will emit the heap entry op separately via emitHeapEntry(). */
+	mallocRuntime(size: number, allocator: string, line: number): { address: number; error?: string } {
+		if (this.heapUsed + size > this.maxHeapBytes) {
+			return { address: 0, error: `Heap exhausted: requested ${size} bytes, ${this.maxHeapBytes - this.heapUsed} available` };
+		}
+
+		const alignment = 16;
+		this.heapPointer = alignUp(this.heapPointer, alignment);
+		const address = this.heapPointer;
+		this.heapPointer += size;
+		this.heapUsed += size;
+
+		const block: HeapBlock = {
+			address,
+			size,
+			type: { kind: 'primitive', name: 'void' },
+			status: 'allocated',
+			allocator,
+			allocSite: { line },
+		};
+		this.heapBlocks.set(address, block);
+
+		return { address };
+	}
+
 	free(pointer: string): { error?: string } {
 		const blockId = this.heapEntryByPointer.get(pointer);
 		if (!blockId) {
@@ -501,6 +674,8 @@ export class Memory implements MemoryReader {
 		return {};
 	}
 
+	/** Free a heap block by address (runtime only, no op emission).
+	 *  The interpreter emits the setHeapStatus op separately via directFreeHeap(). */
 	freeByAddress(address: number): { error?: string } {
 		const block = this.heapBlocks.get(address);
 		if (!block) {
@@ -510,12 +685,6 @@ export class Memory implements MemoryReader {
 			return { error: `free(): double free of 0x${address.toString(16)}` };
 		}
 		block.status = 'freed';
-
-		// Find the block ID by address
-		const blockId = this.getHeapBlockIdByAddress(address);
-		if (blockId) {
-			this.addOp({ op: 'setHeapStatus', id: blockId, status: 'freed' });
-		}
 		return {};
 	}
 
@@ -644,6 +813,12 @@ export class Memory implements MemoryReader {
 	}
 
 	// === Environment-compatible variable set (mutates CValue directly) ===
+
+	/** Set a variable's numeric value in the runtime scope (no op emission).
+	 *  Equivalent to Environment.setVariable(). */
+	setVariable(name: string, data: number | null): void {
+		return this.setVariableData(name, data);
+	}
 
 	setVariableData(name: string, data: number | null): void {
 		for (let i = this.scopes.length - 1; i >= 0; i--) {
