@@ -116,7 +116,7 @@
 		handleInteractiveSession(session, thisRun);
 	}
 
-	function handleInteractiveSession(session: InteractiveSession, generation: number) {
+	function handleInteractiveSession(session: InteractiveSession, generation: number, preserveIndex = false) {
 		if (generation !== runGeneration) return;
 
 		if (session.state === 'complete') {
@@ -124,13 +124,12 @@
 			errors = result.errors;
 			warnings = result.warnings;
 
-			// Append final stdout to transcript
-			appendTranscriptFromProgram(result.program);
-
 			if (result.program.steps.length > 0) {
 				const program = JSON.parse(JSON.stringify(result.program));
-				internalIndex = 0;
-				subStepMode = false;
+				if (!preserveIndex) {
+					internalIndex = 0;
+					subStepMode = false;
+				}
 				mode = {
 					state: 'viewing',
 					program,
@@ -141,8 +140,8 @@
 					program,
 					errors: result.errors,
 					warnings: result.warnings,
-					stepIndex: 0,
-					subStepMode: false,
+					stepIndex: internalIndex,
+					subStepMode,
 				});
 			} else {
 				if (errors.length === 0) {
@@ -157,12 +156,11 @@
 		errors = session.errors;
 		warnings = session.warnings;
 
-		// Append only NEW stdout from steps we haven't seen yet
-		appendTranscriptFromProgram(session.program);
-
 		const program = JSON.parse(JSON.stringify(session.program));
-		internalIndex = Math.max(0, program.steps.length - 1);
-		subStepMode = false;
+		if (!preserveIndex) {
+			internalIndex = 0;
+			subStepMode = false;
+		}
 
 		// Create generation-guarded resume
 		const sessionResume = session.resume;
@@ -186,14 +184,12 @@
 		const resumeFn = mode.resume;
 		const gen = runGeneration;
 
-		// Echo input into transcript
-		interactiveTranscript = [...interactiveTranscript, { type: 'stdin', text }];
-
 		// Flip state SYNCHRONOUSLY before async work (prevents double-submit)
 		mode = { state: 'running' };
 
 		resumeFn(text).then((session) => {
-			handleInteractiveSession(session, gen);
+			// Preserve step index — don't reset on resume
+			handleInteractiveSession(session, gen, true);
 		}).catch((err) => {
 			if (gen !== runGeneration) return;
 			errors = [err instanceof Error ? err.message : String(err)];
@@ -555,20 +551,20 @@
 					/>
 				{/if}
 			{:else}
-				<!-- Interactive mode -->
-				{#if mode.state === 'waiting_for_input' || mode.state === 'running'}
-					<!-- During execution: TerminalPanel with incremental transcript -->
-					<TerminalPanel
-						transcript={interactiveTranscript}
-						waitingForInput={mode.state === 'waiting_for_input'}
-						onSubmitInput={handleSubmitInput}
-						onEof={handleEof}
-					/>
-				{:else if mode.state === 'viewing' && hasConsoleOutput}
-					<!-- After completion: step-indexed ConsolePanel (same as pre-supplied) -->
+				<!-- Interactive mode: step-indexed console + inline input at pause point -->
+				{#if (mode.state === 'viewing' || mode.state === 'waiting_for_input') && hasConsoleOutput}
 					<ConsolePanel
 						stdout={currentConsoleOutput}
 						newOutput={newConsoleOutput}
+					/>
+				{/if}
+				{#if mode.state === 'waiting_for_input' && internalIndex >= steps.length - 1}
+					<!-- Input prompt — shown only when user has reached the pause step -->
+					<TerminalPanel
+						transcript={[]}
+						waitingForInput={true}
+						onSubmitInput={handleSubmitInput}
+						onEof={handleEof}
 					/>
 				{/if}
 			{/if}
