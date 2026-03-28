@@ -870,6 +870,23 @@ export function* executeCallStatement(ctx: HandlerContext, call: ASTNode & { typ
 
 	if (call.callee === 'strcpy' || call.callee === 'strcat') {
 		updateHeapChildrenFromMemory(ctx, call.args[0]);
+		// Set parent entry to quoted string summary (like sprintf does)
+		if (call.args[0].type === 'identifier') {
+			const blockId = ctx.memory.getHeapBlockId(call.args[0].name);
+			if (blockId) {
+				const ptrVar = ctx.memory.lookupVariable(call.args[0].name);
+				if (ptrVar?.data) {
+					const baseAddr = ptrVar.data;
+					let str = '';
+					for (let i = 0; i < 256; i++) {
+						const byte = ctx.memory.readMemory(baseAddr + i);
+						if (byte === undefined || byte === 0) break;
+						str += String.fromCharCode(byte);
+					}
+					ctx.memory.setValueById(blockId, `"${str}"`);
+				}
+			}
+		}
 	}
 }
 
@@ -1384,8 +1401,11 @@ export function writeStringToBuffer(
 		ctx.memory.writeMemory(baseAddr + i, charCode);
 
 		if (i < arraySize) {
-			// Within bounds: update own children
-			ctx.memory.setValueById(`${entryId}-${i}`, String(charCode));
+			// Within bounds: update own children with char display format
+			const display = charCode >= 32 && charCode < 127
+				? `'${str[i]}' (${charCode})`
+				: charCode === 0 ? `'\\0' (0)` : charCode === 10 ? `'\\n' (10)` : charCode === 9 ? `'\\t' (9)` : String(charCode);
+			ctx.memory.setValueById(`${entryId}-${i}`, display);
 		} else if (allowOverflow) {
 			// Overflow: find adjacent variable at this address
 			const target = ctx.memory.findEntryIdAtAddress(baseAddr + i);
@@ -1409,7 +1429,7 @@ export function writeStringToBuffer(
 	const nullPos = writeLen;
 	if (nullPos < arraySize) {
 		ctx.memory.writeMemory(baseAddr + nullPos, 0);
-		ctx.memory.setValueById(`${entryId}-${nullPos}`, '0');
+		ctx.memory.setValueById(`${entryId}-${nullPos}`, "'\\0' (0)");
 	} else if (allowOverflow) {
 		ctx.memory.writeMemory(baseAddr + nullPos, 0);
 	}
@@ -1426,10 +1446,20 @@ export function updateHeapChildrenFromMemory(ctx: HandlerContext, destArg: ASTNo
 	if (!block) return;
 	const blockId = ctx.memory.getHeapBlockId(destArg.name);
 	if (!blockId) return;
+	// Check if this is a char array (element size 1) — display as characters
+	const isCharArray = block.type && isArrayCType(block.type) && block.type.elementType.kind === 'primitive' && block.type.elementType.name === 'char';
 	for (let i = 0; i < block.size; i++) {
 		const val = ctx.memory.readMemory(baseAddr + i);
 		if (val !== undefined) {
-			ctx.memory.setValueById(`${blockId}-${i}`, String(val));
+			let display: string;
+			if (isCharArray) {
+				display = val >= 32 && val < 127
+					? `'${String.fromCharCode(val)}' (${val})`
+					: val === 0 ? `'\\0' (0)` : val === 10 ? `'\\n' (10)` : val === 9 ? `'\\t' (9)` : String(val);
+			} else {
+				display = String(val);
+			}
+			ctx.memory.setValueById(`${blockId}-${i}`, display);
 		}
 	}
 }
