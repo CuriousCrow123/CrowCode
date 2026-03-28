@@ -35,6 +35,7 @@
 
 	// Interactive mode transcript (accumulated across pause/resume cycles)
 	let interactiveTranscript = $state<TranscriptEntry[]>([]);
+	let transcriptProcessedSteps = 0; // how many steps we've already extracted stdout from
 
 	// Per-tab run result cache
 	interface CachedRun {
@@ -55,6 +56,7 @@
 		errors = [];
 		warnings = [];
 		interactiveTranscript = [];
+		transcriptProcessedSteps = 0;
 
 		try {
 			if (ioMode === 'interactive') {
@@ -122,8 +124,8 @@
 			errors = result.errors;
 			warnings = result.warnings;
 
-			// Build final transcript from the completed program's ioEvents
-			interactiveTranscript = buildTranscriptFromProgram(result.program);
+			// Append final stdout to transcript
+			appendTranscriptFromProgram(result.program);
 
 			if (result.program.steps.length > 0) {
 				const program = JSON.parse(JSON.stringify(result.program));
@@ -155,11 +157,11 @@
 		errors = session.errors;
 		warnings = session.warnings;
 
-		// Build transcript from partial program
-		interactiveTranscript = buildTranscriptFromProgram(session.program);
+		// Append only NEW stdout from steps we haven't seen yet
+		appendTranscriptFromProgram(session.program);
 
 		const program = JSON.parse(JSON.stringify(session.program));
-		internalIndex = 0;
+		internalIndex = Math.max(0, program.steps.length - 1);
 		subStepMode = false;
 
 		// Create generation-guarded resume
@@ -214,19 +216,23 @@
 		mode = { state: 'editing' };
 	}
 
-	/** Build TranscriptEntry[] from a program's ioEvents (stdout writes only). */
-	function buildTranscriptFromProgram(program: Program): TranscriptEntry[] {
-		const entries: TranscriptEntry[] = [];
-		for (const step of program.steps) {
+	/** Append NEW stdout entries from steps we haven't processed yet. */
+	function appendTranscriptFromProgram(program: Program): void {
+		const newEntries: TranscriptEntry[] = [];
+		for (let i = transcriptProcessedSteps; i < program.steps.length; i++) {
+			const step = program.steps[i];
 			if (step.ioEvents) {
 				for (const event of step.ioEvents) {
 					if (event.kind === 'write' && event.target === 'stdout') {
-						entries.push({ type: 'stdout', text: event.text });
+						newEntries.push({ type: 'stdout', text: event.text });
 					}
 				}
 			}
 		}
-		return entries;
+		transcriptProcessedSteps = program.steps.length;
+		if (newEntries.length > 0) {
+			interactiveTranscript = [...interactiveTranscript, ...newEntries];
+		}
 	}
 
 	function edit() {
@@ -549,13 +555,20 @@
 					/>
 				{/if}
 			{:else}
-				<!-- Interactive mode: TerminalPanel (visible during running, waiting, and viewing) -->
-				{#if mode.state !== 'editing'}
+				<!-- Interactive mode -->
+				{#if mode.state === 'waiting_for_input' || mode.state === 'running'}
+					<!-- During execution: TerminalPanel with incremental transcript -->
 					<TerminalPanel
 						transcript={interactiveTranscript}
 						waitingForInput={mode.state === 'waiting_for_input'}
 						onSubmitInput={handleSubmitInput}
 						onEof={handleEof}
+					/>
+				{:else if mode.state === 'viewing' && hasConsoleOutput}
+					<!-- After completion: step-indexed ConsolePanel (same as pre-supplied) -->
+					<ConsolePanel
+						stdout={currentConsoleOutput}
+						newOutput={newConsoleOutput}
 					/>
 				{/if}
 			{/if}
