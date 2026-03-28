@@ -237,16 +237,9 @@ describe('getchar interactive — all intercept paths', () => {
 		expect(r2.done).toBe(true);
 		const result = r2.value as InterpretResult;
 		expect(result.errors).toHaveLength(0);
-		// NOTE: Known interpreter limitation — re-execution of declaration with sharesStep=true
-		// creates a duplicate variable entry. The second entry has the correct value '90',
-		// but findEntry returns the first one '(uninit)'. This is a snapshot bug, not a logic bug.
 		const snapshots = buildSnapshots(result.program);
 		const last = snapshots[snapshots.length - 1];
-		const mainScope = last.find(e => e.name === 'main');
-		const cEntries = mainScope?.children?.filter(e => e.name === 'c') ?? [];
-		expect(cEntries.length).toBeGreaterThanOrEqual(1);
-		// The last entry should have the correct value from getchar
-		expect(cEntries[cEntries.length - 1].value).toBe('90');
+		expect(findEntry(last, 'c')?.value).toBe('90');
 	});
 
 	it('getchar() as bare expression statement pauses when stdin empty', () => {
@@ -287,15 +280,10 @@ describe('getchar interactive — all intercept paths', () => {
 		const { result, yieldCount } = driveInteractive(src, ['AB']);
 		expect(yieldCount).toBe(1); // Only one pause — both chars from single input
 		expect(result.errors).toHaveLength(0);
-		// NOTE: Same duplicate-entry limitation as single getchar in declaration.
-		// Verify via last entries in the scope instead of findEntry.
 		const snapshots = buildSnapshots(result.program);
 		const last = snapshots[snapshots.length - 1];
-		const mainScope = last.find(e => e.name === 'main');
-		const c1Entries = mainScope?.children?.filter(e => e.name === 'c1') ?? [];
-		const c2Entries = mainScope?.children?.filter(e => e.name === 'c2') ?? [];
-		expect(c1Entries[c1Entries.length - 1].value).toBe('65'); // 'A'
-		expect(c2Entries[c2Entries.length - 1].value).toBe('66'); // 'B'
+		expect(findEntry(last, 'c1')?.value).toBe('65'); // 'A'
+		expect(findEntry(last, 'c2')?.value).toBe('66'); // 'B'
 	});
 });
 
@@ -494,11 +482,10 @@ describe('partial program integrity', () => {
 
 	it('partial program from loop-body pause passes validateProgram', () => {
 		const src = `int main() {
-	int i = 0;
-	while (i < 3) {
+	int i;
+	for (i = 0; i < 3; i++) {
 		int x;
 		scanf("%d", &x);
-		i = i + 1;
 	}
 	return 0;
 }`;
@@ -729,12 +716,10 @@ describe('scanf format specifiers through interactive path', () => {
 		expect(findEntry(last, 'c')?.value).toBe('32'); // space, NOT 'X'
 	});
 
-	it('scanf %s pause/resume works but generates pointer warning', () => {
+	it('scanf %s reads until whitespace — pause/resume works', () => {
 		const src = 'int main() { char s[20]; scanf("%s", s); return 0; }';
 		const { result } = driveInteractive(src, ['hello world\n']);
-		// Known limitation: extractScanfTargetVar expects &s but arrays decay to pointers.
-		// CrowCode generates a "must be a pointer" error for bare array names.
-		expect(result.errors.some(e => e.includes('pointer'))).toBe(true);
+		expect(result.errors).toHaveLength(0);
 	});
 
 	it('scanf %x reads hex value', () => {
