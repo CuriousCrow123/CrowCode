@@ -67,9 +67,9 @@
 				tabindex={active === i ? 0 : -1}
 				data-tab-index={i}
 				onclick={() => onselect(i)}
-				class="px-3 py-1.5 rounded-l text-sm font-mono whitespace-nowrap transition-colors {active === i
-					? 'bg-blue-500/20 text-blue-400 border border-blue-500/30 border-r-0'
-					: 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'} {tabs.length <= 1 ? 'rounded-r' : ''}"
+				class="px-3 py-1.5 text-sm font-mono whitespace-nowrap transition-colors border {active === i
+					? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+					: 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 border-transparent'} {tabs.length <= 1 ? 'rounded' : 'rounded-l border-r-0'}"
 			>
 				{tab.name}
 			</button>
@@ -78,9 +78,9 @@
 					tabindex={-1}
 					aria-label="Close {tab.name}"
 					onclick={() => handleClose(i)}
-					class="px-1.5 py-1.5 rounded-r text-sm font-mono leading-none transition-colors {active === i
-						? 'bg-blue-500/20 text-zinc-500 hover:text-zinc-300 border border-blue-500/30 border-l-0'
-						: 'bg-zinc-800 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700'}"
+					class="px-1.5 py-1.5 rounded-r text-sm font-mono transition-colors border {active === i
+						? 'bg-blue-500/20 text-zinc-500 hover:text-zinc-300 border-blue-500/30 border-l-0'
+						: 'bg-zinc-800 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700 border-transparent border-l-0'}"
 				>
 					&times;
 				</button>

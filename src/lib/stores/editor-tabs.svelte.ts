@@ -73,19 +73,25 @@ function save(data: StoredData): void {
 	}
 }
 
-let nextNumber = $state(2);
-
 export function createEditorTabStore(initial?: StoredData) {
 	const data = initial ?? load();
 	let tabs = $state<EditorTab[]>(data.tabs);
 	let active = $state(data.active);
 
-	// Compute next auto-name number from existing tabs
-	nextNumber = data.tabs.length + 1;
+	function nextName(): string {
+		const used = new Set(
+			tabs.map((t) => {
+				const m = t.name.match(/^Program (\d+)$/);
+				return m ? parseInt(m[1], 10) : 0;
+			})
+		);
+		let n = 1;
+		while (used.has(n)) n++;
+		return `Program ${n}`;
+	}
 
 	function addTab(): void {
-		const name = `Program ${nextNumber++}`;
-		tabs.push({ name, source: '' });
+		tabs.push({ name: nextName(), source: '' });
 		active = tabs.length - 1;
 	}
 
