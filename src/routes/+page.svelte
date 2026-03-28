@@ -18,7 +18,7 @@
 
 	// I/O mode: pre-supplied or interactive
 	type IoMode = 'presupplied' | 'interactive';
-	let ioMode = $state<IoMode>('presupplied');
+	let ioMode = $state<IoMode>('interactive');
 
 	// Mode state machine
 	type AppMode =
@@ -561,13 +561,13 @@
 				<div class="flex items-center gap-2">
 					<span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">I/O Mode</span>
 					<button
-						onclick={() => ioMode = 'presupplied'}
-						class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'presupplied' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
-					>Pre-supplied</button>
-					<button
 						onclick={() => ioMode = 'interactive'}
 						class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'interactive' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
 					>Interactive</button>
+					<button
+						onclick={() => ioMode = 'presupplied'}
+						class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'presupplied' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
+					>Pre-supplied</button>
 				</div>
 			{/if}
 			<!-- Pre-supplied mode: StdinInput + ConsolePanel (output only) -->
