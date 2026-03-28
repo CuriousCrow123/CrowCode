@@ -511,7 +511,7 @@
 				class="px-3 py-1.5 rounded text-sm font-mono text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-600 transition-colors"
 				title="Search supported C features (?)"
 			>
-				Features
+				Feature Support
 			</button>
 			<select
 				onchange={loadTestProgram}
