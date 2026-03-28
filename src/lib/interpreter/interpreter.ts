@@ -299,8 +299,8 @@ export class Interpreter {
 				const input: string = yield { type: 'need_input', program: partialProgram };
 				this.io.appendStdin(input);
 				this.needsInput = false;
-				// Re-execute the same statement that needed input
-				yield* this.executeStatement(statements[i], firstSharesStep && i === 0);
+				// Re-execute sharing the existing step (don't create a duplicate)
+				yield* this.executeStatement(statements[i], true);
 			}
 		}
 	}
