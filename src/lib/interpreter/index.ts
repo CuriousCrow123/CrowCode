@@ -18,8 +18,9 @@ export type NeedInputSignal = {
 	program: Program;
 };
 
-/** Generator type for interactive interpretation. */
-export type InteractiveGenerator = Generator<NeedInputSignal, InterpretResult, string>;
+/** Generator type for interactive interpretation.
+ *  Send a string to provide input, or null to signal EOF (Ctrl+D). */
+export type InteractiveGenerator = Generator<NeedInputSignal, InterpretResult, string | null>;
 
 /**
  * Synchronous interpretation with a pre-initialized parser.

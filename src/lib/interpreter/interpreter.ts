@@ -221,11 +221,12 @@ export class Interpreter {
 		};
 	}
 
-	/** Generator-based interpretation — yields when stdin is exhausted and input is needed. */
+	/** Generator-based interpretation — yields when stdin is exhausted and input is needed.
+	 *  Send a string to provide input, or null to signal EOF (Ctrl+D). */
 	*interpretGen(ast: ASTNode & { type: 'translation_unit' }): Generator<
 		{ type: 'need_input'; program: Program },
 		InterpretResult,
-		string
+		string | null
 	> {
 		for (const node of ast.children) {
 			if (node.type === 'struct_definition') {
@@ -280,7 +281,7 @@ export class Interpreter {
 	private *executeStatementsYielding(
 		statements: ASTNode[],
 		firstSharesStep = false,
-	): Generator<{ type: 'need_input'; program: Program }, void, string> {
+	): Generator<{ type: 'need_input'; program: Program }, void, string | null> {
 		for (let i = 0; i < statements.length; i++) {
 			if (this.breakFlag || this.continueFlag || this.returnFlag) break;
 			if (this.stepCount >= this.maxSteps) {
@@ -296,8 +297,13 @@ export class Interpreter {
 					source: this.memory.programSource,
 					steps: this.memory.getSteps(),
 				};
-				const input: string = yield { type: 'need_input', program: partialProgram };
-				this.io.appendStdin(input);
+				const input: string | null = yield { type: 'need_input', program: partialProgram };
+				if (input === null) {
+					// EOF signal — getchar returns -1, scanf returns EOF
+					this.io.signalEof();
+				} else {
+					this.io.appendStdin(input);
+				}
 				this.needsInput = false;
 				// Re-execute sharing the existing step (don't create a duplicate)
 				yield* this.executeStatement(statements[i], true);

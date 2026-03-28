@@ -62,10 +62,21 @@
 			{isInteractive ? 'Program Console' : 'Console Output'}
 		</span>
 		{#if waitingForInput}
-			<span class="text-xs text-amber-400/80 flex items-center gap-1.5">
-				<span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-				Waiting for input...
-			</span>
+			<div class="flex items-center gap-2">
+				<span class="text-xs text-amber-400/80 flex items-center gap-1.5">
+					<span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+					Waiting for input...
+				</span>
+				{#if onEof}
+					<button
+						onclick={() => onEof?.()}
+						class="text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 px-2 py-0.5 rounded font-mono transition-colors"
+						title="Send EOF (Ctrl+D) — signals end of input"
+					>
+						Ctrl+D
+					</button>
+				{/if}
+			</div>
 		{/if}
 	</div>
 	<div class="h-32 overflow-y-auto p-3 font-mono text-sm" role="log" aria-live="polite">

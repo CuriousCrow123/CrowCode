@@ -10,7 +10,7 @@ export type RunResult = {
 
 export type InteractiveSession =
 	| { state: 'complete'; result: RunResult }
-	| { state: 'paused'; program: Program; errors: string[]; warnings: string[]; resume: (input: string) => Promise<InteractiveSession>; cancel: () => void };
+	| { state: 'paused'; program: Program; errors: string[]; warnings: string[]; resume: (input: string) => Promise<InteractiveSession>; sendEof: () => Promise<InteractiveSession>; cancel: () => void };
 
 const MAX_STEPS = 500;
 
@@ -100,6 +100,13 @@ export async function runProgramInteractive(source: string): Promise<Interactive
 				// Yield to let Svelte flush DOM updates
 				await Promise.resolve();
 				const next = generator.next(input);
+				return advance(next);
+			},
+			async sendEof(): Promise<InteractiveSession> {
+				if (resumed || cancelled) throw new Error('Session already resumed or cancelled');
+				resumed = true;
+				await Promise.resolve();
+				const next = generator.next(null);
 				return advance(next);
 			},
 			cancel() {

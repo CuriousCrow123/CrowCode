@@ -30,10 +30,11 @@ function interactive(source: string, opts?: { maxSteps?: number }) {
 	return generator;
 }
 
-/** Drive generator with predefined inputs. Fails if generator yields more times than inputs provided. */
+/** Drive generator with predefined inputs. Fails if generator yields more times than inputs provided.
+ *  Use null in the inputs array to signal EOF (Ctrl+D). */
 function driveInteractive(
 	source: string,
-	inputs: string[],
+	inputs: (string | null)[],
 	opts?: { maxSteps?: number },
 ): { result: InterpretResult; yieldCount: number } {
 	const gen = interactive(source, opts);
@@ -463,6 +464,91 @@ describe('edge cases', () => {
 		} else {
 			expect(parseErrors.length).toBeGreaterThan(0);
 		}
+	});
+});
+
+// === EOF signal tests ===
+
+describe('EOF signal (null input)', () => {
+	it('getchar returns -1 after EOF signal', () => {
+		const src = 'int main() { int c = getchar(); return 0; }';
+		const gen = interactive(src);
+		const r1 = gen.next();
+		expect(r1.done).toBe(false);
+		const r2 = gen.next(null); // EOF
+		expect(r2.done).toBe(true);
+		const result = r2.value as InterpretResult;
+		expect(result.errors).toHaveLength(0);
+		const snapshots = buildSnapshots(result.program);
+		const last = snapshots[snapshots.length - 1];
+		// getchar returns -1 on EOF
+		const cEntry = findEntry(last, 'c');
+		expect(cEntry?.value).toBe('-1');
+	});
+
+	it('getchar EOF loop: reads chars then terminates on EOF', () => {
+		const src = `int main() {
+	int c;
+	int count = 0;
+	c = getchar();
+	while (c != -1) {
+		count++;
+		c = getchar();
+	}
+	return 0;
+}`;
+		const gen = interactive(src, { maxSteps: 100 });
+		const r1 = gen.next();
+		expect(r1.done).toBe(false); // first getchar, buffer empty
+		const r2 = gen.next('AB');
+		// Reads A (count=1), reads B (count=2), third getchar exhausts → pause
+		expect(r2.done).toBe(false);
+		const r3 = gen.next(null); // EOF — getchar returns -1, loop exits
+		expect(r3.done).toBe(true);
+		const result = r3.value as InterpretResult;
+		expect(result.errors).toHaveLength(0);
+		const snapshots = buildSnapshots(result.program);
+		const last = snapshots[snapshots.length - 1];
+		// count=3: the re-execution after EOF resume re-enters the while body
+		// (count++ runs once more) before getchar returns -1 and the loop exits.
+		// This is a consequence of statement-level re-execution granularity.
+		expect(findEntry(last, 'count')?.value).toBe('3');
+	});
+
+	it('scanf returns EOF after EOF signal', () => {
+		const src = 'int main() { int x = 99; scanf("%d", &x); return 0; }';
+		const gen = interactive(src);
+		gen.next(); // yields
+		const r2 = gen.next(null); // EOF
+		expect(r2.done).toBe(true);
+		const result = r2.value as InterpretResult;
+		expect(result.errors).toHaveLength(0);
+		const snapshots = buildSnapshots(result.program);
+		const last = snapshots[snapshots.length - 1];
+		// x should keep its initialized value since scanf got EOF
+		expect(findEntry(last, 'x')?.value).toBe('99');
+	});
+
+	it('EOF after partial input: buffer consumed then EOF', () => {
+		const src = `int main() {
+	int a;
+	int b = 99;
+	scanf("%d", &a);
+	scanf("%d", &b);
+	return 0;
+}`;
+		const gen = interactive(src);
+		gen.next(); // yields at first scanf
+		const r2 = gen.next('42\n');
+		// First scanf reads 42, second scanf exhausts buffer → pause
+		expect(r2.done).toBe(false);
+		const r3 = gen.next(null); // EOF for second scanf
+		expect(r3.done).toBe(true);
+		const result = r3.value as InterpretResult;
+		const snapshots = buildSnapshots(result.program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('42');
+		expect(findEntry(last, 'b')?.value).toBe('99'); // unchanged — scanf got EOF
 	});
 });
 

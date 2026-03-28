@@ -25,7 +25,7 @@
 		| { state: 'editing' }
 		| { state: 'running' }
 		| { state: 'viewing'; program: Program; errors: string[]; warnings: string[] }
-		| { state: 'waiting_for_input'; program: Program; errors: string[]; warnings: string[]; resume: (input: string) => Promise<InteractiveSession>; cancel: () => void };
+		| { state: 'waiting_for_input'; program: Program; errors: string[]; warnings: string[]; resume: (input: string) => Promise<InteractiveSession>; sendEof: () => Promise<InteractiveSession>; cancel: () => void };
 
 	let mode = $state<AppMode>({ state: 'editing' });
 	let errors = $state<string[]>([]);
@@ -160,6 +160,7 @@
 
 		// Create generation-guarded resume
 		const sessionResume = session.resume;
+		const sessionSendEof = session.sendEof;
 		const sessionCancel = session.cancel;
 
 		mode = {
@@ -170,6 +171,10 @@
 			resume: async (input: string) => {
 				if (generation !== runGeneration) throw new Error('Stale session');
 				return sessionResume(input);
+			},
+			sendEof: async () => {
+				if (generation !== runGeneration) throw new Error('Stale session');
+				return sessionSendEof();
 			},
 			cancel: () => sessionCancel(),
 		};
@@ -198,10 +203,21 @@
 
 	function handleEof() {
 		if (mode.state !== 'waiting_for_input') return;
-		// Send empty string — the service will signal EOF
-		// Actually, we need to signal EOF through the resume path
-		// For now, send empty string which the IoState treats as no new input
-		handleSubmitInput('');
+		const eofFn = mode.sendEof;
+		const gen = runGeneration;
+
+		// Record EOF indicator in stdin entries
+		interactiveStdinEntries = [...interactiveStdinEntries, { text: '^D\n', afterStep: steps.length - 1 }];
+
+		mode = { state: 'running' };
+
+		eofFn().then((session) => {
+			handleInteractiveSession(session, gen, true);
+		}).catch((err) => {
+			if (gen !== runGeneration) return;
+			errors = [err instanceof Error ? err.message : String(err)];
+			mode = { state: 'editing' };
+		});
 	}
 
 	function stopInteractive() {
