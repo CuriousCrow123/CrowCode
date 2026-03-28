@@ -22,3 +22,6 @@ Thumbs.db
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .mcp.json
+
+# Generated
+src/lib/data/features.ts
