@@ -159,7 +159,7 @@
 		interactiveTranscript = buildTranscriptFromProgram(session.program);
 
 		const program = JSON.parse(JSON.stringify(session.program));
-		internalIndex = Math.max(0, program.steps.length - 1);
+		internalIndex = 0;
 		subStepMode = false;
 
 		// Create generation-guarded resume

@@ -1040,7 +1040,11 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 		}
 
 		if (!readResult) {
-			// Input exhaustion or match failure — stop processing
+			// Input exhaustion or match failure
+			// If buffer is now exhausted and EOF not signaled, request more input
+			if (ctx.io.isExhausted() && !ctx.io.isEofSignaled()) {
+				ctx.needsInput = true;
+			}
 			break;
 		}
 
