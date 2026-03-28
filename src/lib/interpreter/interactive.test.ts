@@ -252,23 +252,30 @@ describe('getchar interactive — all intercept paths', () => {
 		expect((r2.value as InterpretResult).errors).toHaveLength(0);
 	});
 
-	it('getchar loop pauses when buffer exhausted', () => {
+	it('getchar loop consumes buffer then pauses when exhausted', () => {
+		// Use a bounded loop (not EOF-terminated) because the interactive generator
+		// has no EOF signal — getchar always pauses for more input instead of returning -1.
 		const src = `int main() {
-	int c;
-	int count = 0;
-	c = getchar();
-	while (c != -1) {
-		count++;
-		c = getchar();
-	}
+	int c1 = getchar();
+	int c2 = getchar();
+	int c3 = getchar();
 	return 0;
 }`;
-		const gen = interactive(src, { maxSteps: 100 });
+		const gen = interactive(src);
 		const r1 = gen.next();
 		expect(r1.done).toBe(false); // first getchar, buffer empty
 		const r2 = gen.next('AB');
-		// Reads A (count=1), reads B (count=2), third getchar exhausts buffer → pause
+		// c1 reads 'A', c2 reads 'B' from buffer, c3 exhausts → pause
 		expect(r2.done).toBe(false);
+		const r3 = gen.next('C');
+		expect(r3.done).toBe(true);
+		const result = r3.value as InterpretResult;
+		expect(result.errors).toHaveLength(0);
+		const snapshots = buildSnapshots(result.program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'c1')?.value).toBe('65'); // 'A'
+		expect(findEntry(last, 'c2')?.value).toBe('66'); // 'B'
+		expect(findEntry(last, 'c3')?.value).toBe('67'); // 'C'
 	});
 
 	it('two getchar() in declarations — second reads from buffer', () => {
