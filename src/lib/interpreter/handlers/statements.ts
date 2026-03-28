@@ -1008,55 +1008,47 @@ function extractScanfTargetVar(arg: ASTNode): { name: string; hasAddressOf: bool
 	return null;
 }
 
-function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
+/**
+ * Core scanf reading logic — shared between statement-level handler and expression-level (stdlib) handler.
+ * Reads from IoState according to the format string, writes to target variables.
+ * Does NOT create steps or set ctx.needsInput — the caller decides.
+ */
+export function executeScanfReads(
+	ctx: HandlerContext,
+	call: ASTNode & { type: 'call_expression' },
+): { itemsAssigned: number; needsInput: boolean; assignments: string[]; isEof: boolean } {
+	const result = { itemsAssigned: 0, needsInput: false, assignments: [] as string[], isEof: false };
+
 	if (call.args.length < 1) {
 		ctx.errors.push('scanf: requires at least one argument');
-		return;
+		return result;
 	}
 
-	// Extract format string from AST
 	const fmtArg = call.args[0];
 	if (fmtArg.type !== 'string_literal') {
-		// Non-literal format string: can't parse at interpretation time
-		if (!sharesStep) {
-			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
-			ctx.stepCount++;
-		}
-		return;
+		return result;
 	}
 	const fmtStr = (fmtArg as ASTNode & { type: 'string_literal' }).value;
 	const tokens = parseScanfFormat(fmtStr);
 
-	if (!sharesStep) {
-		ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
-		ctx.stepCount++;
-	}
-
-	// Check for EOF / need input
+	// Check for EOF / need input before reading
 	if (ctx.io.isExhausted()) {
-		if (ctx.interactive && !ctx.io.isEofSignaled()) {
-			ctx.needsInput = true;
+		if (ctx.io.isEofSignaled() || !ctx.interactive) {
+			// In sync mode, exhausted buffer = EOF. In interactive mode, only EOF if explicitly signaled.
+			result.isEof = true;
+		} else {
+			result.needsInput = true;
 		}
-		return;
+		return result;
 	}
 
-	let itemsAssigned = 0;
-	let argIdx = 1; // pointer args start at index 1
-	const assignments: string[] = [];
+	let argIdx = 1;
 
 	for (const token of tokens) {
-		if (token.kind === 'whitespace') {
-			// Whitespace in format = skip whitespace in input (IoState handles this in readInt etc.)
-			continue;
-		}
-		if (token.kind === 'literal') {
-			// Literal match: consume the literal char from stdin (simplified — skip for v1)
-			continue;
-		}
-		// Specifier token
+		if (token.kind === 'whitespace') continue;
+		if (token.kind === 'literal') continue;
 		const spec = token;
 
-		// Read value from stdin based on specifier
 		let readResult: { value: number; consumed: string } | null = null;
 		switch (spec.specifier) {
 			case 'd':
@@ -1072,8 +1064,6 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 			case 's': {
 				const strResult = ctx.io.readString();
 				if (strResult) {
-					// For %s, we'd write to a char array — simplified for v1
-					// Just consume the input and note it in the description
 					readResult = { value: 0, consumed: strResult.consumed };
 				}
 				break;
@@ -1083,26 +1073,32 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 				readResult = ctx.io.readHexInt();
 				break;
 			default:
-				// Unsupported specifier — skip
 				continue;
 		}
 
 		if (!readResult) {
-			// Read failed — in interactive mode, pause for more input
-			// (readInt/readFloat reset position on failure, so isExhausted() may be false
-			//  even though the remaining content is just unconsumed whitespace)
-			if (ctx.interactive && !ctx.io.isEofSignaled()) {
-				ctx.needsInput = true;
+			// Read failed. Distinguish between:
+			// 1. Buffer exhausted or only whitespace remains → need more input (or EOF in sync)
+			// 2. Non-matching content (e.g., letters for %d) → match failure, return count so far
+			// readInt/readFloat reset position on failure, so isExhausted() may be false
+			// even when only whitespace remains (the whitespace was skipped then position reset).
+			if (!ctx.io.isEofSignaled()) {
+				const remaining = ctx.io.getStdinRemaining();
+				const onlyWhitespace = remaining.length === 0 || /^\s*$/.test(remaining);
+				if (onlyWhitespace) {
+					if (!ctx.interactive) {
+						result.isEof = true; // Sync mode: no more useful input = EOF
+					} else {
+						result.needsInput = true;
+					}
+				}
+				// else: non-matching content → match failure, don't pause
 			}
 			break;
 		}
 
-		if (spec.suppress) {
-			// %* — consume but don't assign, don't count
-			continue;
-		}
+		if (spec.suppress) continue;
 
-		// Write through to target variable
 		if (argIdx < call.args.length) {
 			const targetArg = call.args[argIdx];
 			const target = extractScanfTargetVar(targetArg);
@@ -1110,7 +1106,6 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 			if (target === null) {
 				ctx.errors.push(`scanf: argument ${argIdx} must be a pointer (missing &?)`);
 			} else if (!target.hasAddressOf) {
-				// Bare identifier without & — only valid for array types (arrays decay to pointers)
 				const v = ctx.memory.lookupVariable(target.name);
 				if (v && isArrayCType(v.type)) {
 					ctx.memory.setValue(target.name, readResult.value);
@@ -1119,24 +1114,39 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 				}
 			} else {
 				ctx.memory.setValue(target.name, readResult.value);
-				// Track for description enrichment
 				if (spec.specifier === 'c') {
 					const charRepr = readResult.value === 10 ? "'\\n'" : readResult.value === 9 ? "'\\t'" : `'${String.fromCharCode(readResult.value)}'`;
-					assignments.push(`${target.name} = ${charRepr} (${readResult.value})`);
+					result.assignments.push(`${target.name} = ${charRepr} (${readResult.value})`);
 				} else {
-					assignments.push(`${target.name} = ${readResult.value}`);
+					result.assignments.push(`${target.name} = ${readResult.value}`);
 				}
 			}
 			argIdx++;
 		}
-		itemsAssigned++;
+		result.itemsAssigned++;
+	}
+
+	return result;
+}
+
+function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
+	if (!sharesStep) {
+		ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+		ctx.stepCount++;
+	}
+
+	const result = executeScanfReads(ctx, call);
+
+	if (result.needsInput && ctx.interactive) {
+		ctx.needsInput = true;
+		return;
 	}
 
 	// Enrich step description with read results
-	if (assignments.length > 0) {
+	if (result.assignments.length > 0) {
 		const desc = formatPrintfDesc(ctx, call);
-		ctx.memory.updateStepDescription(desc, `→ ${assignments.join(', ')}`);
-	} else if (ctx.io.isExhausted()) {
+		ctx.memory.updateStepDescription(desc, `→ ${result.assignments.join(', ')}`);
+	} else if (result.isEof || ctx.io.isExhausted()) {
 		const desc = formatPrintfDesc(ctx, call);
 		ctx.memory.updateStepDescription(desc, '→ EOF');
 	}

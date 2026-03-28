@@ -8,6 +8,7 @@ export {
 	detectLeaks,
 	formatValue,
 	describeExpr,
+	executeScanfReads,
 } from './statements';
 export {
 	executeIf,

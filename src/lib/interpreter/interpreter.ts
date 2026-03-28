@@ -25,6 +25,7 @@ import {
 	detectLeaks,
 	formatValue,
 	describeExpr,
+	executeScanfReads,
 } from './handlers';
 
 type InterpretResult = {
@@ -90,7 +91,7 @@ export class Interpreter {
 			this.io,
 		);
 
-		this.evaluator = new Evaluator(this.memory, this.typeReg, (name, args, line, colStart, colEnd) => {
+		this.evaluator = new Evaluator(this.memory, this.typeReg, (name, args, line, colStart, colEnd, callNode) => {
 			const fn = this.memory.getFunction(name);
 			if (fn) {
 				const savedCtx = this.callContext;
@@ -117,6 +118,16 @@ export class Interpreter {
 					return driveGenerator(callFunction(this.ctx(), target.node, args, line));
 				}
 				return { value: { type: primitiveType('int'), data: 0, address: 0 }, error: `Invalid function pointer at line ${line}` };
+			}
+
+			// scanf needs AST access for target variable extraction — handle here, not in stdlib
+			if (name === 'scanf' && callNode) {
+				const scanfResult = executeScanfReads(this.ctx(), callNode);
+				if (scanfResult.needsInput && this.interactive) {
+					this.needsInput = true;
+				}
+				const returnVal = scanfResult.isEof ? -1 : scanfResult.itemsAssigned;
+				return { value: { type: primitiveType('int'), data: returnVal, address: 0 } };
 			}
 
 			return stdlib(name, args, line);

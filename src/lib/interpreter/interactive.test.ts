@@ -413,17 +413,19 @@ describe('edge cases', () => {
 		expect(scanfSteps.length).toBe(1);
 	});
 
-	it('type-mismatch input: letters for %d causes persistent re-pause', () => {
-		const src = 'int main() { int x; scanf("%d", &x); return 0; }';
+	it('type-mismatch input: letters for %d completes with x unchanged (match failure)', () => {
+		const src = 'int main() { int x = 99; scanf("%d", &x); return 0; }';
 		const gen = interactive(src);
 		gen.next(); // yields
 		const r2 = gen.next('abc\n');
-		expect(r2.done).toBe(false); // Re-pauses — readInt resets position, 'abc' stays in buffer
-		// NOTE: Unlike real C where scanf returns 0 and the program continues,
-		// CrowCode keeps re-pausing because 'abc' permanently blocks readInt.
-		// Sending more input won't help — 'abc' stays at the read position.
-		const r3 = gen.next('42\n');
-		expect(r3.done).toBe(false); // Still blocked — 'abc' precedes '42' in buffer
+		// Real C behavior: scanf returns 0 (no items matched), program continues.
+		// 'abc' stays in buffer but the program is not blocked.
+		expect(r2.done).toBe(true);
+		const result = r2.value as InterpretResult;
+		expect(result.errors).toHaveLength(0);
+		const snapshots = buildSnapshots(result.program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('99'); // unchanged — scanf matched 0 items
 	});
 
 	it('step limit prevents infinite interactive loop — generator terminates', () => {
@@ -549,6 +551,96 @@ describe('EOF signal (null input)', () => {
 		const last = snapshots[snapshots.length - 1];
 		expect(findEntry(last, 'a')?.value).toBe('42');
 		expect(findEntry(last, 'b')?.value).toBe('99'); // unchanged — scanf got EOF
+	});
+});
+
+// === scanf return value as expression ===
+
+describe('scanf return value in expressions', () => {
+	it('while(scanf(...) != -1) works with sync stdin', () => {
+		const src = `int main() {
+	int x;
+	int sum = 0;
+	while (scanf("%d", &x) != -1) {
+		sum = sum + x;
+	}
+	return 0;
+}`;
+		const syncResult = interpretSync(parser, src, { stdin: '10\n20\n30\n', maxSteps: 200 });
+		expect(syncResult.errors).toHaveLength(0);
+		const snapshots = buildSnapshots(syncResult.program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'sum')?.value).toBe('60');
+	});
+
+	it('while(scanf(...) != -1) pauses and resumes in interactive mode', () => {
+		const src = `int main() {
+	int x;
+	int sum = 0;
+	while (scanf("%d", &x) != -1) {
+		sum = sum + x;
+	}
+	return 0;
+}`;
+		const gen = interactive(src, { maxSteps: 200 });
+		const r1 = gen.next();
+		expect(r1.done).toBe(false); // pauses at first scanf
+
+		const r2 = gen.next('10\n');
+		expect(r2.done).toBe(false); // processes 10, loops, pauses at next scanf
+
+		const r3 = gen.next('20\n');
+		expect(r3.done).toBe(false); // processes 20, loops, pauses again
+
+		const r4 = gen.next(null); // EOF
+		expect(r4.done).toBe(true);
+		const result = r4.value as InterpretResult;
+		expect(result.errors).toHaveLength(0);
+		const snapshots = buildSnapshots(result.program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'sum')?.value).toBe('30');
+	});
+
+	it('scanf returns 0 on match failure — while loop exits', () => {
+		const src = `int main() {
+	int x;
+	int result = scanf("%d", &x);
+	return 0;
+}`;
+		const syncResult = interpretSync(parser, src, { stdin: 'abc\n', maxSteps: 100 });
+		expect(syncResult.errors).toHaveLength(0);
+		const snapshots = buildSnapshots(syncResult.program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'result')?.value).toBe('0');
+	});
+
+	it('scanf returns -1 on EOF', () => {
+		const src = `int main() {
+	int x;
+	int result = scanf("%d", &x);
+	return 0;
+}`;
+		const syncResult = interpretSync(parser, src, { stdin: '', maxSteps: 100 });
+		expect(syncResult.errors).toHaveLength(0);
+		const snapshots = buildSnapshots(syncResult.program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'result')?.value).toBe('-1');
+	});
+
+	it('scanf returns item count on success', () => {
+		const src = `int main() {
+	int a;
+	int b;
+	int n = scanf("%d %d", &a, &b);
+	return 0;
+}`;
+		const syncResult = interpretSync(parser, src, { stdin: '10 20\n', maxSteps: 100 });
+		expect(syncResult.errors).toHaveLength(0);
+		const snapshots = buildSnapshots(syncResult.program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'n')?.value).toBe('2');
+		expect(findEntry(last, 'a')?.value).toBe('10');
+		expect(findEntry(last, 'b')?.value).toBe('20');
 	});
 });
 
