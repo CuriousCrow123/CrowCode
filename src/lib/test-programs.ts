@@ -879,6 +879,61 @@ int main() {
     return 0;
 }`,
 	},
+	{
+		id: 'p16.7', category: 'stdio', name: 'Grade Calculator',
+		source: `#include <stdio.h>
+
+// Interactive grade calculator.
+// Enter scores one at a time, then Ctrl+D to finish.
+// Try it in Interactive mode!
+
+int main() {
+    int score;
+    int total = 0;
+    int count = 0;
+    int highest = 0;
+
+    printf("Enter scores (Ctrl+D to finish):\\n");
+
+    while (scanf("%d", &score) != -1) {
+        if (score < 0 || score > 100) {
+            printf("Invalid! Use 0-100.\\n");
+        } else {
+            total = total + score;
+            count = count + 1;
+            if (score > highest) {
+                highest = score;
+            }
+            printf("  Score #%d: %d\\n", count, score);
+        }
+    }
+
+    printf("\\n--- Results ---\\n");
+    printf("Scores entered: %d\\n", count);
+    printf("Total: %d\\n", total);
+    printf("Highest: %d\\n", highest);
+
+    if (count > 0) {
+        int avg = total / count;
+        printf("Average: %d\\n", avg);
+
+        if (avg >= 90) {
+            printf("Grade: A\\n");
+        } else if (avg >= 80) {
+            printf("Grade: B\\n");
+        } else if (avg >= 70) {
+            printf("Grade: C\\n");
+        } else {
+            printf("Grade: F\\n");
+        }
+    } else {
+        printf("No scores entered.\\n");
+    }
+
+    return 0;
+}`,
+		stdin: '85\n92\n78\n95\n88\n',
+	},
 ];
 
 /** Get unique categories in order of appearance. */
