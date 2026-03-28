@@ -18,6 +18,9 @@ import { buildStructChildSpecs, buildArrayChildSpecs } from '../stdlib';
 import { parseScanfFormat } from '../format';
 import { isArrayType as isArrayCType } from '../types-c';
 
+/** Functions that read from stdin — used to detect interactive pause points in assignments/declarations. */
+const INPUT_FUNCTIONS = new Set(['getchar', 'scanf', 'fgets', 'gets']);
+
 export function executeDeclaration(ctx: HandlerContext, node: ASTNode & { type: 'declaration' }, sharesStep: boolean): void {
 	const type = ctx.typeReg.resolve(node.declType);
 	let value: CValue;
@@ -82,6 +85,19 @@ export function executeDeclaration(ctx: HandlerContext, node: ASTNode & { type: 
 			else if (node.initializer.type === 'call_expression') {
 				const callResult = evaluateCallForDecl(ctx, node, type);
 				if (callResult.handled) return;
+				if (callResult.needsInput) {
+					// Create the step showing the declaration, then signal needsInput
+					value = ctx.memory.declareVariableRuntime(node.name, type, null);
+					displayValue = ctx.formatValue(type, null, false);
+					if (!sharesStep) {
+						const { desc, eval: evalStr } = formatDeclDescription(node.name, type, displayValue);
+						ctx.memory.beginStep({ line: node.line }, desc, evalStr);
+						ctx.stepCount++;
+					}
+					ctx.memory.emitVariableEntry(node.name, type, displayValue, value.address);
+					ctx.needsInput = true;
+					return;
+				}
 				if (callResult.value !== undefined) {
 					initData = callResult.value;
 					initWasFunctionCall = !!callResult.isUserFunc;
@@ -125,13 +141,18 @@ export function evaluateCallForDecl(
 	ctx: HandlerContext,
 	node: ASTNode & { type: 'declaration' },
 	declType: CType,
-): { handled: boolean; value?: number | null; isUserFunc?: boolean } {
+): { handled: boolean; value?: number | null; isUserFunc?: boolean; needsInput?: boolean } {
 	if (node.initializer?.type !== 'call_expression') return { handled: false };
 	const call = node.initializer;
 
 	if (call.callee === 'malloc' || call.callee === 'calloc') {
 		const handled = executeMallocDecl(ctx, node, call, declType);
 		return { handled };
+	}
+
+	// Intercept input functions for interactive mode
+	if (ctx.interactive && INPUT_FUNCTIONS.has(call.callee) && ctx.io.isExhausted() && !ctx.io.isEofSignaled()) {
+		return { handled: false, needsInput: true };
 	}
 
 	const isUserFunc = !!ctx.memory.getFunction(call.callee);
@@ -401,6 +422,19 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 		if ((call.callee === 'malloc' || call.callee === 'calloc') &&
 			(node.target?.type === 'identifier' || node.target?.type === 'member_expression')) {
 			executeMallocAssign(ctx, node, call, sharesStep);
+			return;
+		}
+	}
+
+	// Intercept input functions (getchar, etc.) in assignment RHS for interactive mode
+	if (ctx.interactive && node.operator === '=' && node.value?.type === 'call_expression') {
+		const call = node.value;
+		if (INPUT_FUNCTIONS.has(call.callee) && ctx.io.isExhausted() && !ctx.io.isEofSignaled()) {
+			if (!sharesStep) {
+				ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node));
+				ctx.stepCount++;
+			}
+			ctx.needsInput = true;
 			return;
 		}
 	}
