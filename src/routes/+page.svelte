@@ -17,9 +17,46 @@
 
 	const categories = getCategories();
 
+	// Fullscreen mode — uses browser Fullscreen API + hides logo
+	let fullscreen = $state(false);
+
+	function toggleFullscreen() {
+		if (!document.fullscreenElement) {
+			document.documentElement.requestFullscreen();
+		} else {
+			document.exitFullscreen();
+		}
+	}
+
+	function onFullscreenChange() {
+		fullscreen = !!document.fullscreenElement;
+	}
+
 	// I/O mode: pre-supplied or interactive
 	type IoMode = 'presupplied' | 'interactive';
 	let ioMode = $state<IoMode>('interactive');
+
+	// Editor resize
+	let editorHeight = $state(typeof window !== 'undefined' ? Math.round(window.innerHeight * 0.55) : 500);
+	const EDITOR_MIN_HEIGHT = 120;
+	const EDITOR_MAX_HEIGHT = 900;
+
+	function startEditorResize(e: PointerEvent) {
+		const startY = e.clientY;
+		const startHeight = editorHeight;
+		const target = e.currentTarget as HTMLElement;
+		target.setPointerCapture(e.pointerId);
+
+		function onMove(ev: PointerEvent) {
+			editorHeight = Math.min(EDITOR_MAX_HEIGHT, Math.max(EDITOR_MIN_HEIGHT, startHeight + (ev.clientY - startY)));
+		}
+		function onUp() {
+			target.removeEventListener('pointermove', onMove);
+			target.removeEventListener('pointerup', onUp);
+		}
+		target.addEventListener('pointermove', onMove);
+		target.addEventListener('pointerup', onUp);
+	}
 
 	// Mode state machine
 	type AppMode =
@@ -485,15 +522,38 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
+<svelte:document onfullscreenchange={onFullscreenChange} />
 
-<main class="main-container">
-	<header class="logo-header">
-		<div class="logo-row">
-			<svg class="crow-icon" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><ellipse cx="100" cy="120" rx="52" ry="48" fill="#1a1a2e"/><path d="M 60 138 Q 44 148 30 160 Q 48 155 62 148" fill="#16213e" stroke="#0f1626" stroke-width="1"/><path d="M 57 134 Q 38 144 22 155 Q 42 148 58 142" fill="#1a1a2e" stroke="#0f1626" stroke-width="1"/><path d="M 63 142 Q 48 154 36 168 Q 52 160 65 152" fill="#16213e" stroke="#0f1626" stroke-width="1"/><ellipse cx="85" cy="128" rx="36" ry="30" fill="#16213e"/><path d="M 60 115 Q 75 125 62 145" stroke="#252b4a" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M 70 112 Q 82 122 72 142" stroke="#252b4a" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M 80 111 Q 90 120 82 140" stroke="#252b4a" stroke-width="1.5" fill="none" stroke-linecap="round"/><circle cx="120" cy="72" r="34" fill="#1a1a2e"/><ellipse cx="132" cy="68" rx="14" ry="15" fill="#ffffff"/><circle cx="134" cy="68" r="9" fill="#2d2d2d"/><circle cx="136" cy="66" r="5" fill="#000000"/><circle cx="138" cy="63" r="3" fill="#ffffff"/><circle cx="133" cy="70" r="1.5" fill="#ffffff" opacity="0.7"/><path d="M 148 72 L 172 78 L 148 84 Z" fill="#2a2a3e"/><path d="M 148 78 L 172 78 L 148 84 Z" fill="#1a1a2e"/><ellipse cx="140" cy="84" rx="8" ry="5" fill="#e8587a" opacity="0.3"/><path d="M 108 42 Q 102 28 110 22 Q 112 34 115 40" fill="#1a1a2e"/><path d="M 115 40 Q 112 24 120 16 Q 120 30 120 38" fill="#16213e"/><path d="M 120 40 Q 120 22 130 18 Q 126 32 124 40" fill="#1a1a2e"/><g fill="none" stroke="#1a1a2e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M 90 165 L 90 182 M 84 182 L 90 182 L 96 182"/><path d="M 110 165 L 110 182 M 104 182 L 110 182 L 116 182"/></g></svg>
-			<h1 class="wordmark">CrowCode</h1>
-		</div>
-		<p class="tagline">write <span class="dot">&middot;</span> run <span class="dot">&middot;</span> visualize</p>
-	</header>
+<main class="main-container" class:fullscreen>
+	<!-- Fullscreen toggle -->
+	<button
+		onclick={toggleFullscreen}
+		class="fixed top-3 right-3 z-50 p-1.5 rounded-md bg-zinc-800/80 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/80 transition-colors backdrop-blur-sm"
+		title={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+		aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+	>
+		{#if fullscreen}
+			<!-- Collapse/minimize icon -->
+			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" />
+			</svg>
+		{:else}
+			<!-- Expand/fullscreen icon -->
+			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+			</svg>
+		{/if}
+	</button>
+
+	{#if !fullscreen}
+		<header class="logo-header">
+			<div class="logo-row">
+				<svg class="crow-icon" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><ellipse cx="100" cy="120" rx="52" ry="48" fill="#1a1a2e"/><path d="M 60 138 Q 44 148 30 160 Q 48 155 62 148" fill="#16213e" stroke="#0f1626" stroke-width="1"/><path d="M 57 134 Q 38 144 22 155 Q 42 148 58 142" fill="#1a1a2e" stroke="#0f1626" stroke-width="1"/><path d="M 63 142 Q 48 154 36 168 Q 52 160 65 152" fill="#16213e" stroke="#0f1626" stroke-width="1"/><ellipse cx="85" cy="128" rx="36" ry="30" fill="#16213e"/><path d="M 60 115 Q 75 125 62 145" stroke="#252b4a" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M 70 112 Q 82 122 72 142" stroke="#252b4a" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M 80 111 Q 90 120 82 140" stroke="#252b4a" stroke-width="1.5" fill="none" stroke-linecap="round"/><circle cx="120" cy="72" r="34" fill="#1a1a2e"/><ellipse cx="132" cy="68" rx="14" ry="15" fill="#ffffff"/><circle cx="134" cy="68" r="9" fill="#2d2d2d"/><circle cx="136" cy="66" r="5" fill="#000000"/><circle cx="138" cy="63" r="3" fill="#ffffff"/><circle cx="133" cy="70" r="1.5" fill="#ffffff" opacity="0.7"/><path d="M 148 72 L 172 78 L 148 84 Z" fill="#2a2a3e"/><path d="M 148 78 L 172 78 L 148 84 Z" fill="#1a1a2e"/><ellipse cx="140" cy="84" rx="8" ry="5" fill="#e8587a" opacity="0.3"/><path d="M 108 42 Q 102 28 110 22 Q 112 34 115 40" fill="#1a1a2e"/><path d="M 115 40 Q 112 24 120 16 Q 120 30 120 38" fill="#16213e"/><path d="M 120 40 Q 120 22 130 18 Q 126 32 124 40" fill="#1a1a2e"/><g fill="none" stroke="#1a1a2e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M 90 165 L 90 182 M 84 182 L 90 182 L 96 182"/><path d="M 110 165 L 110 182 M 104 182 L 110 182 L 116 182"/></g></svg>
+				<h1 class="wordmark">CrowCode</h1>
+			</div>
+			<p class="tagline">write <span class="dot">&middot;</span> run <span class="dot">&middot;</span> visualize</p>
+		</header>
+	{/if}
 
 	<!-- Toolbar: tabs + examples + run/edit -->
 	<div class="w-full max-w-7xl flex items-center gap-3 mb-4 flex-wrap">
@@ -571,10 +631,10 @@
 	{/if}
 
 	<!-- Main area: editor + memory view -->
-	<div class="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-4 overflow-hidden">
+	<div class="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-4">
 		<!-- Left column: Code Editor + I/O -->
-		<div class="flex flex-col gap-3 h-[70vh]">
-			<div class="h-[55vh] shrink-0">
+		<div class="flex flex-col gap-3 min-h-[70vh]">
+			<div class="shrink-0" style="height: {editorHeight}px">
 				<CodeEditor
 					source={store.activeTab.source}
 					location={editorLocation}
@@ -582,7 +642,15 @@
 					onchange={mode.state === 'editing' ? handleSourceChange : undefined}
 				/>
 			</div>
-			<div class="min-h-0 flex-1 flex flex-col gap-3 overflow-y-auto">
+			<!-- Editor resize handle -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				class="h-2 -mt-2 cursor-ns-resize flex items-center justify-center group"
+				onpointerdown={startEditorResize}
+			>
+				<div class="w-8 h-0.5 rounded-full bg-zinc-700 group-hover:bg-zinc-500 group-active:bg-zinc-400 transition-colors"></div>
+			</div>
+			<div class="flex flex-col gap-3">
 				<!-- I/O mode toggle (visible when program uses stdin functions) -->
 				{#if needsStdin && mode.state === 'editing'}
 					<div class="flex items-center gap-2 shrink-0">
@@ -628,7 +696,7 @@
 		</div>
 
 		<!-- Memory View -->
-		<div class="flex flex-col h-[70vh]">
+		<div class="flex flex-col min-h-[70vh]">
 			{#if mode.state === 'viewing' || mode.state === 'waiting_for_input'}
 				<div class="mb-3 shrink-0">
 					<StepControls
