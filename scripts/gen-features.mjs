@@ -6,7 +6,7 @@
  * Wired as prebuild/predev in package.json.
  */
 
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -219,5 +219,6 @@ for (const f of features) {
 
 tsLines.push('];', '');
 
+mkdirSync(dirname(OUTPUT), { recursive: true });
 writeFileSync(OUTPUT, tsLines.join('\n'), 'utf-8');
 console.log(`gen-features: wrote ${features.length} features to src/lib/data/features.ts`);
