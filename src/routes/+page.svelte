@@ -7,7 +7,7 @@
 	import CodeEditor from '$lib/components/CodeEditor.svelte';
 	import MemoryView from '$lib/components/MemoryView.svelte';
 	import StepControls from '$lib/components/StepControls.svelte';
-	import ConsolePanel from '$lib/components/ConsolePanel.svelte';
+	import ConsolePanel, { type ConsoleSegment } from '$lib/components/ConsolePanel.svelte';
 	import StdinInput from '$lib/components/StdinInput.svelte';
 	import { buildSnapshots, buildConsoleOutputs, getVisibleIndices, nearestVisibleIndex } from '$lib/engine';
 
@@ -31,8 +31,8 @@
 	let errors = $state<string[]>([]);
 	let warnings = $state<string[]>([]);
 
-	// Interactive mode: history of user-submitted stdin (echoed in console)
-	let interactiveStdinHistory = $state<string[]>([]);
+	// Interactive mode: history of user-submitted stdin with the step index they were entered at
+	let interactiveStdinEntries = $state<{ text: string; afterStep: number }[]>([]);
 
 	// Per-tab run result cache
 	interface CachedRun {
@@ -52,7 +52,7 @@
 		mode = { state: 'running' };
 		errors = [];
 		warnings = [];
-		interactiveStdinHistory = [];
+		interactiveStdinEntries = [];
 
 		try {
 			if (ioMode === 'interactive') {
@@ -180,8 +180,8 @@
 		const resumeFn = mode.resume;
 		const gen = runGeneration;
 
-		// Echo input into stdin history (shown in console)
-		interactiveStdinHistory = [...interactiveStdinHistory, text];
+		// Record stdin entry with the step it was provided at (for interleaved display)
+		interactiveStdinEntries = [...interactiveStdinEntries, { text, afterStep: steps.length - 1 }];
 
 		// Flip state SYNCHRONOUSLY before async work (prevents double-submit)
 		mode = { state: 'running' };
@@ -323,6 +323,45 @@
 			: ''
 	);
 	const hasConsoleOutput = $derived(consoleOutputs.some((o) => o.length > 0));
+
+	/**
+	 * Build interleaved console segments for interactive mode.
+	 * Walks steps up to internalIndex, emitting stdout segments and inserting
+	 * stdin echoes at the step where the user provided input.
+	 */
+	const interactiveSegments = $derived.by((): ConsoleSegment[] => {
+		if (ioMode !== 'interactive') return [];
+		const segs: ConsoleSegment[] = [];
+		let stdinIdx = 0;
+		for (let i = 0; i <= internalIndex && i < steps.length; i++) {
+			const step = steps[i];
+			if (step?.ioEvents) {
+				for (const e of step.ioEvents) {
+					if (e.kind === 'write' && e.target === 'stdout') {
+						segs.push({ type: 'stdout', text: e.text });
+					}
+				}
+			}
+			// Insert stdin echo after the step where user provided input
+			while (stdinIdx < interactiveStdinEntries.length && interactiveStdinEntries[stdinIdx].afterStep === i) {
+				segs.push({ type: 'stdin', text: interactiveStdinEntries[stdinIdx].text });
+				stdinIdx++;
+			}
+		}
+		return segs;
+	});
+
+	/** For pre-supplied mode: simple segments from stdout string. */
+	const preSuppliedSegments = $derived.by((): ConsoleSegment[] => {
+		if (currentConsoleOutput.length === 0) return [];
+		if (newConsoleOutput.length > 0) {
+			return [
+				{ type: 'stdout', text: previousConsoleOutput },
+				{ type: 'stdout', text: newConsoleOutput },
+			];
+		}
+		return [{ type: 'stdout', text: currentConsoleOutput }];
+	});
 
 	// stdin consumption tracking
 	const stdinConsumed = $derived.by(() => {
@@ -527,17 +566,15 @@
 				{/if}
 				{#if mode.state === 'viewing' && hasConsoleOutput}
 					<ConsolePanel
-						stdout={currentConsoleOutput}
-						newOutput={newConsoleOutput}
+						segments={preSuppliedSegments}
+						newOutputFrom={newConsoleOutput.length > 0 ? preSuppliedSegments.length - 1 : -1}
 					/>
 				{/if}
 			{:else}
-				<!-- Interactive mode: integrated console with output + inline input -->
-				{#if (mode.state === 'viewing' || mode.state === 'waiting_for_input') && (hasConsoleOutput || mode.state === 'waiting_for_input')}
+				<!-- Interactive mode: integrated console with interleaved output + input -->
+				{#if (mode.state === 'viewing' || mode.state === 'waiting_for_input') && (hasConsoleOutput || interactiveSegments.length > 0 || mode.state === 'waiting_for_input')}
 					<ConsolePanel
-						stdout={currentConsoleOutput}
-						newOutput={newConsoleOutput}
-						stdinHistory={interactiveStdinHistory}
+						segments={interactiveSegments}
 						waitingForInput={mode.state === 'waiting_for_input' && internalIndex >= steps.length - 1}
 						onSubmitInput={handleSubmitInput}
 						onEof={handleEof}

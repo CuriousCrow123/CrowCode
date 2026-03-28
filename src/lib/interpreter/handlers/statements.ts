@@ -776,13 +776,13 @@ export function* executeCallStatement(ctx: HandlerContext, call: ASTNode & { typ
 
 	// getchar: handled in stdlib via evaluator (returns int value)
 	if (call.callee === 'getchar') {
+		if (ctx.io.isExhausted() && ctx.interactive && !ctx.io.isEofSignaled()) {
+			ctx.needsInput = true;
+			return;
+		}
 		if (!sharesStep) {
 			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
 			ctx.stepCount++;
-		}
-		if (ctx.interactive && !ctx.io.isEofSignaled()) {
-			ctx.needsInput = true;
-			return;
 		}
 		const result = ctx.evaluator.eval(call);
 		if (result.error) ctx.errors.push(result.error);
@@ -977,17 +977,24 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 	const fmtStr = (fmtArg as ASTNode & { type: 'string_literal' }).value;
 	const tokens = parseScanfFormat(fmtStr);
 
-	if (!sharesStep) {
-		ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
-		ctx.stepCount++;
-	}
-
-	// Check for EOF before first read
+	// Check for EOF before creating step — if interactive and needs input,
+	// don't create a step (it will be created on re-execution after resume)
 	if (ctx.io.isExhausted()) {
 		if (ctx.interactive && !ctx.io.isEofSignaled()) {
 			ctx.needsInput = true;
+			return;
+		}
+		// Pre-supplied EOF: create the step showing EOF
+		if (!sharesStep) {
+			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+			ctx.stepCount++;
 		}
 		return;
+	}
+
+	if (!sharesStep) {
+		ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+		ctx.stepCount++;
 	}
 
 	let itemsAssigned = 0;
@@ -1085,25 +1092,27 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 }
 
 function executeFgetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
+	if (call.args.length < 2) {
+		if (!sharesStep) { ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call)); ctx.stepCount++; }
+		ctx.errors.push('fgets: requires at least 2 arguments');
+		return;
+	}
+
+	// Check for empty stdin before creating step
+	if (ctx.io.isExhausted()) {
+		if (ctx.interactive && !ctx.io.isEofSignaled()) { ctx.needsInput = true; return; }
+		if (!sharesStep) { ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call)); ctx.stepCount++; }
+		return;
+	}
+
 	if (!sharesStep) {
 		ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
 		ctx.stepCount++;
 	}
 
-	if (call.args.length < 2) {
-		ctx.errors.push('fgets: requires at least 2 arguments');
-		return;
-	}
-
 	// Evaluate size argument
 	const sizeResult = ctx.evaluator.eval(call.args[1]);
 	const maxLen = sizeResult.value?.data ?? 256;
-
-	// Check for empty stdin before reading
-	if (ctx.io.isExhausted()) {
-		if (ctx.interactive && !ctx.io.isEofSignaled()) ctx.needsInput = true;
-		return;
-	}
 
 	// Read from stdin
 	const result = ctx.io.readLine(maxLen);
@@ -1125,13 +1134,10 @@ function executeGetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expr
 		return;
 	}
 
-	// Check for empty stdin before reading
+	// Check for empty stdin before creating step
 	if (ctx.io.isExhausted()) {
-		if (!sharesStep) {
-			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
-			ctx.stepCount++;
-		}
-		if (ctx.interactive && !ctx.io.isEofSignaled()) ctx.needsInput = true;
+		if (ctx.interactive && !ctx.io.isEofSignaled()) { ctx.needsInput = true; return; }
+		if (!sharesStep) { ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call)); ctx.stepCount++; }
 		return;
 	}
 

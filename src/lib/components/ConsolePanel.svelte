@@ -1,16 +1,17 @@
 <script lang="ts">
+	export type ConsoleSegment = { type: 'stdout' | 'stdin'; text: string };
+
 	let {
-		stdout,
-		newOutput,
-		stdinHistory = [],
+		segments = [],
+		newOutputFrom = -1,
 		waitingForInput = false,
 		onSubmitInput,
 		onEof,
 	}: {
-		stdout: string;
-		newOutput: string;
-		/** Echoed stdin entries interleaved after each pause point's output. */
-		stdinHistory?: string[];
+		/** Interleaved output segments (stdout + echoed stdin). */
+		segments?: ConsoleSegment[];
+		/** Index in segments where new (highlighted) output starts. -1 = no highlighting. */
+		newOutputFrom?: number;
 		waitingForInput?: boolean;
 		onSubmitInput?: (text: string) => void;
 		onEof?: () => void;
@@ -21,8 +22,7 @@
 	let inputEl: HTMLInputElement;
 
 	$effect(() => {
-		stdout;
-		stdinHistory;
+		segments;
 		waitingForInput;
 		scrollTarget?.scrollIntoView({ behavior: 'smooth', block: 'end' });
 	});
@@ -33,14 +33,8 @@
 		}
 	});
 
-	const previousOutput = $derived(
-		newOutput.length > 0 && stdout.endsWith(newOutput)
-			? stdout.slice(0, stdout.length - newOutput.length)
-			: stdout
-	);
-
-	const hasNewOutput = $derived(newOutput.length > 0);
-	const hasContent = $derived(stdout.length > 0 || stdinHistory.length > 0 || waitingForInput);
+	const hasContent = $derived(segments.length > 0 || waitingForInput);
+	const isInteractive = $derived(waitingForInput || segments.some((s) => s.type === 'stdin'));
 
 	function handleSubmit(e: Event) {
 		e.preventDefault();
@@ -65,7 +59,7 @@
 <div class="rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden">
 	<div class="px-3 py-1.5 bg-zinc-900/80 border-b border-zinc-800 flex items-center justify-between">
 		<span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">
-			{waitingForInput || stdinHistory.length > 0 ? 'Program Console' : 'Console Output'}
+			{isInteractive ? 'Program Console' : 'Console Output'}
 		</span>
 		{#if waitingForInput}
 			<span class="text-xs text-amber-400/80 flex items-center gap-1.5">
@@ -78,7 +72,7 @@
 		{#if !hasContent}
 			<span class="text-zinc-600 italic">No output yet</span>
 		{:else}
-			<pre class="whitespace-pre-wrap break-all m-0"><span class="text-zinc-300">{previousOutput}</span>{#if hasNewOutput}<span class="text-emerald-400 bg-emerald-400/10">{newOutput}</span>{/if}{#each stdinHistory as entry}<span class="text-blue-400">{entry}</span>{/each}</pre>
+			<pre class="whitespace-pre-wrap break-all m-0">{#each segments as seg, i}{#if seg.type === 'stdin'}<span class="text-blue-400">{seg.text}</span>{:else if newOutputFrom >= 0 && i >= newOutputFrom}<span class="text-emerald-400 bg-emerald-400/10">{seg.text}</span>{:else}<span class="text-zinc-300">{seg.text}</span>{/if}{/each}</pre>
 			{#if waitingForInput}
 				<form onsubmit={handleSubmit} class="mt-0">
 					<input
