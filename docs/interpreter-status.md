@@ -155,7 +155,8 @@ Test suite: 716 passing, 0 skipped (716 total across 21 files)
 | `fputs(str, stream)` | Writes string to stdout or stderr. |
 | `fgets(buf, n, stdin)` | Reads up to n-1 chars from stdin (fgets semantics: includes `\n`, null-terminates). Result shown as quoted string on heap entry. |
 | `gets(buf)` | Reads until newline (no bounds checking). Step description warns about unsafe usage. |
-| `sprintf(buf, fmt, ...)` | Supports `%d`, `%i`, `%x`, `%c`, `%s`, `%%`. Result shown as heap value. |
+| `sprintf(buf, fmt, ...)` | Byte-by-byte writes to stack arrays and heap blocks. Supports `%d`, `%i`, `%x`, `%c`, `%s`, `%%`. Also sets parent entry to quoted string for summary. |
+| `snprintf(buf, n, fmt, ...)` | Same as sprintf with size limit. Truncates to n-1 chars + null terminator. |
 | `strlen(s)` | Walks char bytes from pointer address. Max 10,000 bytes. |
 | `strcpy(dst, src)` | Copies bytes including null terminator. Updates heap display. |
 | `strcmp(a, b)` | Returns -1, 0, or 1. |
@@ -172,7 +173,7 @@ Test suite: 716 passing, 0 skipped (716 total across 21 files)
 | Conversion | `atoi`, `atof`, `strtol`, `strtoul`, `strtod` |
 | Math | `sin`, `cos`, `tan`, `log`, `exp`, `ceil`, `floor`, `fabs`, `fmod`, `round` |
 | Character | `isalpha`, `isdigit`, `isspace`, `toupper`, `tolower` |
-| I/O (advanced) | `sscanf`, `fscanf`, `snprintf`, `fopen`, `fclose`, `fread`, `fwrite` |
+| I/O (advanced) | `sscanf`, `fscanf`, `fopen`, `fclose`, `fread`, `fwrite` |
 | Process | `exit`, `abort`, `atexit`, `system` |
 | Random | `rand`, `srand` |
 | Search/Sort | `qsort`, `bsearch` |
@@ -213,7 +214,9 @@ Test suite: 716 passing, 0 skipped (716 total across 21 files)
 | `long` (64-bit) | Parsed and sized (8 bytes) | Arithmetic treated as 32-bit in evaluator | Would need BigInt or separate evaluation path |
 | Preprocessor | `#include` ignored gracefully | `#define`, `#ifdef`, etc. ignored with warning | By design — not a real preprocessor |
 | 3D+ arrays | Type system supports nesting | Only 2D write/init tested; 3D untested | Medium difficulty to fix |
-| `sprintf` format specifiers | `%d`, `%i`, `%x`, `%c`, `%s`, `%%` | `%f`, `%p`, `%u` not supported in sprintf (they work in printf). Byte-by-byte writes to stack arrays not yet implemented. | |
+| `sprintf` format specifiers | `%d`, `%i`, `%x`, `%c`, `%s`, `%%` with byte-by-byte writes | `%f`, `%p`, `%u` not yet supported in sprintf's internal formatter (they work in printf). | `evaluateSprintfResult` uses a simpler parser than `applyPrintfFormat` |
+| `scanf` format specifiers | `%d`, `%i`, `%c`, `%f`, `%x`, `%*` (suppression) | `%i` octal/hex prefix not implemented (treated as `%d`). `%s` consumes but doesn't write to char array byte-by-byte. | |
+| printf/scanf length modifiers | Length modifiers parsed and ignored | `%ld`, `%lf`, `%zu` not distinguished from `%d`, `%f` | `%lf` is common in student code with `double` |
 | Empty loop bodies | Doesn't crash, loop variable advances | May produce interpreter errors internally | |
 
 ---
@@ -247,9 +250,10 @@ Test suite: 716 passing, 0 skipped (716 total across 21 files)
 ### Runtime Limitations
 | Limitation | Notes |
 |-----------|-------|
-| Pre-supplied stdin only | stdin must be provided before execution (no interactive/blocking input) |
+| Pre-supplied stdin only | stdin must be provided before execution (no interactive/blocking input). Per-tab stdin not persisted across tab switches. |
 | No FILE* operations | `fopen`/`fclose`/`fread`/`fwrite` not supported — only stdin/stdout/stderr |
-| `printf %s` shows `(string)` | String pointer resolution from memory not yet implemented for `%s` format specifier |
+| No `sscanf`/`fscanf` | Only `scanf` (reads from stdin). `sscanf` (from string) and `fscanf` (from file) not implemented. |
+| No `%e`/`%g` format specifiers | Scientific notation (`%e`, `%E`, `%g`, `%G`) not supported in printf or scanf |
 | Single source file | No multi-file compilation or linking |
 | No recursive struct pointer types | `struct Node { struct Node *next; }` — pointer fields work but self-referential layout depends on registry order |
 
