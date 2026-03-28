@@ -2,7 +2,7 @@ import type { ASTNode } from '../types';
 import type { HandlerContext } from './types';
 import { typeToString } from '../types-c';
 
-export function executeIf(ctx: HandlerContext, node: ASTNode & { type: 'if_statement' }): void {
+export function* executeIf(ctx: HandlerContext, node: ASTNode & { type: 'if_statement' }): Generator<void, void, void> {
 	const condResult = ctx.evaluator.eval(node.condition);
 	if (condResult.error) {
 		ctx.errors.push(condResult.error);
@@ -23,13 +23,13 @@ export function executeIf(ctx: HandlerContext, node: ASTNode & { type: 'if_state
 	ctx.stepCount++;
 
 	if (taken) {
-		ctx.dispatch(node.consequent);
+		yield* ctx.dispatch(node.consequent);
 	} else if (node.alternate) {
-		ctx.dispatch(node.alternate);
+		yield* ctx.dispatch(node.alternate);
 	}
 }
 
-export function executeFor(ctx: HandlerContext, node: ASTNode & { type: 'for_statement' }): void {
+export function* executeFor(ctx: HandlerContext, node: ASTNode & { type: 'for_statement' }): Generator<void, void, void> {
 	const hasDecl = node.init?.type === 'declaration';
 
 	if (node.init) {
@@ -41,7 +41,7 @@ export function executeFor(ctx: HandlerContext, node: ASTNode & { type: 'for_sta
 			ctx.memory.pushBlock('for');
 		}
 
-		ctx.dispatch(node.init, true);
+		yield* ctx.dispatch(node.init, true);
 		if (!hasDecl) {
 			ctx.memory.pushScopeRuntime('for');
 			ctx.memory.pushBlock('for');
@@ -90,7 +90,7 @@ export function executeFor(ctx: HandlerContext, node: ASTNode & { type: 'for_sta
 			ctx.stepCount++;
 		}
 
-		ctx.dispatch(node.body);
+		yield* ctx.dispatch(node.body);
 
 		if (ctx.breakFlag) {
 			ctx.breakFlag = false;
@@ -100,6 +100,7 @@ export function executeFor(ctx: HandlerContext, node: ASTNode & { type: 'for_sta
 			ctx.continueFlag = false;
 		}
 		if (ctx.returnFlag) break;
+		if (ctx.needsInput) break;
 
 		if (node.update) {
 			const beforeVal = describeUpdateBefore(ctx, node.update);
@@ -139,7 +140,7 @@ export function executeFor(ctx: HandlerContext, node: ASTNode & { type: 'for_sta
 	ctx.memory.popScopeRuntime();
 }
 
-export function executeWhile(ctx: HandlerContext, node: ASTNode & { type: 'while_statement' }): void {
+export function* executeWhile(ctx: HandlerContext, node: ASTNode & { type: 'while_statement' }): Generator<void, void, void> {
 	let iteration = 0;
 	const hasDecls = bodyHasDeclarations(node.body);
 	const condText = ctx.describeExpr(node.condition);
@@ -182,14 +183,15 @@ export function executeWhile(ctx: HandlerContext, node: ASTNode & { type: 'while
 		ctx.stepCount++;
 
 		if (node.body.type === 'compound_statement') {
-			ctx.dispatchStatements(node.body.children);
+			yield* ctx.dispatchStatements(node.body.children);
 		} else {
-			ctx.dispatch(node.body);
+			yield* ctx.dispatch(node.body);
 		}
 
 		if (ctx.breakFlag) { ctx.breakFlag = false; break; }
 		if (ctx.continueFlag) { ctx.continueFlag = false; }
 		if (ctx.returnFlag) break;
+		if (ctx.needsInput) break;
 
 		iteration++;
 	}
@@ -200,7 +202,7 @@ export function executeWhile(ctx: HandlerContext, node: ASTNode & { type: 'while
 	}
 }
 
-export function executeDoWhile(ctx: HandlerContext, node: ASTNode & { type: 'do_while_statement' }): void {
+export function* executeDoWhile(ctx: HandlerContext, node: ASTNode & { type: 'do_while_statement' }): Generator<void, void, void> {
 	let iteration = 0;
 	const hasDecls = bodyHasDeclarations(node.body);
 	const condText = ctx.describeExpr(node.condition);
@@ -219,14 +221,15 @@ export function executeDoWhile(ctx: HandlerContext, node: ASTNode & { type: 'do_
 		}
 
 		if (node.body.type === 'compound_statement') {
-			ctx.dispatchStatements(node.body.children);
+			yield* ctx.dispatchStatements(node.body.children);
 		} else {
-			ctx.dispatch(node.body);
+			yield* ctx.dispatch(node.body);
 		}
 
 		if (ctx.breakFlag) { ctx.breakFlag = false; break; }
 		if (ctx.continueFlag) { ctx.continueFlag = false; }
 		if (ctx.returnFlag) break;
+		if (ctx.needsInput) break;
 
 		const condResult = ctx.evaluator.eval(node.condition);
 		if (condResult.error) {
@@ -261,7 +264,7 @@ export function executeDoWhile(ctx: HandlerContext, node: ASTNode & { type: 'do_
 	}
 }
 
-export function executeSwitch(ctx: HandlerContext, node: ASTNode & { type: 'switch_statement' }): void {
+export function* executeSwitch(ctx: HandlerContext, node: ASTNode & { type: 'switch_statement' }): Generator<void, void, void> {
 	const condResult = ctx.evaluator.eval(node.expression);
 	if (condResult.error) {
 		ctx.errors.push(condResult.error);
@@ -297,20 +300,21 @@ export function executeSwitch(ctx: HandlerContext, node: ASTNode & { type: 'swit
 
 	for (let i = startIndex; i < node.cases.length; i++) {
 		const clause = node.cases[i];
-		ctx.dispatchStatements(clause.statements);
+		yield* ctx.dispatchStatements(clause.statements);
 
 		if (ctx.breakFlag) {
 			ctx.breakFlag = false;
 			break;
 		}
 		if (ctx.returnFlag || ctx.continueFlag) break;
+		if (ctx.needsInput) break;
 		if (ctx.stepCount >= ctx.maxSteps) break;
 	}
 
 	ctx.breakFlag = savedBreak;
 }
 
-export function executeBlock(ctx: HandlerContext, node: ASTNode & { type: 'compound_statement' }): void {
+export function* executeBlock(ctx: HandlerContext, node: ASTNode & { type: 'compound_statement' }): Generator<void, void, void> {
 	const hasDecls = node.children.some((c) => c.type === 'declaration');
 
 	if (hasDecls) {
@@ -320,7 +324,7 @@ export function executeBlock(ctx: HandlerContext, node: ASTNode & { type: 'compo
 		ctx.memory.pushBlock('{ }');
 	}
 
-	ctx.dispatchStatements(node.children);
+	yield* ctx.dispatchStatements(node.children);
 
 	if (hasDecls) {
 		ctx.memory.beginStep(

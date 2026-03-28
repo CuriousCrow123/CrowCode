@@ -29,12 +29,12 @@ export type HandlerContext = {
 	/** Active function-call context: which variable receives the return value, and column ranges for highlighting. */
 	callContext: { varName: string; colStart?: number; colEnd?: number } | null;
 
-	/** Dispatch a single statement. */
-	dispatch(node: ASTNode, sharesStep?: boolean): void;
-	/** Dispatch multiple statements. */
-	dispatchStatements(statements: ASTNode[], firstSharesStep?: boolean): void;
-	/** Call a user-defined function. */
-	callFunction(fn: ASTNode & { type: 'function_definition' }, args: CValue[], line: number): { value: CValue; error?: string };
+	/** Dispatch a single statement (generator — use yield* to delegate). */
+	dispatch(node: ASTNode, sharesStep?: boolean): Generator<void, void, void>;
+	/** Dispatch multiple statements (generator — use yield* to delegate). */
+	dispatchStatements(statements: ASTNode[], firstSharesStep?: boolean): Generator<void, void, void>;
+	/** Call a user-defined function (generator — use yield* to delegate). */
+	callFunction(fn: ASTNode & { type: 'function_definition' }, args: CValue[], line: number): Generator<void, { value: CValue; error?: string }, void>;
 	/** Format a value for display. */
 	formatValue(type: CType, data: number | null, initialized?: boolean): string;
 	/** Describe an AST expression for step descriptions. */

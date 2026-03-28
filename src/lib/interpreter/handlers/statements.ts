@@ -618,11 +618,11 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 	}
 }
 
-export function executeExpressionStatement(ctx: HandlerContext, node: ASTNode & { type: 'expression_statement' }, sharesStep: boolean): void {
+export function* executeExpressionStatement(ctx: HandlerContext, node: ASTNode & { type: 'expression_statement' }, sharesStep: boolean): Generator<void, void, void> {
 	const expr = node.expression;
 
 	if (expr.type === 'call_expression') {
-		executeCallStatement(ctx, expr, node.line, sharesStep);
+		yield* executeCallStatement(ctx, expr, node.line, sharesStep);
 		return;
 	}
 
@@ -684,7 +684,7 @@ export function executeExpressionStatement(ctx: HandlerContext, node: ASTNode & 
 	if (result.error) ctx.errors.push(result.error);
 }
 
-export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
+export function* executeCallStatement(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): Generator<void, void, void> {
 	if (call.callee === 'free') {
 		executeFreeCall(ctx, call, line, sharesStep);
 		return;
@@ -792,7 +792,7 @@ export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type
 	// User-defined function call as statement
 	const fn = ctx.memory.getFunction(call.callee);
 	if (fn) {
-		executeUserFunctionCall(ctx, fn, call, line, sharesStep);
+		yield* executeUserFunctionCall(ctx, fn, call, line, sharesStep);
 		return;
 	}
 
@@ -806,7 +806,7 @@ export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type
 		}
 		const target = ctx.memory.getFunctionByIndex(idx);
 		if (target) {
-			executeUserFunctionCall(ctx, target.node, call, line, sharesStep);
+			yield* executeUserFunctionCall(ctx, target.node, call, line, sharesStep);
 			return;
 		}
 		ctx.errors.push(`Invalid function pointer '${call.callee}' at line ${line}`);
@@ -1389,31 +1389,31 @@ export function initStructFromList(ctx: HandlerContext, type: CType & { kind: 's
 	}
 }
 
-export function executeUserFunctionCall(
+export function* executeUserFunctionCall(
 	ctx: HandlerContext,
 	fn: ASTNode & { type: 'function_definition' },
 	call: ASTNode & { type: 'call_expression' },
 	line: number,
 	sharesStep: boolean,
-): void {
+): Generator<void, void, void> {
 	const args = call.args.map((a) => {
 		const r = ctx.evaluator.eval(a);
 		if (r.error) ctx.errors.push(r.error);
 		return r.value;
 	});
 
-	const result = ctx.callFunction(fn, args, line);
+	const result = yield* ctx.callFunction(fn, args, line);
 	if (result.error) ctx.errors.push(result.error);
 }
 
 // === Function calls ===
 
-export function callFunction(
+export function* callFunction(
 	ctx: HandlerContext,
 	fn: ASTNode & { type: 'function_definition' },
 	args: CValue[],
 	line: number,
-): { value: CValue; error?: string } {
+): Generator<void, { value: CValue; error?: string }, void> {
 	if (ctx.frameDepth >= ctx.maxFrames) {
 		return {
 			value: { type: primitiveType('int'), data: 0, address: 0 },
@@ -1498,7 +1498,7 @@ export function callFunction(
 	ctx.returnValue = null;
 
 	if (fn.body.type === 'compound_statement') {
-		ctx.dispatchStatements(fn.body.children);
+		yield* ctx.dispatchStatements(fn.body.children);
 	}
 
 	const retVal = ctx.returnValue ?? { type: primitiveType('int'), data: 0, address: 0 };

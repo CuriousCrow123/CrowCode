@@ -110,8 +110,8 @@ export class Memory implements MemoryReader {
 	private ioEventsPeeker: (() => IoEvent[] | undefined) | null = null;
 
 	// === Program metadata ===
-	private programName: string;
-	private programSource: string;
+	readonly programName: string;
+	readonly programSource: string;
 
 	constructor(name: string, source: string, maxHeapBytes = 1024 * 1024) {
 		this.programName = name;
