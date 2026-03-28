@@ -5,6 +5,7 @@
 		subStepMode,
 		onprev,
 		onnext,
+		onseek,
 		ontogglesubstep,
 	}: {
 		current: number;
@@ -12,6 +13,7 @@
 		subStepMode: boolean;
 		onprev: () => void;
 		onnext: () => void;
+		onseek: (position: number) => void;
 		ontogglesubstep: () => void;
 	} = $props();
 </script>
@@ -34,6 +36,18 @@
 		</button>
 	</div>
 
+	{#if total > 1}
+		<input
+			type="range"
+			min={0}
+			max={total - 1}
+			value={current}
+			oninput={(e) => onseek(parseInt(e.currentTarget.value))}
+			class="scrubber"
+			aria-label="Step scrubber"
+		/>
+	{/if}
+
 	<span class="text-sm font-mono text-zinc-400" role="status" aria-live="polite" aria-atomic="true">
 		Step {current + 1} / {total}
 	</span>
@@ -46,3 +60,51 @@
 		Sub-steps
 	</button>
 </div>
+
+<style>
+	.scrubber {
+		width: 120px;
+		height: 6px;
+		appearance: none;
+		background: transparent;
+		cursor: pointer;
+	}
+
+	.scrubber::-webkit-slider-runnable-track {
+		height: 4px;
+		border-radius: 2px;
+		background: #3f3f46; /* zinc-700 */
+	}
+
+	.scrubber::-webkit-slider-thumb {
+		appearance: none;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: #a1a1aa; /* zinc-400 */
+		margin-top: -5px;
+		transition: background 0.15s;
+	}
+
+	.scrubber::-webkit-slider-thumb:hover {
+		background: #d4d4d8; /* zinc-300 */
+	}
+
+	.scrubber::-moz-range-track {
+		height: 4px;
+		border-radius: 2px;
+		background: #3f3f46;
+	}
+
+	.scrubber::-moz-range-thumb {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: #a1a1aa;
+		border: none;
+	}
+
+	.scrubber::-moz-range-thumb:hover {
+		background: #d4d4d8;
+	}
+</style>
