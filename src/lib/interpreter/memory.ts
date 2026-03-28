@@ -6,6 +6,7 @@ import type {
 	ScopeInfo,
 	HeapInfo,
 	Program,
+	IoEvent,
 } from '$lib/types';
 import type { CType, CValue, ChildSpec, ParamSpec, ASTNode, HeapBlock } from './types';
 import { sizeOf, alignOf, defaultValue, typeToString, isStructType, isArrayType } from './types-c';
@@ -29,6 +30,15 @@ function alignUp(value: number, alignment: number): number {
 
 export function formatAddress(address: number): string {
 	return '0x' + address.toString(16).padStart(8, '0');
+}
+
+/** Format stdin buffer for display: consumed text, cursor marker, remaining text. */
+function formatStdinDisplay(fullBuffer: string, cursorPos: number): string {
+	const consumed = fullBuffer.slice(0, cursorPos).replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+	const remaining = fullBuffer.slice(cursorPos).replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+	if (cursorPos === 0) return remaining;
+	if (cursorPos >= fullBuffer.length) return consumed + ' (exhausted)';
+	return consumed + '|' + remaining;
 }
 
 // === ScopeFrame ===
@@ -85,6 +95,7 @@ export class Memory implements MemoryReader {
 
 	// === Heap container tracking ===
 	private heapContainerAdded = false;
+	private stdinEntryAdded = false;
 
 	// === Heap block address → ID mapping ===
 	private heapBlockAddresses = new Map<string, number>();
@@ -95,10 +106,12 @@ export class Memory implements MemoryReader {
 	private steps: ProgramStep[] = [];
 	private currentStep: ProgramStep | null = null;
 	private errors: string[] = [];
+	private ioEventsFlusher: (() => IoEvent[] | undefined) | null = null;
+	private ioEventsPeeker: (() => IoEvent[] | undefined) | null = null;
 
 	// === Program metadata ===
-	private programName: string;
-	private programSource: string;
+	readonly programName: string;
+	readonly programSource: string;
 
 	constructor(name: string, source: string, maxHeapBytes = 1024 * 1024) {
 		this.programName = name;
@@ -109,6 +122,11 @@ export class Memory implements MemoryReader {
 	// ========================================
 	// Step lifecycle
 	// ========================================
+
+	setIoEventsFlusher(flusher: () => IoEvent[] | undefined, peeker?: () => IoEvent[] | undefined): void {
+		this.ioEventsFlusher = flusher;
+		if (peeker) this.ioEventsPeeker = peeker;
+	}
 
 	beginStep(location: SourceLocation, description?: string, evaluation?: string): void {
 		this.flushStep();
@@ -126,11 +144,48 @@ export class Memory implements MemoryReader {
 		}
 	}
 
+	updateStepDescription(description: string, evaluation?: string): void {
+		if (this.currentStep) {
+			this.currentStep.description = description;
+			if (evaluation !== undefined) {
+				this.currentStep.evaluation = evaluation;
+			}
+		}
+	}
+
 	flushStep(): void {
 		if (this.currentStep) {
+			if (this.ioEventsFlusher) {
+				const events = this.ioEventsFlusher();
+				if (events) {
+					this.currentStep.ioEvents = events;
+				}
+			}
 			this.steps.push(this.currentStep);
 		}
 		this.currentStep = null;
+	}
+
+	/**
+	 * Read-only snapshot of steps accumulated so far, including the in-flight step.
+	 * Does NOT mutate Memory state — safe to call during generator pause.
+	 */
+	getSteps(): ProgramStep[] {
+		const steps = [...this.steps];
+		if (this.currentStep) {
+			// Clone the in-flight step with its ops so far — non-destructive
+			const inflight: ProgramStep = {
+				...this.currentStep,
+				ops: [...this.currentStep.ops],
+			};
+			// Peek (not flush) io events for the inflight step snapshot
+			if (this.ioEventsPeeker) {
+				const events = this.ioEventsPeeker();
+				if (events) inflight.ioEvents = events;
+			}
+			steps.push(inflight);
+		}
+		return steps;
 	}
 
 	finish(): { program: Program; errors: string[] } {
@@ -942,6 +997,56 @@ export class Memory implements MemoryReader {
 
 	setPointerTarget(varName: string, blockId: string): void {
 		this.heapEntryByPointer.set(varName, blockId);
+	}
+
+	// === stdin buffer entry ===
+
+	addStdinEntry(buffer: string): void {
+		if (this.stdinEntryAdded || buffer.length === 0) return;
+		this.stdinEntryAdded = true;
+		const display = formatStdinDisplay(buffer, 0);
+		this.addOp({
+			op: 'addEntry',
+			parentId: null,
+			entry: {
+				id: 'stdin',
+				name: 'stdin',
+				type: 'char[]',
+				value: display,
+				address: '',
+				kind: 'io',
+			},
+		});
+	}
+
+	updateStdinCursor(cursorPos: number, fullBuffer: string): void {
+		if (!this.stdinEntryAdded) return;
+		const display = formatStdinDisplay(fullBuffer, cursorPos);
+		this.addOp({ op: 'setValue', id: 'stdin', value: display });
+	}
+
+	/** Find which variable/entry owns a given memory address. For overflow visualization. */
+	findEntryIdAtAddress(address: number): { varName: string; entryId: string; offset: number; elemSize: number } | undefined {
+		// Search current scope's variables
+		for (const scope of this.scopes) {
+			for (const [name, cvalue] of scope.symbols) {
+				const varSize = sizeOf(cvalue.type);
+				if (varSize <= 0) continue;
+				if (address >= cvalue.address && address < cvalue.address + varSize) {
+					const offset = address - cvalue.address;
+					const entryId = this.entryIdByVar.get(name);
+					if (!entryId) continue;
+					const elemSize = isArrayType(cvalue.type) ? sizeOf(cvalue.type.elementType) : varSize;
+					return { varName: name, entryId, offset, elemSize };
+				}
+			}
+		}
+		return undefined;
+	}
+
+	hasChildEntries(parentId: string): boolean {
+		const children = this.childEntriesById.get(parentId);
+		return children !== undefined && children.size > 0;
 	}
 
 	getHeapBlockIdByAddress(address: number): string | undefined {

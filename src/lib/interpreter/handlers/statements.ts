@@ -15,6 +15,11 @@ import {
 	isFunctionPointerType,
 } from '../types-c';
 import { buildStructChildSpecs, buildArrayChildSpecs } from '../stdlib';
+import { parseScanfFormat } from '../format';
+import { isArrayType as isArrayCType } from '../types-c';
+
+/** Functions that read from stdin — used to detect interactive pause points in assignments/declarations. */
+const INPUT_FUNCTIONS = new Set(['getchar', 'scanf', 'fgets', 'gets']);
 
 export function executeDeclaration(ctx: HandlerContext, node: ASTNode & { type: 'declaration' }, sharesStep: boolean): void {
 	const type = ctx.typeReg.resolve(node.declType);
@@ -80,9 +85,34 @@ export function executeDeclaration(ctx: HandlerContext, node: ASTNode & { type: 
 			else if (node.initializer.type === 'call_expression') {
 				const callResult = evaluateCallForDecl(ctx, node, type);
 				if (callResult.handled) return;
+				if (callResult.needsInput) {
+					// Create the step showing the declaration, then signal needsInput
+					value = ctx.memory.declareVariableRuntime(node.name, type, null);
+					displayValue = ctx.formatValue(type, null, false);
+					if (!sharesStep) {
+						const { desc, eval: evalStr } = formatDeclDescription(node.name, type, displayValue);
+						ctx.memory.beginStep({ line: node.line }, desc, evalStr);
+						ctx.stepCount++;
+					}
+					ctx.memory.emitVariableEntry(node.name, type, displayValue, value.address);
+					ctx.needsInput = true;
+					return;
+				}
 				if (callResult.value !== undefined) {
 					initData = callResult.value;
 					initWasFunctionCall = !!callResult.isUserFunc;
+				}
+				// On resume (sharesStep=true), the variable was already declared during
+				// the needsInput path above. Update its value instead of re-declaring.
+				if (sharesStep && initData !== null) {
+					const existing = ctx.memory.lookupVariable(node.name);
+					if (existing) {
+						ctx.memory.setValue(node.name, initData);
+						displayValue = ctx.formatValue(type, initData, true);
+						const { desc, eval: evalStr } = formatDeclDescription(node.name, type, displayValue);
+						ctx.memory.updateStepDescription(desc, evalStr);
+						return;
+					}
 				}
 			} else {
 				const result = ctx.evaluator.eval(node.initializer);
@@ -103,9 +133,11 @@ export function executeDeclaration(ctx: HandlerContext, node: ASTNode & { type: 
 	}
 
 	if (!sharesStep) {
+		const { desc, eval: evalStr } = formatDeclDescription(node.name, type, displayValue!);
 		ctx.memory.beginStep(
 			{ line: node.line },
-			formatDeclDescription(node.name, type, displayValue!),
+			desc,
+			evalStr,
 		);
 		ctx.stepCount++;
 	}
@@ -121,13 +153,18 @@ export function evaluateCallForDecl(
 	ctx: HandlerContext,
 	node: ASTNode & { type: 'declaration' },
 	declType: CType,
-): { handled: boolean; value?: number | null; isUserFunc?: boolean } {
+): { handled: boolean; value?: number | null; isUserFunc?: boolean; needsInput?: boolean } {
 	if (node.initializer?.type !== 'call_expression') return { handled: false };
 	const call = node.initializer;
 
 	if (call.callee === 'malloc' || call.callee === 'calloc') {
 		const handled = executeMallocDecl(ctx, node, call, declType);
 		return { handled };
+	}
+
+	// Intercept input functions for interactive mode
+	if (ctx.interactive && INPUT_FUNCTIONS.has(call.callee) && ctx.io.isExhausted() && !ctx.io.isEofSignaled()) {
+		return { handled: false, needsInput: true };
 	}
 
 	const isUserFunc = !!ctx.memory.getFunction(call.callee);
@@ -198,10 +235,9 @@ export function executeMallocDecl(
 		heapChildren = buildArrayChildSpecs(heapType.elementType, heapType.size);
 	}
 
-	const sizeDesc = `${totalSize}`;
-	const desc = `${allocator}(${formatMallocArgs(ctx, call)}) — allocate ${sizeDesc} bytes`;
+	const desc = `Allocate ${totalSize} bytes with ${allocator}`;
 
-	ctx.memory.beginStep({ line: decl.line }, desc);
+	ctx.memory.beginStep({ line: decl.line }, desc, `→ ${decl.name} = ${formatAddress(address)}`);
 	ctx.stepCount++;
 
 	ctx.memory.emitHeapEntry(
@@ -258,7 +294,7 @@ export function executeStringLiteralDecl(
 	const heapChildren = buildArrayChildSpecs(primitiveType('char'), size, charValues);
 
 	if (!sharesStep) {
-		ctx.memory.beginStep({ line: decl.line }, `char *${decl.name} = "${str}"`);
+		ctx.memory.beginStep({ line: decl.line }, `Declare char *${decl.name}`, `= "${str}"`);
 		ctx.stepCount++;
 	}
 
@@ -353,8 +389,12 @@ export function executeMallocAssign(
 	}
 
 	if (!sharesStep) {
-		const desc = `${allocator}(${formatMallocArgs(ctx, call)}) — allocate ${totalSize} bytes`;
-		ctx.memory.beginStep({ line: node.line }, desc);
+		const targetName = node.target.type === 'identifier' ? node.target.name : ctx.describeExpr(node.target);
+		ctx.memory.beginStep(
+			{ line: node.line },
+			`Allocate ${totalSize} bytes with ${allocator}`,
+			`→ ${targetName} = ${formatAddress(address)}`,
+		);
 		ctx.stepCount++;
 	}
 
@@ -398,6 +438,19 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 		}
 	}
 
+	// Intercept input functions (getchar, etc.) in assignment RHS for interactive mode
+	if (ctx.interactive && node.operator === '=' && node.value?.type === 'call_expression') {
+		const call = node.value;
+		if (INPUT_FUNCTIONS.has(call.callee) && ctx.io.isExhausted() && !ctx.io.isEofSignaled()) {
+			if (!sharesStep) {
+				ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node));
+				ctx.stepCount++;
+			}
+			ctx.needsInput = true;
+			return;
+		}
+	}
+
 	// Chained assignment
 	if (node.operator === '=' && node.value?.type === 'assignment') {
 		if (!sharesStep) {
@@ -432,11 +485,6 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 		return;
 	}
 
-	if (!sharesStep) {
-		ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node));
-		ctx.stepCount++;
-	}
-
 	if (node.target.type === 'identifier') {
 		const existing = ctx.memory.lookupVariable(node.target.name);
 		if (!existing) {
@@ -447,6 +495,15 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 		let newVal = rhs.value.data ?? 0;
 		const oldVal = existing.data ?? 0;
 		newVal = applyCompoundOp(node.operator, oldVal, newVal);
+
+		if (!sharesStep) {
+			const evalStr = assignNeedsEval(node, rhs.value.data ?? 0, newVal)
+				? `→ ${ctx.formatValue(existing.type, newVal)}`
+				: undefined;
+			ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node), evalStr);
+			ctx.stepCount++;
+		}
+
 		ctx.memory.setVariable(node.target.name, newVal);
 
 		const displayVal = ctx.formatValue(existing.type, newVal);
@@ -459,6 +516,14 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 			const targetEval = ctx.evaluator.eval(node.target);
 			const oldVal = targetEval.value.data ?? ctx.memory.readMemory(targetEval.value.address) ?? 0;
 			newVal = applyCompoundOp(node.operator, oldVal, newVal);
+		}
+
+		if (!sharesStep) {
+			const evalStr = assignNeedsEval(node, rhs.value.data ?? 0, newVal)
+				? `→ ${newVal}`
+				: undefined;
+			ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node), evalStr);
+			ctx.stepCount++;
 		}
 
 		const displayVal = String(newVal);
@@ -478,6 +543,10 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 		const addr = ptrResult.value.data ?? 0;
 		if (addr === 0) { ctx.errors.push(`Null pointer dereference at line ${node.line}`); return; }
 		if (ctx.memory.isFreedAddress(addr)) { ctx.errors.push(`Use-after-free: writing to freed memory at ${formatAddress(addr)}`); return; }
+		if (!sharesStep) {
+			ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node));
+			ctx.stepCount++;
+		}
 		const newVal = rhs.value.data ?? 0;
 		ctx.memory.writeMemory(addr, newVal);
 		const ptrName = node.target.operand.type === 'identifier' ? node.target.operand.name : undefined;
@@ -488,6 +557,10 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 			}
 		}
 	} else if (node.target.type === 'subscript_expression') {
+		if (!sharesStep) {
+			ctx.memory.beginStep({ line: node.line }, formatAssignDesc(ctx, node));
+			ctx.stepCount++;
+		}
 		// Nested subscript: m[i][j] = val (2D array)
 		if (node.target.object.type === 'subscript_expression') {
 			const innerSub = node.target;
@@ -591,11 +664,11 @@ export function executeAssignment(ctx: HandlerContext, node: ASTNode & { type: '
 	}
 }
 
-export function executeExpressionStatement(ctx: HandlerContext, node: ASTNode & { type: 'expression_statement' }, sharesStep: boolean): void {
+export function* executeExpressionStatement(ctx: HandlerContext, node: ASTNode & { type: 'expression_statement' }, sharesStep: boolean): Generator<void, void, void> {
 	const expr = node.expression;
 
 	if (expr.type === 'call_expression') {
-		executeCallStatement(ctx, expr, node.line, sharesStep);
+		yield* executeCallStatement(ctx, expr, node.line, sharesStep);
 		return;
 	}
 
@@ -617,7 +690,8 @@ export function executeExpressionStatement(ctx: HandlerContext, node: ASTNode & 
 			const desc = name
 				? (expr.prefix ? `${expr.operator}${name}` : `${name}${expr.operator}`)
 				: `${expr.operator}`;
-			ctx.memory.beginStep({ line: node.line }, desc);
+			const evalStr = name ? `→ ${name} = ${newVal}` : `→ ${newVal}`;
+			ctx.memory.beginStep({ line: node.line }, desc, evalStr);
 			ctx.stepCount++;
 		}
 
@@ -656,45 +730,115 @@ export function executeExpressionStatement(ctx: HandlerContext, node: ASTNode & 
 	if (result.error) ctx.errors.push(result.error);
 }
 
-export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
+export function* executeCallStatement(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): Generator<void, void, void> {
 	if (call.callee === 'free') {
 		executeFreeCall(ctx, call, line, sharesStep);
 		return;
 	}
 
-	if (call.callee === 'sprintf' && call.args.length >= 2) {
+	// sprintf/snprintf: format string and write bytes to destination buffer
+	if ((call.callee === 'sprintf' || call.callee === 'snprintf') && call.args.length >= 2) {
+		const isSnprintf = call.callee === 'snprintf';
+		const fmtArgIdx = isSnprintf ? 2 : 1;
 		const destResult = ctx.evaluator.eval(call.args[0]);
-		const formatted = evaluateSprintfResult(ctx, call);
+		const formatted = evaluateSprintfResult(ctx, call, fmtArgIdx);
+
+		let maxLen: number | undefined;
+		if (isSnprintf && call.args.length >= 2) {
+			const sizeResult = ctx.evaluator.eval(call.args[1]);
+			maxLen = sizeResult.value?.data ?? 0;
+			if (maxLen <= 0) {
+				// snprintf(buf, 0, ...) writes nothing
+				if (!sharesStep) {
+					ctx.memory.beginStep({ line }, `snprintf(${ctx.describeExpr(call.args[0])}, ${maxLen}, ...)`, `→ "${formatted}" (not written)`);
+					ctx.stepCount++;
+				}
+				return;
+			}
+		}
 
 		if (!sharesStep) {
-			ctx.memory.beginStep({ line }, `sprintf(${ctx.describeExpr(call.args[0])}, ...) — write "${formatted}"`);
+			ctx.memory.beginStep({ line }, `${call.callee}(${ctx.describeExpr(call.args[0])}, ...)`, `→ "${formatted}"`);
 			ctx.stepCount++;
 		}
 
-		if (!destResult.error && destResult.value.data) {
-			const destName = call.args[0].type === 'identifier' ? call.args[0].name : undefined;
-			if (destName) {
-				const blockId = ctx.memory.getHeapBlockId(destName);
-				if (blockId) {
-					ctx.memory.setValueById(blockId, `"${formatted}"`);
+		const destName = call.args[0].type === 'identifier' ? call.args[0].name : undefined;
+		if (destName) {
+			// Write bytes to children (for individual char display)
+			writeStringToBuffer(ctx, destName, formatted, maxLen);
+
+			// Also set quoted string on the parent entry (for summary display)
+			const blockId = ctx.memory.getHeapBlockId(destName);
+			if (blockId) {
+				ctx.memory.setValueById(blockId, `"${formatted}"`);
+			} else {
+				const varId = ctx.memory.getVarEntryId(destName);
+				if (varId) {
+					ctx.memory.setValueById(varId, `"${formatted}"`);
 				}
 			}
 		}
 		return;
 	}
 
-	if (call.callee === 'printf' || call.callee === 'puts') {
+	// I/O output functions: create a step and evaluate through stdlib (triggers IoState)
+	if (isStdioOutputFunction(call.callee)) {
 		if (!sharesStep) {
 			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
 			ctx.stepCount++;
 		}
+		const stdoutBefore = ctx.io.getStdout();
+		const result = ctx.evaluator.eval(call);
+		if (result.error) ctx.errors.push(result.error);
+
+		// Enrich step description with output produced
+		const stdoutAfter = ctx.io.getStdout();
+		if (stdoutAfter.length > stdoutBefore.length) {
+			const produced = stdoutAfter.slice(stdoutBefore.length);
+			const escaped = produced.replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+			const desc = formatPrintfDesc(ctx, call);
+			ctx.memory.updateStepDescription(desc, `→ "${escaped}"`);
+		}
+		return;
+	}
+
+	// scanf: consume from stdin and write through to variables
+	if (call.callee === 'scanf') {
+		executeScanfCall(ctx, call, line, sharesStep);
+		return;
+	}
+
+	// fgets: read line from stdin into buffer
+	if (call.callee === 'fgets') {
+		executeFgetsCall(ctx, call, line, sharesStep);
+		return;
+	}
+
+	// gets: read line from stdin (no bounds checking)
+	if (call.callee === 'gets') {
+		executeGetsCall(ctx, call, line, sharesStep);
+		return;
+	}
+
+	// getchar: handled in stdlib via evaluator (returns int value)
+	if (call.callee === 'getchar') {
+		if (!sharesStep) {
+			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+			ctx.stepCount++;
+		}
+		if (ctx.io.isExhausted() && ctx.interactive && !ctx.io.isEofSignaled()) {
+			ctx.needsInput = true;
+			return;
+		}
+		const result = ctx.evaluator.eval(call);
+		if (result.error) ctx.errors.push(result.error);
 		return;
 	}
 
 	// User-defined function call as statement
 	const fn = ctx.memory.getFunction(call.callee);
 	if (fn) {
-		executeUserFunctionCall(ctx, fn, call, line, sharesStep);
+		yield* executeUserFunctionCall(ctx, fn, call, line, sharesStep);
 		return;
 	}
 
@@ -708,7 +852,7 @@ export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type
 		}
 		const target = ctx.memory.getFunctionByIndex(idx);
 		if (target) {
-			executeUserFunctionCall(ctx, target.node, call, line, sharesStep);
+			yield* executeUserFunctionCall(ctx, target.node, call, line, sharesStep);
 			return;
 		}
 		ctx.errors.push(`Invalid function pointer '${call.callee}' at line ${line}`);
@@ -748,7 +892,7 @@ export function executeFreeCall(ctx: HandlerContext, call: ASTNode & { type: 'ca
 
 	if (!sharesStep) {
 		const argText = ctx.describeExpr(call.args[0]);
-		ctx.memory.beginStep({ line }, `free(${argText}) — deallocate memory`);
+		ctx.memory.beginStep({ line }, `Free memory at ${argText}`);
 		ctx.stepCount++;
 	}
 
@@ -795,15 +939,16 @@ export function executeReturn(ctx: HandlerContext, node: ASTNode & { type: 'retu
 	ctx.returnValue = value;
 }
 
-export function formatDeclDescription(name: string, type: CType, value: string): string {
+export function formatDeclDescription(name: string, type: CType, value: string): { desc: string; eval?: string } {
 	const typeStr = typeToString(type);
+	const desc = `Declare ${typeStr} ${name}`;
 	if (isStructType(type)) {
-		return `${typeStr} ${name} = {...}`;
+		return { desc, eval: `= {...}` };
 	}
 	if (isArrayType(type)) {
-		return `${typeStr} ${name} = {...}`;
+		return { desc, eval: `= {...}` };
 	}
-	return `${typeStr} ${name} = ${value}`;
+	return { desc, eval: `= ${value}` };
 }
 
 export function formatAssignDesc(ctx: HandlerContext, node: ASTNode & { type: 'assignment' }): string {
@@ -811,9 +956,9 @@ export function formatAssignDesc(ctx: HandlerContext, node: ASTNode & { type: 'a
 	const value = ctx.describeExpr(node.value);
 
 	if (node.operator === '=') {
-		return `${target} = ${value}`;
+		return `Set ${target} = ${value}`;
 	}
-	return `${target} ${node.operator} ${value}`;
+	return `Set ${target} ${node.operator} ${value}`;
 }
 
 export function formatMallocArgs(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }): string {
@@ -823,6 +968,276 @@ export function formatMallocArgs(ctx: HandlerContext, call: ASTNode & { type: 'c
 export function formatPrintfDesc(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }): string {
 	const args = call.args.map((a) => ctx.describeExpr(a)).join(', ');
 	return `${call.callee}(${args})`;
+}
+
+const STDIO_OUTPUT_FUNCTIONS = new Set([
+	'printf', 'fprintf', 'puts', 'putchar', 'fputs',
+]);
+
+const STDIO_INPUT_FUNCTIONS = new Set([
+	'scanf', 'getchar', 'fgets', 'gets',
+]);
+
+export function isStdioOutputFunction(name: string): boolean {
+	return STDIO_OUTPUT_FUNCTIONS.has(name);
+}
+
+export function isStdioInputFunction(name: string): boolean {
+	return STDIO_INPUT_FUNCTIONS.has(name);
+}
+
+export function isStdioFunction(name: string): boolean {
+	return STDIO_OUTPUT_FUNCTIONS.has(name) || STDIO_INPUT_FUNCTIONS.has(name);
+}
+
+// === scanf/fgets/gets statement-level handlers ===
+
+/**
+ * Extract the target variable name from a scanf pointer argument.
+ * Expects `&identifier` → returns identifier name.
+ * Returns null if the argument is not `&identifier`.
+ */
+function extractScanfTargetVar(arg: ASTNode): { name: string; hasAddressOf: boolean } | null {
+	if (arg.type === 'unary_expression' && arg.operator === '&' && arg.operand.type === 'identifier') {
+		return { name: arg.operand.name, hasAddressOf: true };
+	}
+	// Accept bare identifiers — arrays decay to pointers in scanf calls (e.g., scanf("%s", s))
+	if (arg.type === 'identifier') {
+		return { name: arg.name, hasAddressOf: false };
+	}
+	return null;
+}
+
+function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
+	if (call.args.length < 1) {
+		ctx.errors.push('scanf: requires at least one argument');
+		return;
+	}
+
+	// Extract format string from AST
+	const fmtArg = call.args[0];
+	if (fmtArg.type !== 'string_literal') {
+		// Non-literal format string: can't parse at interpretation time
+		if (!sharesStep) {
+			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+			ctx.stepCount++;
+		}
+		return;
+	}
+	const fmtStr = (fmtArg as ASTNode & { type: 'string_literal' }).value;
+	const tokens = parseScanfFormat(fmtStr);
+
+	if (!sharesStep) {
+		ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+		ctx.stepCount++;
+	}
+
+	// Check for EOF / need input
+	if (ctx.io.isExhausted()) {
+		if (ctx.interactive && !ctx.io.isEofSignaled()) {
+			ctx.needsInput = true;
+		}
+		return;
+	}
+
+	let itemsAssigned = 0;
+	let argIdx = 1; // pointer args start at index 1
+	const assignments: string[] = [];
+
+	for (const token of tokens) {
+		if (token.kind === 'whitespace') {
+			// Whitespace in format = skip whitespace in input (IoState handles this in readInt etc.)
+			continue;
+		}
+		if (token.kind === 'literal') {
+			// Literal match: consume the literal char from stdin (simplified — skip for v1)
+			continue;
+		}
+		// Specifier token
+		const spec = token;
+
+		// Read value from stdin based on specifier
+		let readResult: { value: number; consumed: string } | null = null;
+		switch (spec.specifier) {
+			case 'd':
+			case 'i':
+				readResult = ctx.io.readInt();
+				break;
+			case 'f':
+				readResult = ctx.io.readFloat();
+				break;
+			case 'c':
+				readResult = ctx.io.readChar();
+				break;
+			case 's': {
+				const strResult = ctx.io.readString();
+				if (strResult) {
+					// For %s, we'd write to a char array — simplified for v1
+					// Just consume the input and note it in the description
+					readResult = { value: 0, consumed: strResult.consumed };
+				}
+				break;
+			}
+			case 'x':
+			case 'X':
+				readResult = ctx.io.readHexInt();
+				break;
+			default:
+				// Unsupported specifier — skip
+				continue;
+		}
+
+		if (!readResult) {
+			// Read failed — in interactive mode, pause for more input
+			// (readInt/readFloat reset position on failure, so isExhausted() may be false
+			//  even though the remaining content is just unconsumed whitespace)
+			if (ctx.interactive && !ctx.io.isEofSignaled()) {
+				ctx.needsInput = true;
+			}
+			break;
+		}
+
+		if (spec.suppress) {
+			// %* — consume but don't assign, don't count
+			continue;
+		}
+
+		// Write through to target variable
+		if (argIdx < call.args.length) {
+			const targetArg = call.args[argIdx];
+			const target = extractScanfTargetVar(targetArg);
+
+			if (target === null) {
+				ctx.errors.push(`scanf: argument ${argIdx} must be a pointer (missing &?)`);
+			} else if (!target.hasAddressOf) {
+				// Bare identifier without & — only valid for array types (arrays decay to pointers)
+				const v = ctx.memory.lookupVariable(target.name);
+				if (v && isArrayCType(v.type)) {
+					ctx.memory.setValue(target.name, readResult.value);
+				} else {
+					ctx.errors.push(`scanf: argument ${argIdx} must be a pointer (missing &?)`);
+				}
+			} else {
+				ctx.memory.setValue(target.name, readResult.value);
+				// Track for description enrichment
+				if (spec.specifier === 'c') {
+					const charRepr = readResult.value === 10 ? "'\\n'" : readResult.value === 9 ? "'\\t'" : `'${String.fromCharCode(readResult.value)}'`;
+					assignments.push(`${target.name} = ${charRepr} (${readResult.value})`);
+				} else {
+					assignments.push(`${target.name} = ${readResult.value}`);
+				}
+			}
+			argIdx++;
+		}
+		itemsAssigned++;
+	}
+
+	// Enrich step description with read results
+	if (assignments.length > 0) {
+		const desc = formatPrintfDesc(ctx, call);
+		ctx.memory.updateStepDescription(desc, `→ ${assignments.join(', ')}`);
+	} else if (ctx.io.isExhausted()) {
+		const desc = formatPrintfDesc(ctx, call);
+		ctx.memory.updateStepDescription(desc, '→ EOF');
+	}
+}
+
+function executeFgetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
+	if (!sharesStep) {
+		ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+		ctx.stepCount++;
+	}
+
+	if (call.args.length < 2) {
+		ctx.errors.push('fgets: requires at least 2 arguments');
+		return;
+	}
+
+	// Check for empty stdin
+	if (ctx.io.isExhausted()) {
+		if (ctx.interactive && !ctx.io.isEofSignaled()) ctx.needsInput = true;
+		return;
+	}
+
+	// Evaluate size argument
+	const sizeResult = ctx.evaluator.eval(call.args[1]);
+	const maxLen = sizeResult.value?.data ?? 256;
+
+	// Read from stdin
+	const result = ctx.io.readLine(maxLen);
+	if (!result) return; // EOF
+
+	// Write to destination buffer (simplified: show as quoted string on heap entry)
+	const destArg = call.args[0];
+	if (destArg.type === 'identifier') {
+		const blockId = ctx.memory.getHeapBlockId(destArg.name);
+		if (blockId) {
+			ctx.memory.setValueById(blockId, `"${result.value}"`);
+		}
+	}
+}
+
+function executeGetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
+	if (call.args.length < 1) {
+		ctx.errors.push('gets: requires at least 1 argument');
+		return;
+	}
+
+	if (!sharesStep) {
+		ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+		ctx.stepCount++;
+	}
+
+	// Check for empty stdin
+	if (ctx.io.isExhausted()) {
+		if (ctx.interactive && !ctx.io.isEofSignaled()) ctx.needsInput = true;
+		return;
+	}
+
+	// Read from stdin (unbounded)
+	const result = ctx.io.readUntilNewline();
+
+	if (!result) {
+		ctx.memory.updateStepDescription(formatPrintfDesc(ctx, call), '→ EOF');
+		return;
+	}
+
+	// Write to destination buffer using writeStringToBuffer with overflow enabled
+	const destArg = call.args[0];
+	if (destArg.type === 'identifier') {
+		const writeResult = writeStringToBuffer(ctx, destArg.name, result.value, undefined, true);
+
+		// Enrich description
+		let evalText = `→ read "${result.value}" (${result.value.length} bytes)`;
+		if (writeResult.overflowVars.length > 0) {
+			evalText += ` — overflow! clobbered ${writeResult.overflowVars.join(', ')}`;
+		}
+		ctx.memory.updateStepDescription(`gets(${ctx.describeExpr(call.args[0])})`, evalText);
+
+		// Also set parent entry for summary display
+		const blockId = ctx.memory.getHeapBlockId(destArg.name);
+		if (blockId) {
+			ctx.memory.setValueById(blockId, `"${result.value}"`);
+		} else {
+			const varId = ctx.memory.getVarEntryId(destArg.name);
+			if (varId) {
+				ctx.memory.setValueById(varId, `"${result.value}"`);
+			}
+		}
+	}
+}
+
+/** Returns true when the assignment result isn't obvious from the description alone. */
+export function assignNeedsEval(node: ASTNode & { type: 'assignment' }, rhsData: number, finalVal: number): boolean {
+	// Compound operators always need eval — result isn't obvious
+	if (node.operator !== '=') return true;
+	// If RHS is a simple literal or identifier, the description says it all
+	if (node.value.type === 'number_literal') return false;
+	if (node.value.type === 'identifier') return false;
+	if (node.value.type === 'null_literal') return false;
+	if (node.value.type === 'string_literal') return false;
+	// Expression — show the computed result
+	return true;
 }
 
 export function applyCompoundOp(op: string, oldVal: number, newVal: number): number {
@@ -842,17 +1257,17 @@ export function applyCompoundOp(op: string, oldVal: number, newVal: number): num
 	}
 }
 
-export function evaluateSprintfResult(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }): string {
-	if (call.args.length < 2) return '';
-	const fmtResult = ctx.evaluator.eval(call.args[1]);
+export function evaluateSprintfResult(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, fmtArgIdx = 1): string {
+	if (call.args.length <= fmtArgIdx) return '';
+	const fmtResult = ctx.evaluator.eval(call.args[fmtArgIdx]);
 	let fmt = '';
-	if (call.args[1].type === 'string_literal') {
-		fmt = (call.args[1] as any).value ?? '';
+	if (call.args[fmtArgIdx].type === 'string_literal') {
+		fmt = (call.args[fmtArgIdx] as any).value ?? '';
 	} else {
 		return '';
 	}
 
-	let argIdx = 2;
+	let argIdx = fmtArgIdx + 1;
 	let result = '';
 	for (let i = 0; i < fmt.length; i++) {
 		if (fmt[i] === '%' && i + 1 < fmt.length) {
@@ -864,7 +1279,25 @@ export function evaluateSprintfResult(ctx: HandlerContext, call: ASTNode & { typ
 				const val = argResult.value?.data ?? 0;
 				switch (fmt[i]) {
 					case 'd': case 'i': result += String(val); break;
-					case 's': result += '(string)'; break;
+					case 's': {
+						// Resolve string from stringValue or memory
+						const strVal = argResult.value?.stringValue;
+						if (strVal !== undefined) {
+							result += strVal;
+						} else if (val !== 0) {
+							// Read from memory address
+							let str = '';
+							for (let j = 0; j < 10000; j++) {
+								const byte = ctx.memory.readMemory(val + j);
+								if (byte === undefined || byte === 0) break;
+								str += String.fromCharCode(byte);
+							}
+							result += str;
+						} else {
+							result += '(null)';
+						}
+						break;
+					}
 					case 'x': result += val.toString(16); break;
 					case 'c': result += String.fromCharCode(val); break;
 					default: result += `%${fmt[i]}`;
@@ -876,6 +1309,102 @@ export function evaluateSprintfResult(ctx: HandlerContext, call: ASTNode & { typ
 		}
 	}
 	return result;
+}
+
+/**
+ * Write a string byte-by-byte into a buffer (stack array or heap block).
+ * Emits setValue ops for each child entry AND writes to addressValues for runtime consistency.
+ */
+export function writeStringToBuffer(
+	ctx: HandlerContext,
+	destName: string,
+	str: string,
+	maxLen?: number,
+	allowOverflow?: boolean,
+): { bytesWritten: number; overflowVars: string[] } {
+	const cvalue = ctx.memory.lookupVariable(destName);
+	if (!cvalue) return { bytesWritten: 0, overflowVars: [] };
+
+	// Determine base address, array size, and entry ID
+	let baseAddr: number;
+	let arraySize = 256; // default limit
+	let entryId: string | undefined;
+
+	if (isArrayCType(cvalue.type)) {
+		// Stack array: address is the array's base address
+		baseAddr = cvalue.address;
+		arraySize = cvalue.type.size;
+		entryId = ctx.memory.getVarEntryId(destName);
+	} else {
+		// Pointer to heap block: data is the heap address
+		baseAddr = cvalue.data ?? 0;
+		if (baseAddr === 0) return { bytesWritten: 0, overflowVars: [] };
+		const heapId = ctx.memory.getHeapBlockId(destName);
+		if (heapId) {
+			entryId = heapId;
+			const block = ctx.memory.getHeapBlock(baseAddr);
+			if (block) arraySize = block.size;
+		}
+	}
+
+	if (!entryId) return { bytesWritten: 0, overflowVars: [] };
+
+	// Check if children exist (heap blocks may not have children if array inference didn't fire)
+	const hasChildren = ctx.memory.hasChildEntries(entryId);
+	if (!hasChildren) {
+		// No children — write bytes to addressValues only (for strlen etc.), skip setValue ops
+		const writeLen = Math.min(str.length, maxLen !== undefined ? maxLen - 1 : arraySize);
+		for (let i = 0; i < writeLen; i++) {
+			ctx.memory.writeMemory(baseAddr + i, str.charCodeAt(i));
+		}
+		ctx.memory.writeMemory(baseAddr + writeLen, 0);
+		return { bytesWritten: writeLen, overflowVars: [] };
+	}
+
+	// Compute write limit (for bounded writes)
+	const boundsLimit = maxLen !== undefined ? Math.min(maxLen - 1, arraySize) : arraySize;
+	// For overflow: write up to str.length, capped at 256 past array end
+	const maxOverflow = allowOverflow ? Math.min(str.length, arraySize + 256) : boundsLimit;
+	const writeLen = Math.min(str.length, maxOverflow);
+	const overflowVars: string[] = [];
+
+	// Write each byte with setValue ops
+	for (let i = 0; i < writeLen; i++) {
+		const charCode = str.charCodeAt(i);
+		ctx.memory.writeMemory(baseAddr + i, charCode);
+
+		if (i < arraySize) {
+			// Within bounds: update own children
+			ctx.memory.setValueById(`${entryId}-${i}`, String(charCode));
+		} else if (allowOverflow) {
+			// Overflow: find adjacent variable at this address
+			const target = ctx.memory.findEntryIdAtAddress(baseAddr + i);
+			if (target) {
+				if (!overflowVars.includes(target.varName)) {
+					overflowVars.push(target.varName);
+				}
+				if (isArrayCType(cvalue.type) || target.elemSize === 1) {
+					// Array child: emit setValue on the child entry
+					const childIdx = Math.floor(target.offset / target.elemSize);
+					ctx.memory.setValueById(`${target.entryId}-${childIdx}`, String(charCode));
+				} else {
+					// Scalar variable: overwrite its value
+					ctx.memory.setValueById(target.entryId, String(charCode));
+				}
+			}
+		}
+	}
+
+	// Write null terminator
+	const nullPos = writeLen;
+	if (nullPos < arraySize) {
+		ctx.memory.writeMemory(baseAddr + nullPos, 0);
+		ctx.memory.setValueById(`${entryId}-${nullPos}`, '0');
+	} else if (allowOverflow) {
+		ctx.memory.writeMemory(baseAddr + nullPos, 0);
+	}
+
+	return { bytesWritten: writeLen, overflowVars };
 }
 
 export function updateHeapChildrenFromMemory(ctx: HandlerContext, destArg: ASTNode): void {
@@ -917,31 +1446,31 @@ export function initStructFromList(ctx: HandlerContext, type: CType & { kind: 's
 	}
 }
 
-export function executeUserFunctionCall(
+export function* executeUserFunctionCall(
 	ctx: HandlerContext,
 	fn: ASTNode & { type: 'function_definition' },
 	call: ASTNode & { type: 'call_expression' },
 	line: number,
 	sharesStep: boolean,
-): void {
+): Generator<void, void, void> {
 	const args = call.args.map((a) => {
 		const r = ctx.evaluator.eval(a);
 		if (r.error) ctx.errors.push(r.error);
 		return r.value;
 	});
 
-	const result = ctx.callFunction(fn, args, line);
+	const result = yield* ctx.callFunction(fn, args, line);
 	if (result.error) ctx.errors.push(result.error);
 }
 
 // === Function calls ===
 
-export function callFunction(
+export function* callFunction(
 	ctx: HandlerContext,
 	fn: ASTNode & { type: 'function_definition' },
 	args: CValue[],
 	line: number,
-): { value: CValue; error?: string } {
+): Generator<void, { value: CValue; error?: string }, void> {
 	if (ctx.frameDepth >= ctx.maxFrames) {
 		return {
 			value: { type: primitiveType('int'), data: 0, address: 0 },
@@ -1006,7 +1535,7 @@ export function callFunction(
 	const callColEnd = ctx.callContext?.colEnd;
 	ctx.memory.beginStep(
 		{ line, colStart: callColStart, colEnd: callColEnd },
-		`Call ${fn.name}(${params.map((p) => p.name).join(', ')}) — push stack frame`,
+		`Call ${fn.name}(${params.map((p) => p.name).join(', ')})`,
 	);
 	ctx.stepCount++;
 
@@ -1026,7 +1555,7 @@ export function callFunction(
 	ctx.returnValue = null;
 
 	if (fn.body.type === 'compound_statement') {
-		ctx.dispatchStatements(fn.body.children);
+		yield* ctx.dispatchStatements(fn.body.children);
 	}
 
 	const retVal = ctx.returnValue ?? { type: primitiveType('int'), data: 0, address: 0 };
@@ -1034,10 +1563,10 @@ export function callFunction(
 	ctx.returnValue = null;
 
 	const declVar = ctx.callContext?.varName;
-	const retDesc = declVar
-		? `${fn.name}() returns ${retVal.data ?? 0}, assign to ${declVar}`
-		: `${fn.name}() returns ${retVal.data ?? 0}`;
-	ctx.memory.beginStep({ line }, retDesc);
+	const retEval = declVar
+		? `→ ${declVar} = ${retVal.data ?? 0}`
+		: `→ ${retVal.data ?? 0}`;
+	ctx.memory.beginStep({ line }, `Return from ${fn.name}()`, retEval);
 	ctx.stepCount++;
 	ctx.memory.emitScopeExit();
 

@@ -52,9 +52,9 @@ C source code ──→ tree-sitter ──→ AST ──→ Interpreter ──�
 
 | Module | Responsibility | Key files |
 |--------|---------------|-----------|
-| **Engine** (`src/lib/engine/`) | Snapshot building, diffing, validation, navigation | `snapshot.ts`, `diff.ts`, `validate.ts`, `navigation.ts` |
-| **Interpreter** (`src/lib/interpreter/`) | C source → `Program` conversion: parsing, evaluation, statement execution, memory management | `parser.ts`, `memory.ts`, `evaluator.ts`, `interpreter.ts`, `service.ts` |
-| **Components** (`src/lib/components/`) | Svelte UI: code editor, memory view, step controls, tabs | `CodeEditor.svelte`, `MemoryView.svelte`, `EditorTabs.svelte` |
+| **Engine** (`src/lib/engine/`) | Snapshot building, diffing, validation, navigation, console output | `snapshot.ts`, `diff.ts`, `validate.ts`, `navigation.ts`, `console.ts` |
+| **Interpreter** (`src/lib/interpreter/`) | C source → `Program` conversion: parsing, evaluation, statement execution, memory management, I/O state | `parser.ts`, `memory.ts`, `evaluator.ts`, `interpreter.ts`, `io-state.ts`, `service.ts` |
+| **Components** (`src/lib/components/`) | Svelte UI: code editor, memory view, step controls, console panel, tabs | `CodeEditor.svelte`, `MemoryView.svelte`, `ConsolePanel.svelte`, `EditorTabs.svelte` |
 | **Stores** (`src/lib/stores/`) | Application state: editor tabs, localStorage persistence | `editor-tabs.svelte.ts` |
 
 ### Directory Structure
@@ -68,6 +68,7 @@ src/lib/
 │   ├── diff.ts                     diffSnapshots
 │   ├── validate.ts                 validateProgram
 │   ├── navigation.ts               getVisibleIndices, nearestVisibleIndex
+│   ├── console.ts                  buildConsoleOutputs (cumulative stdout per step)
 │   └── index.ts                    Barrel export
 ├── interpreter/
 │   ├── parser.ts                   tree-sitter C → AST conversion
@@ -84,7 +85,9 @@ src/lib/
 │   ├── types.ts                    AST node types, interpreter options
 │   ├── types-c.ts                  C type system (primitives, pointers, arrays, structs)
 │   ├── stdlib.ts                   Standard library (malloc, calloc, free, sprintf, strlen, etc.)
-│   └── index.ts                    Barrel export (interpretSync, resetParserCache)
+│   ├── io-state.ts                 Stdin/stdout I/O state (buffer, read position, events, EOF)
+│   ├── escapes.ts                  Escape sequence processing (\n, \t, \0, etc.)
+│   └── index.ts                    Barrel export (interpretSync, interpretInteractive, resetParserCache)
 ├── components/
 │   ├── CodeEditor.svelte           CodeMirror 6 wrapper, read-only, line/range highlight
 │   ├── StepControls.svelte         Navigation UI (prev/next/play/speed/sub-step)
@@ -93,11 +96,12 @@ src/lib/
 │   ├── HeapCard.svelte             Heap allocation table with status coloring
 │   ├── MemoryRow.svelte            Single variable row (name, type, value, address)
 │   ├── DrilldownModal.svelte       Modal for navigating into nested structs/arrays
+│   ├── ConsolePanel.svelte         Console output + interactive stdin input field
 │   ├── EditorTabs.svelte           Tab bar for switching between programs
 │   └── constants.ts                Shared constants (MAX_VALUE_LENGTH)
 ├── stores/
 │   └── editor-tabs.svelte.ts       Multi-tab state, localStorage persistence, run cache
-├── test-programs.ts                39 test programs for the editor dropdown
+├── test-programs.ts                46 test programs for the editor dropdown
 ├── summary.ts                      Computes display summaries for nested values
 └── types.ts                        Re-exports from api/types.ts
 ```
@@ -222,13 +226,15 @@ C source string
   AST (ASTNode tree)
       │
       ▼
-  interpreter.ts: interpretAST()   ← walks AST, executes statements
+  interpreter.ts: interpretAST()   ← walks AST, executes statements (sync)
+  interpreter.ts: interpretGen()   ← generator variant, yields on stdin exhaustion (interactive)
       │
       ├── memory.ts                ← unified runtime state + op recording
       ├── evaluator.ts             ← evaluates expressions (arithmetic, pointers)
       ├── handlers/                ← statement and control-flow handlers
       ├── types-c.ts               ← C type system (sizeof, alignment, struct layout)
-      └── stdlib.ts                ← malloc, calloc, free, sprintf
+      ├── stdlib.ts                ← malloc, calloc, free, sprintf
+      └── io-state.ts              ← stdin/stdout buffer, read position, EOF signal
       │
       ▼
   Program { name, source, steps }
@@ -247,15 +253,17 @@ C source string
 
 **Evaluator** (`evaluator.ts`): Pure expression evaluation. Depends on `EvalEnv` interface (lookupVariable, setVariable). Handles all operators (arithmetic, comparison, logical with short-circuit, bitwise), pointer arithmetic with element-size scaling, dereference with memReader, cast truncation (char/short/int), sizeof. Returns `{ value: CValue, error?: string }`.
 
-**Interpreter** (`interpreter.ts`): Statement execution engine. Walks the AST top-down, calling evaluator for expressions and Memory for both runtime state changes and visualization steps. The `handlers/` subdirectory contains factored-out statement and control-flow handlers.
+**Interpreter** (`interpreter.ts`): Statement execution engine. Walks the AST top-down, calling evaluator for expressions and Memory for both runtime state changes and visualization steps. Two entry points: `interpretAST()` for synchronous execution (pre-supplied stdin), and `interpretGen()` — a generator that yields `NeedInputSignal` when stdin is exhausted. The generator accepts `string | null` (null = EOF via Ctrl+D). The `handlers/` subdirectory contains factored-out statement and control-flow handlers.
 
-**Service** (`service.ts`): Main-thread interpreter entry point. Initializes tree-sitter WASM (using `import.meta.env.BASE_URL` for path resolution), runs the full parse → interpret pipeline, and enforces a `MAX_STEPS = 500` limit (programs exceeding this are truncated with a warning).
+**I/O State** (`io-state.ts`): Manages stdin buffer (read position, append, EOF signal) and stdout/stderr event recording. Read methods: `readInt`, `readChar`, `readFloat`, `readString`, `readLine`. Events flushed per-step for console output and stdin cursor visualization.
+
+**Service** (`service.ts`): Main-thread interpreter entry point. Initializes tree-sitter WASM (using `import.meta.env.BASE_URL` for path resolution), runs the full parse → interpret pipeline, and enforces a `MAX_STEPS = 500` limit. Provides two modes: `runProgram()` for synchronous execution and `runProgramInteractive()` which returns an `InteractiveSession` with `resume(input)`, `sendEof()`, and `cancel()` methods.
 
 **Worker** (`worker.ts`): Web Worker entry point for async interpretation. Note: `worker.ts` hardcodes the `/CrowCode/` path prefix for WASM files, while `service.ts` uses `BASE_URL` dynamically. In practice, `+page.svelte` imports `service.ts` for the main thread.
 
 **Type System** (`types-c.ts`): 32-bit ILP32 model. Primitives (char=1, short=2, int=4, long=8, float=4, double=8, void=0), pointers (4 bytes), arrays (N × element), structs (fields with alignment padding). TypeRegistry resolves parser type specs to runtime types.
 
-**Standard Library** (`stdlib.ts`): malloc, calloc, free, sprintf, strlen, strcpy, strcmp, strcat, abs, sqrt, pow. printf/puts/putchar are no-ops (recognized but produce no output).
+**Standard Library** (`stdlib.ts`): malloc, calloc, free, sprintf, snprintf, strlen, strcpy, strcmp, strcat, abs, sqrt, pow. printf/puts/putchar/fprintf/fputs produce real output via IoState. scanf/getchar/fgets/gets read from stdin. Note: scanf is handled as a statement interceptor (not through stdlib) — its return value is not available as an expression.
 
 #### WASM Initialization
 
@@ -389,9 +397,9 @@ npm test          # run all tests
 npm run test:watch # watch mode
 ```
 
-599 tests across 18 test files:
+832 tests across 23 test files:
 
-### Engine tests (9 files)
+### Engine tests (10 files)
 
 - **snapshot.test.ts** — Core `applyOps` and `buildSnapshots`: add/remove/set, error reporting, immutability
 - **snapshot-edge-cases.test.ts** — `setHeapStatus`, deep nesting, multi-op interactions, empty/edge states
@@ -402,22 +410,27 @@ npm run test:watch # watch mode
 - **integration.test.ts** — Snapshot building, scope lifecycle, isolation, diffing, navigation with inline programs
 - **bugs.test.ts** — Regression tests
 - **summary.test.ts** — Display summary computation
+- **console.test.ts** — `buildConsoleOutputs()` accumulation, backward stepping
 
-### Interpreter tests (9 files)
+### Interpreter tests (13 files)
 
 - **parser.test.ts** — AST conversion for all node types
 - **evaluator.test.ts** — Expression evaluation, operators, 32-bit wrapping, pointer scaling
-- **interpreter.test.ts** — Statement handling, stdlib, validation, integration pipelines
+- **interpreter.test.ts** — Statement handling, stdlib, validation, stdio integration
 - **memory.test.ts** — Unified Memory class (scopes, heap, op recording)
 - **types-c.test.ts** — Type sizes, alignment, struct layout, TypeRegistry
 - **snapshot-regression.test.ts** — Regression safety net (7 programs captured before Memory refactor)
 - **worker.test.ts** — Worker message contract
 - **value-correctness.test.ts** — Value assertions across all features
 - **manual-programs.test.ts** — 44 full C programs through complete pipeline
+- **format.test.ts** — Printf/scanf format string parser: specifiers, width/precision, flags
+- **io-state.test.ts** — IoState: stdin consumption, EOF, stdout/stderr events
+- **interactive.test.ts** — Interactive generator protocol: pause/resume, EOF, buffer carryover, parity, Grade Calculator integration
+- **escapes.test.ts** — Escape sequence processing (\n, \t, \0, \\, unknown escapes)
 
 ### Adding tests
 
-Use `interpretAndBuild()` in `value-correctness.test.ts` for value assertions, or write a full-program test in `manual-programs.test.ts` for integration testing.
+Use `interpretAndBuild()` in `value-correctness.test.ts` for value assertions, `manual-programs.test.ts` for integration testing, or `interactive.test.ts` for interactive stdin behavior.
 
 ---
 

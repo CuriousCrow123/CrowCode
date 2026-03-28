@@ -45,7 +45,7 @@ export function validateProgram(program: Program): ValidationError[] {
 			seen.add(id);
 		}
 
-		// Check non-scope, non-heap entries have addresses
+		// Check non-scope, non-heap, non-io entries have addresses
 		function checkAddresses(entries: MemoryEntry[]) {
 			for (const entry of entries) {
 				if (!entry.kind && !entry.address) {

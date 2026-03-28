@@ -54,8 +54,8 @@ export class Evaluator {
 				return this.ok(node.value);
 
 			case 'string_literal':
-				// Strings are not fully supported; return address 0
-				return this.ok(0);
+				// Return 0 as the address but carry the string value for stdio
+				return { value: { type: { kind: 'pointer', pointsTo: { kind: 'primitive', name: 'char' as const } }, data: 0, address: 0, stringValue: node.value } };
 
 			case 'null_literal':
 				return this.ok(0);

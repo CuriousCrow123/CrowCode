@@ -29,6 +29,24 @@ function removeById(entries: MemoryEntry[], id: string): boolean {
 	return false;
 }
 
+/** Add all entries in a tree to an index map. */
+function addToIndex(map: Map<string, MemoryEntry>, entries: MemoryEntry[]): void {
+	for (const entry of entries) {
+		map.set(entry.id, entry);
+		if (entry.children) addToIndex(map, entry.children);
+	}
+}
+
+/** Remove an entry and all its descendants from an index map. */
+function removeFromIndex(map: Map<string, MemoryEntry>, entry: MemoryEntry): void {
+	map.delete(entry.id);
+	if (entry.children) {
+		for (const child of entry.children) {
+			removeFromIndex(map, child);
+		}
+	}
+}
+
 /** Apply a list of ops to a snapshot, returning a new snapshot and any errors. */
 export function applyOps(
 	snapshot: MemoryEntry[],
@@ -36,15 +54,16 @@ export function applyOps(
 ): { snapshot: MemoryEntry[]; errors: string[] } {
 	const result = structuredClone(snapshot);
 	const errors: string[] = [];
+	const index = indexById(result);
 
 	for (let i = 0; i < ops.length; i++) {
 		const op = ops[i];
-		const index = indexById(result);
 
 		switch (op.op) {
 			case 'addEntry': {
+				const cloned = structuredClone(op.entry);
 				if (op.parentId === null) {
-					result.push(structuredClone(op.entry));
+					result.push(cloned);
 				} else {
 					const parent = index.get(op.parentId);
 					if (!parent) {
@@ -52,14 +71,21 @@ export function applyOps(
 						break;
 					}
 					if (!parent.children) parent.children = [];
-					parent.children.push(structuredClone(op.entry));
+					parent.children.push(cloned);
 				}
+				addToIndex(index, [cloned]);
 				break;
 			}
 
 			case 'removeEntry': {
-				if (!removeById(result, op.id)) {
+				const entry = index.get(op.id);
+				if (!entry) {
 					errors.push(`Op ${i}: removeEntry id '${op.id}' not found`);
+					break;
+				}
+				removeFromIndex(index, entry);
+				if (!removeById(result, op.id)) {
+					errors.push(`Op ${i}: removeEntry id '${op.id}' not found in tree`);
 				}
 				break;
 			}

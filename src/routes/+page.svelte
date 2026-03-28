@@ -1,27 +1,38 @@
 <script lang="ts">
 	import type { Program } from '$lib/types';
+	import type { InteractiveSession } from '$lib/interpreter/service';
 	import { createEditorTabStore, initPersistence } from '$lib/stores/editor-tabs.svelte';
 	import { testPrograms, getCategories } from '$lib/test-programs';
 	import EditorTabs from '$lib/components/EditorTabs.svelte';
 	import CodeEditor from '$lib/components/CodeEditor.svelte';
 	import MemoryView from '$lib/components/MemoryView.svelte';
 	import StepControls from '$lib/components/StepControls.svelte';
-	import { buildSnapshots, getVisibleIndices, nearestVisibleIndex } from '$lib/engine';
+	import ConsolePanel, { type ConsoleSegment } from '$lib/components/ConsolePanel.svelte';
+	import StdinInput from '$lib/components/StdinInput.svelte';
+	import { buildSnapshots, buildConsoleOutputs, getVisibleIndices, nearestVisibleIndex } from '$lib/engine';
 
 	const store = createEditorTabStore();
 	initPersistence(store);
 
 	const categories = getCategories();
 
+	// I/O mode: pre-supplied or interactive
+	type IoMode = 'presupplied' | 'interactive';
+	let ioMode = $state<IoMode>('interactive');
+
 	// Mode state machine
 	type AppMode =
 		| { state: 'editing' }
 		| { state: 'running' }
-		| { state: 'viewing'; program: Program; errors: string[]; warnings: string[] };
+		| { state: 'viewing'; program: Program; errors: string[]; warnings: string[] }
+		| { state: 'waiting_for_input'; program: Program; errors: string[]; warnings: string[]; resume: (input: string) => Promise<InteractiveSession>; sendEof: () => Promise<InteractiveSession>; cancel: () => void };
 
 	let mode = $state<AppMode>({ state: 'editing' });
 	let errors = $state<string[]>([]);
 	let warnings = $state<string[]>([]);
+
+	// Interactive mode: history of user-submitted stdin with the step index they were entered at
+	let interactiveStdinEntries = $state<{ text: string; afterStep: number }[]>([]);
 
 	// Per-tab run result cache
 	interface CachedRun {
@@ -41,40 +52,13 @@
 		mode = { state: 'running' };
 		errors = [];
 		warnings = [];
+		interactiveStdinEntries = [];
 
 		try {
-			const { runProgram } = await import('$lib/interpreter/service');
-			if (thisRun !== runGeneration) return;
-
-			const result = await runProgram(store.activeTab.source);
-			if (thisRun !== runGeneration) return;
-
-			errors = result.errors;
-			warnings = result.warnings;
-
-			if (result.program.steps.length > 0) {
-				const program = JSON.parse(JSON.stringify(result.program));
-				internalIndex = 0;
-				subStepMode = false;
-				mode = {
-					state: 'viewing',
-					program,
-					errors: result.errors,
-					warnings: result.warnings,
-				};
-				// Cache the result for this tab
-				runCache.set(store.active, {
-					program,
-					errors: result.errors,
-					warnings: result.warnings,
-					stepIndex: 0,
-					subStepMode: false,
-				});
+			if (ioMode === 'interactive') {
+				await runInteractive(thisRun);
 			} else {
-				if (errors.length === 0) {
-					errors = ['No steps generated — check your code.'];
-				}
-				mode = { state: 'editing' };
+				await runPreSupplied(thisRun);
 			}
 		} catch (err) {
 			if (thisRun !== runGeneration) return;
@@ -83,7 +67,172 @@
 		}
 	}
 
+	async function runPreSupplied(thisRun: number) {
+		const { runProgram } = await import('$lib/interpreter/service');
+		if (thisRun !== runGeneration) return;
+
+		const result = await runProgram(store.activeTab.source, stdinInput || undefined);
+		if (thisRun !== runGeneration) return;
+
+		errors = result.errors;
+		warnings = result.warnings;
+
+		if (result.program.steps.length > 0) {
+			const program = JSON.parse(JSON.stringify(result.program));
+			internalIndex = 0;
+			subStepMode = false;
+			mode = {
+				state: 'viewing',
+				program,
+				errors: result.errors,
+				warnings: result.warnings,
+			};
+			runCache.set(store.active, {
+				program,
+				errors: result.errors,
+				warnings: result.warnings,
+				stepIndex: 0,
+				subStepMode: false,
+			});
+		} else {
+			if (errors.length === 0) {
+				errors = ['No steps generated — check your code.'];
+			}
+			mode = { state: 'editing' };
+		}
+	}
+
+	async function runInteractive(thisRun: number) {
+		const { runProgramInteractive } = await import('$lib/interpreter/service');
+		if (thisRun !== runGeneration) return;
+
+		const session = await runProgramInteractive(store.activeTab.source);
+		if (thisRun !== runGeneration) return;
+
+		handleInteractiveSession(session, thisRun);
+	}
+
+	function handleInteractiveSession(session: InteractiveSession, generation: number, preserveIndex = false) {
+		if (generation !== runGeneration) return;
+
+		if (session.state === 'complete') {
+			const result = session.result;
+			errors = result.errors;
+			warnings = result.warnings;
+
+			if (result.program.steps.length > 0) {
+				const program = JSON.parse(JSON.stringify(result.program));
+				if (!preserveIndex) {
+					internalIndex = 0;
+					subStepMode = false;
+				}
+				mode = {
+					state: 'viewing',
+					program,
+					errors: result.errors,
+					warnings: result.warnings,
+				};
+				runCache.set(store.active, {
+					program,
+					errors: result.errors,
+					warnings: result.warnings,
+					stepIndex: internalIndex,
+					subStepMode,
+				});
+			} else {
+				if (errors.length === 0) {
+					errors = ['No steps generated — check your code.'];
+				}
+				mode = { state: 'editing' };
+			}
+			return;
+		}
+
+		// Paused — needs input
+		errors = session.errors;
+		warnings = session.warnings;
+
+		const program = JSON.parse(JSON.stringify(session.program));
+		if (!preserveIndex) {
+			internalIndex = 0;
+			subStepMode = false;
+		}
+
+		// Create generation-guarded resume
+		const sessionResume = session.resume;
+		const sessionSendEof = session.sendEof;
+		const sessionCancel = session.cancel;
+
+		mode = {
+			state: 'waiting_for_input',
+			program,
+			errors: session.errors,
+			warnings: session.warnings,
+			resume: async (input: string) => {
+				if (generation !== runGeneration) throw new Error('Stale session');
+				return sessionResume(input);
+			},
+			sendEof: async () => {
+				if (generation !== runGeneration) throw new Error('Stale session');
+				return sessionSendEof();
+			},
+			cancel: () => sessionCancel(),
+		};
+	}
+
+	function handleSubmitInput(text: string) {
+		if (mode.state !== 'waiting_for_input') return;
+		const resumeFn = mode.resume;
+		const gen = runGeneration;
+
+		// Record stdin entry with the step it was provided at (for interleaved display)
+		interactiveStdinEntries = [...interactiveStdinEntries, { text, afterStep: steps.length - 1 }];
+
+		// Flip state SYNCHRONOUSLY before async work (prevents double-submit)
+		mode = { state: 'running' };
+
+		resumeFn(text).then((session) => {
+			// Preserve step index — don't reset on resume
+			handleInteractiveSession(session, gen, true);
+		}).catch((err) => {
+			if (gen !== runGeneration) return;
+			errors = [err instanceof Error ? err.message : String(err)];
+			mode = { state: 'editing' };
+		});
+	}
+
+	function handleEof() {
+		if (mode.state !== 'waiting_for_input') return;
+		const eofFn = mode.sendEof;
+		const gen = runGeneration;
+
+		// Record EOF indicator in stdin entries
+		interactiveStdinEntries = [...interactiveStdinEntries, { text: '^D\n', afterStep: steps.length - 1 }];
+
+		mode = { state: 'running' };
+
+		eofFn().then((session) => {
+			handleInteractiveSession(session, gen, true);
+		}).catch((err) => {
+			if (gen !== runGeneration) return;
+			errors = [err instanceof Error ? err.message : String(err)];
+			mode = { state: 'editing' };
+		});
+	}
+
+	function stopInteractive() {
+		if (mode.state === 'waiting_for_input') {
+			mode.cancel();
+		}
+		mode = { state: 'editing' };
+	}
+
+
 	function edit() {
+		// Cancel interactive session if paused
+		if (mode.state === 'waiting_for_input') {
+			mode.cancel();
+		}
 		// Save step position before leaving viewing mode
 		if (mode.state === 'viewing') {
 			const cached = runCache.get(store.active);
@@ -96,6 +245,10 @@
 	}
 
 	function handleTabSelect(index: number) {
+		// Cancel interactive session if paused
+		if (mode.state === 'waiting_for_input') {
+			mode.cancel();
+		}
 		// Save step position of current tab before switching
 		if (mode.state === 'viewing') {
 			const cached = runCache.get(store.active);
@@ -141,6 +294,7 @@
 		const prog = testPrograms.find((p) => p.id === id);
 		if (prog) {
 			store.updateSource(store.active, prog.source);
+			stdinInput = prog.stdin ?? '';
 			runCache.delete(store.active);
 			mode = { state: 'editing' };
 			errors = [];
@@ -149,14 +303,23 @@
 		select.value = '';
 	}
 
+	// stdin state (per-tab)
+	let stdinInput = $state('');
+	const needsStdin = $derived(/\b(scanf|getchar|fgets|gets)\s*\(/.test(store.activeTab.source));
+
 	// Stepping state (only used in viewing mode)
 	let internalIndex = $state(0);
 	let subStepMode = $state(false);
 
-	const viewingProgram = $derived(mode.state === 'viewing' ? mode.program : null);
+	const viewingProgram = $derived(
+		mode.state === 'viewing' ? mode.program :
+		mode.state === 'waiting_for_input' ? mode.program :
+		null
+	);
 	// $state.snapshot() strips Svelte proxies so structuredClone inside buildSnapshots works
 	const snapshots = $derived(viewingProgram ? buildSnapshots($state.snapshot(viewingProgram) as Program) : []);
 	const steps = $derived(viewingProgram?.steps ?? []);
+	const consoleOutputs = $derived(viewingProgram ? buildConsoleOutputs(viewingProgram.steps) : []);
 	const visibleIndices = $derived(getVisibleIndices(steps, subStepMode));
 
 	const visiblePosition = $derived.by(() => {
@@ -168,9 +331,74 @@
 
 	const currentStep = $derived(steps[internalIndex]);
 	const currentSnapshot = $derived(snapshots[internalIndex] ?? []);
+	const currentConsoleOutput = $derived(consoleOutputs[internalIndex] ?? '');
+	const previousConsoleOutput = $derived(internalIndex > 0 ? (consoleOutputs[internalIndex - 1] ?? '') : '');
+	const newConsoleOutput = $derived(
+		currentConsoleOutput.length > previousConsoleOutput.length
+			? currentConsoleOutput.slice(previousConsoleOutput.length)
+			: ''
+	);
+	const hasConsoleOutput = $derived(consoleOutputs.some((o) => o.length > 0));
+
+	/**
+	 * Build interleaved console segments for interactive mode.
+	 * Walks steps up to internalIndex, emitting stdout segments and inserting
+	 * stdin echoes at the step where the user provided input.
+	 */
+	const interactiveSegments = $derived.by((): ConsoleSegment[] => {
+		if (ioMode !== 'interactive') return [];
+		const segs: ConsoleSegment[] = [];
+		let stdinIdx = 0;
+		for (let i = 0; i <= internalIndex && i < steps.length; i++) {
+			const step = steps[i];
+			if (step?.ioEvents) {
+				for (const e of step.ioEvents) {
+					if (e.kind === 'write' && e.target === 'stdout') {
+						segs.push({ type: 'stdout', text: e.text });
+					}
+				}
+			}
+			// Insert stdin echo after the step where user provided input
+			while (stdinIdx < interactiveStdinEntries.length && interactiveStdinEntries[stdinIdx].afterStep === i) {
+				segs.push({ type: 'stdin', text: interactiveStdinEntries[stdinIdx].text });
+				stdinIdx++;
+			}
+		}
+		return segs;
+	});
+
+	/** For pre-supplied mode: simple segments from stdout string. */
+	const preSuppliedSegments = $derived.by((): ConsoleSegment[] => {
+		if (currentConsoleOutput.length === 0) return [];
+		if (newConsoleOutput.length > 0) {
+			return [
+				{ type: 'stdout', text: previousConsoleOutput },
+				{ type: 'stdout', text: newConsoleOutput },
+			];
+		}
+		return [{ type: 'stdout', text: currentConsoleOutput }];
+	});
+
+	// stdin consumption tracking
+	const stdinConsumed = $derived.by(() => {
+		if (mode.state !== 'viewing' && mode.state !== 'waiting_for_input') return 0;
+		const step = steps[internalIndex];
+		if (!step?.ioEvents) return 0;
+		// Find the last stdin-read event up to current step
+		let pos = 0;
+		for (let i = 0; i <= internalIndex; i++) {
+			const events = steps[i]?.ioEvents;
+			if (events) {
+				for (const e of events) {
+					if (e.kind === 'read') pos = e.cursorPos;
+				}
+			}
+		}
+		return pos;
+	});
 
 	const editorLocation = $derived.by(() => {
-		if (mode.state !== 'viewing') return undefined;
+		if (mode.state !== 'viewing' && mode.state !== 'waiting_for_input') return undefined;
 		const loc = currentStep?.location ?? { line: 1 };
 		if (subStepMode) return loc;
 		return { line: loc.line };
@@ -179,7 +407,7 @@
 	// Collect descriptions from all steps between previous visible and current (inclusive).
 	// In sub-step mode, just the current step. In line mode, includes skipped sub-steps.
 	const stepDescriptions = $derived.by(() => {
-		if (mode.state !== 'viewing') return [];
+		if (mode.state !== 'viewing' && mode.state !== 'waiting_for_input') return [];
 		if (subStepMode) {
 			const step = steps[internalIndex];
 			if (!step?.description && !step?.evaluation) return [];
@@ -216,7 +444,7 @@
 
 	// Keyboard shortcuts (only in viewing mode)
 	function handleKeydown(e: KeyboardEvent) {
-		if (mode.state !== 'viewing') return;
+		if (mode.state !== 'viewing' && mode.state !== 'waiting_for_input') return;
 		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 		if (e.target instanceof HTMLElement && e.target.closest('.cm-editor')) return;
 		switch (e.key) {
@@ -281,6 +509,13 @@
 				>
 					Edit
 				</button>
+			{:else if mode.state === 'waiting_for_input'}
+				<button
+					onclick={stopInteractive}
+					class="px-4 py-1.5 rounded text-sm font-mono bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-colors"
+				>
+					Stop
+				</button>
 			{:else}
 				<button
 					onclick={run}
@@ -311,19 +546,62 @@
 
 	<!-- Main area: editor + memory view -->
 	<div class="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-4">
-		<!-- Code Editor -->
-		<div class="h-[70vh]">
-			<CodeEditor
-				source={store.activeTab.source}
-				location={editorLocation}
-				readOnly={mode.state === 'viewing'}
-				onchange={mode.state === 'editing' ? handleSourceChange : undefined}
-			/>
+		<!-- Left column: Code Editor + I/O -->
+		<div class="flex flex-col gap-3">
+			<div class="h-[55vh]">
+				<CodeEditor
+					source={store.activeTab.source}
+					location={editorLocation}
+					readOnly={mode.state === 'viewing' || mode.state === 'waiting_for_input'}
+					onchange={mode.state === 'editing' ? handleSourceChange : undefined}
+				/>
+			</div>
+			<!-- I/O mode toggle (visible when program uses stdin functions) -->
+			{#if needsStdin && mode.state === 'editing'}
+				<div class="flex items-center gap-2">
+					<span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">I/O Mode</span>
+					<button
+						onclick={() => ioMode = 'interactive'}
+						class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'interactive' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
+					>Interactive</button>
+					<button
+						onclick={() => ioMode = 'presupplied'}
+						class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'presupplied' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
+					>Pre-supplied</button>
+				</div>
+			{/if}
+			<!-- Pre-supplied mode: StdinInput + ConsolePanel (output only) -->
+			{#if ioMode === 'presupplied'}
+				{#if needsStdin}
+					<StdinInput
+						value={stdinInput}
+						onchange={(v) => stdinInput = v}
+						disabled={mode.state === 'viewing'}
+						consumed={stdinConsumed}
+					/>
+				{/if}
+				{#if mode.state === 'viewing' && hasConsoleOutput}
+					<ConsolePanel
+						segments={preSuppliedSegments}
+						newOutputFrom={newConsoleOutput.length > 0 ? preSuppliedSegments.length - 1 : -1}
+					/>
+				{/if}
+			{:else}
+				<!-- Interactive mode: integrated console with interleaved output + input -->
+				{#if (mode.state === 'viewing' || mode.state === 'waiting_for_input') && (hasConsoleOutput || interactiveSegments.length > 0 || mode.state === 'waiting_for_input')}
+					<ConsolePanel
+						segments={interactiveSegments}
+						waitingForInput={mode.state === 'waiting_for_input' && internalIndex >= steps.length - 1}
+						onSubmitInput={handleSubmitInput}
+						onEof={handleEof}
+					/>
+				{/if}
+			{/if}
 		</div>
 
 		<!-- Memory View -->
 		<div class="flex flex-col">
-			{#if mode.state === 'viewing'}
+			{#if mode.state === 'viewing' || mode.state === 'waiting_for_input'}
 				<div class="mb-3">
 					<StepControls
 						current={visiblePosition}

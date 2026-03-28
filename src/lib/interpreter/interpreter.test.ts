@@ -2,8 +2,10 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { Parser, Language } from 'web-tree-sitter';
 import { resolve } from 'path';
 import { interpretSync, resetParserCache } from './index';
+import type { InterpreterOptions } from './types';
 import { validateProgram } from '$lib/engine/validate';
 import { buildSnapshots } from '$lib/engine/snapshot';
+import { buildConsoleOutputs } from '$lib/engine/console';
 import type { Program, ProgramStep, MemoryEntry } from '$lib/types';
 
 let parser: Parser;
@@ -537,5 +539,290 @@ describe('variable shadowing across scopes', () => {
 		const snapshots = buildSnapshots(program);
 		const last = snapshots[snapshots.length - 1];
 		expect(findEntry(last, 'x')?.value).toBe('30');
+	});
+});
+
+// === stdio integration tests ===
+
+function runWithStdin(source: string, stdin: string, opts?: { maxSteps?: number }) {
+	return interpretSync(parser, source, { ...opts, stdin });
+}
+
+describe('stdio — printf', () => {
+	it('printf step has ioEvent with stdout text', () => {
+		const src = `int main() { printf("hi %d", 3); return 0; }`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		const printfStep = program.steps.find((s) =>
+			s.ioEvents?.some((e) => e.kind === 'write')
+		);
+		expect(printfStep).toBeDefined();
+		expect(printfStep!.ioEvents![0]).toMatchObject({ kind: 'write', target: 'stdout', text: 'hi 3' });
+	});
+
+	it('non-I/O steps have no ioEvents', () => {
+		const src = `int main() { int x = 5; return 0; }`;
+		const { program } = run(src);
+		const ioSteps = program.steps.filter((s) => s.ioEvents && s.ioEvents.length > 0);
+		expect(ioSteps).toHaveLength(0);
+	});
+
+	it('cumulative stdout across multiple printf calls', () => {
+		const src = `int main() { printf("a"); printf("b"); printf("c"); return 0; }`;
+		const { program } = run(src);
+		const outputs = buildConsoleOutputs(program.steps);
+		expect(outputs[outputs.length - 1]).toContain('abc');
+	});
+
+	it('puts appends newline', () => {
+		const src = `int main() { puts("hello"); return 0; }`;
+		const { program } = run(src);
+		const putsStep = program.steps.find((s) =>
+			s.ioEvents?.some((e) => e.kind === 'write' && e.text === 'hello\n')
+		);
+		expect(putsStep).toBeDefined();
+	});
+
+	it('printf with format specifiers', () => {
+		const src = `int main() {
+	int x = 42;
+	printf("x=%d, hex=%x", x, x);
+	return 0;
+}`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		const outputs = buildConsoleOutputs(program.steps);
+		expect(outputs[outputs.length - 1]).toContain('x=42, hex=2a');
+	});
+
+	it('printf with no args still creates valid step', () => {
+		const src = `int main() { printf("hello world"); return 0; }`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+	});
+});
+
+describe('stdio — escape sequences', () => {
+	it('printf with \\n produces real newline in output', () => {
+		const src = `int main() { printf("a\\nb"); return 0; }`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		const step = program.steps.find((s) => s.ioEvents?.some((e) => e.kind === 'write'));
+		expect(step!.ioEvents![0].text).toBe('a\nb');
+	});
+
+	it('printf with \\t produces real tab in output', () => {
+		const src = `int main() { printf("a\\tb"); return 0; }`;
+		const { program } = run(src);
+		const step = program.steps.find((s) => s.ioEvents?.some((e) => e.kind === 'write'));
+		expect(step!.ioEvents![0].text).toBe('a\tb');
+	});
+
+	it('char literal \\n has value 10', () => {
+		const src = `int main() { char c = '\\n'; return 0; }`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'c')?.value).toBe('10');
+	});
+
+	it('char literal \\0 has value 0', () => {
+		const src = `int main() { char c = '\\0'; return 0; }`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'c')?.value).toBe('0');
+	});
+
+	it('putchar with \\n writes newline to stdout', () => {
+		const src = `int main() { putchar('\\n'); return 0; }`;
+		const { program } = run(src);
+		const step = program.steps.find((s) =>
+			s.ioEvents?.some((e) => e.kind === 'write' && e.text === '\n')
+		);
+		expect(step).toBeDefined();
+	});
+});
+
+describe('stdio — getchar', () => {
+	it('getchar reads from stdin', () => {
+		const src = `int main() { int c = getchar(); return 0; }`;
+		const { program, errors } = runWithStdin(src, 'A');
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		const c = findEntry(last, 'c');
+		expect(c?.value).toBe('65');
+	});
+
+	it('getchar returns -1 on empty stdin', () => {
+		const src = `int main() { int c = getchar(); return 0; }`;
+		const { program, errors } = runWithStdin(src, '');
+		expect(errors).toHaveLength(0);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		const c = findEntry(last, 'c');
+		expect(c?.value).toBe('-1');
+	});
+});
+
+describe('stdio — scanf', () => {
+	it('scanf("%d", &x) writes value to variable', () => {
+		const src = `int main() {
+	int x;
+	scanf("%d", &x);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, '42\n');
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('42');
+	});
+
+	it('scanf reads multiple values', () => {
+		const src = `int main() {
+	int a;
+	int b;
+	scanf("%d %d", &a, &b);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, '10 20\n');
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'a')?.value).toBe('10');
+		expect(findEntry(last, 'b')?.value).toBe('20');
+	});
+
+	it('scanf \\n residue: readInt then readChar reads newline', () => {
+		const src = `int main() {
+	int x;
+	char c;
+	scanf("%d", &x);
+	scanf("%c", &c);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, '42\nA');
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('42');
+		// The core educational scenario: %c reads the leftover \n, not 'A'
+		expect(findEntry(last, 'c')?.value).toBe('10');
+	});
+
+	it('scanf with empty stdin produces no assignment', () => {
+		const src = `int main() {
+	int x = 99;
+	scanf("%d", &x);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, '');
+		expect(errors).toHaveLength(0);
+		expectValid(program);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		// x should keep its initialized value since scanf found EOF
+		expect(findEntry(last, 'x')?.value).toBe('99');
+	});
+
+	it('scanf missing & produces error', () => {
+		const src = `int main() {
+	int x;
+	scanf("%d", x);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, '42\n');
+		// Should have an error about missing &
+		expect(errors.some(e => e.includes('pointer') || e.includes('&'))).toBe(true);
+	});
+
+	it('scanf %c reads single character without skipping whitespace', () => {
+		const src = `int main() {
+	char c;
+	scanf("%c", &c);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, 'X');
+		expect(errors).toHaveLength(0);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'c')?.value).toBe('88'); // 'X' = 88
+	});
+
+	it('scanf %x reads hex value', () => {
+		const src = `int main() {
+	int x;
+	scanf("%x", &x);
+	return 0;
+}`;
+		const { program, errors } = runWithStdin(src, 'ff\n');
+		expect(errors).toHaveLength(0);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'x')?.value).toBe('255');
+	});
+
+	it('scanf records ioEvents', () => {
+		const src = `int main() {
+	int x;
+	scanf("%d", &x);
+	return 0;
+}`;
+		const { program } = runWithStdin(src, '42\n');
+		const scanfStep = program.steps.find(s =>
+			s.ioEvents?.some(e => e.kind === 'read')
+		);
+		expect(scanfStep).toBeDefined();
+	});
+
+	it('scanf step description shows assigned values', () => {
+		const src = `int main() {
+	int x;
+	scanf("%d", &x);
+	return 0;
+}`;
+		const { program } = runWithStdin(src, '42\n');
+		const scanfStep = program.steps.find(s => s.description?.includes('scanf'));
+		expect(scanfStep).toBeDefined();
+		expect(scanfStep!.evaluation).toContain('x = 42');
+	});
+
+	it('scanf %c description shows character representation', () => {
+		const src = `int main() {
+	char c;
+	scanf("%c", &c);
+	return 0;
+}`;
+		const { program } = runWithStdin(src, '\n');
+		const scanfStep = program.steps.find(s => s.description?.includes('scanf'));
+		expect(scanfStep).toBeDefined();
+		expect(scanfStep!.evaluation).toContain("'\\n'");
+	});
+});
+
+describe('stdio — step descriptions', () => {
+	it('printf description shows output text', () => {
+		const src = `int main() { printf("hello %d", 42); return 0; }`;
+		const { program } = run(src);
+		const printfStep = program.steps.find(s => s.description?.includes('printf'));
+		expect(printfStep).toBeDefined();
+		expect(printfStep!.evaluation).toContain('hello 42');
+	});
+
+	it('puts description shows output text', () => {
+		const src = `int main() { puts("world"); return 0; }`;
+		const { program } = run(src);
+		const putsStep = program.steps.find(s => s.description?.includes('puts'));
+		expect(putsStep).toBeDefined();
+		expect(putsStep!.evaluation).toContain('world\\n');
 	});
 });

@@ -4,6 +4,7 @@ export interface TestProgram {
 	name: string;
 	category: string;
 	source: string;
+	stdin?: string;
 }
 
 export const testPrograms: TestProgram[] = [
@@ -784,6 +785,158 @@ int main() {
     free(player);
     return 0;
 }`,
+	},
+
+	// Category: stdio
+	{
+		id: 'p16.1', category: 'stdio', name: 'Basic printf',
+		source: `#include <stdio.h>
+
+int main() {
+    int x = 42;
+    int y = -7;
+    printf("x = %d\\n", x);
+    printf("y = %d, hex = %x\\n", y, y);
+    printf("sum = %d\\n", x + y);
+    return 0;
+}`,
+	},
+	{
+		id: 'p16.2', category: 'stdio', name: 'puts and putchar',
+		source: `#include <stdio.h>
+
+int main() {
+    puts("Hello, World!");
+    putchar('A');
+    putchar('\\n');
+    puts("Done.");
+    return 0;
+}`,
+	},
+	{
+		id: 'p16.3', category: 'stdio', name: 'getchar Loop',
+		source: `#include <stdio.h>
+
+int main() {
+    int c;
+    int count = 0;
+    c = getchar();
+    while (c != -1) {
+        count++;
+        c = getchar();
+    }
+    return 0;
+}`,
+		stdin: 'Hello\n',
+	},
+	{
+		id: 'p16.4', category: 'stdio', name: 'scanf + printf',
+		source: `#include <stdio.h>
+
+int main() {
+    int x;
+    int y;
+    printf("Enter two numbers:\\n");
+    scanf("%d", &x);
+    scanf("%d", &y);
+    printf("Sum = %d\\n", x + y);
+    return 0;
+}`,
+		stdin: '10\n20\n',
+	},
+	{
+		id: 'p16.5', category: 'stdio', name: 'scanf \\\\n Residue',
+		source: `#include <stdio.h>
+
+// The classic scanf pitfall:
+// %d skips whitespace, %c does NOT.
+// After scanf("%d"), the \\n stays in the buffer.
+// The next scanf("%c") reads that \\n, not the next real char.
+
+int main() {
+    int num;
+    char ch;
+    scanf("%d", &num);
+    scanf("%c", &ch);
+    // ch is now 10 ('\\n'), not 'A'!
+    return 0;
+}`,
+		stdin: '42\nA',
+	},
+	{
+		id: 'p16.6', category: 'stdio', name: 'printf Format Specifiers',
+		source: `#include <stdio.h>
+
+int main() {
+    int i = 255;
+    printf("decimal: %d\\n", i);
+    printf("hex:     %x\\n", i);
+    printf("HEX:     %X\\n", i);
+    printf("char:    %c\\n", 65);
+    printf("padded:  %05d\\n", 42);
+    printf("left:    %-10d|\\n", 42);
+    printf("percent: 100%%\\n");
+    return 0;
+}`,
+	},
+	{
+		id: 'p16.7', category: 'stdio', name: 'Grade Calculator',
+		source: `#include <stdio.h>
+
+// Interactive grade calculator.
+// Enter scores one at a time, -1 to finish.
+// Try it in Interactive mode!
+
+int main() {
+    int score;
+    int total = 0;
+    int count = 0;
+    int highest = 0;
+
+    printf("Enter scores (-1 to finish):\\n");
+
+    while (1) {
+        scanf("%d", &score);
+        if (score == -1) {
+            break;
+        }
+        if (score < 0 || score > 100) {
+            printf("Invalid! Use 0-100.\\n");
+        } else {
+            total = total + score;
+            count = count + 1;
+            if (score > highest) {
+                highest = score;
+            }
+            printf("  Score #%d: %d\\n", count, score);
+        }
+    }
+
+    printf("\\n--- Results ---\\n");
+    printf("Scores entered: %d\\n", count);
+    printf("Total: %d\\n", total);
+    printf("Highest: %d\\n", highest);
+
+    if (count > 0) {
+        int avg = total / count;
+        printf("Average: %d\\n", avg);
+
+        if (avg >= 90) {
+            printf("Grade: A\\n");
+        } else if (avg >= 80) {
+            printf("Grade: B\\n");
+        } else if (avg >= 70) {
+            printf("Grade: C\\n");
+        } else {
+            printf("Grade: F\\n");
+        }
+    } else {
+        printf("No scores entered.\\n");
+    }
+
+    return 0;
+}`,
+		stdin: '85\n92\n78\n-1\n',
 	},
 ];
 

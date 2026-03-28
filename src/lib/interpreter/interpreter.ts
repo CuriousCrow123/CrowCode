@@ -7,6 +7,7 @@ import {
 	isFunctionPointerType,
 } from './types-c';
 import { createStdlib } from './stdlib';
+import { IoState } from './io-state';
 import type { Program } from '$lib/types';
 import type { HandlerContext } from './handlers/types';
 import {
@@ -35,35 +36,58 @@ export class Interpreter {
 	private memory: Memory;
 	private evaluator: Evaluator;
 	private typeReg: TypeRegistry;
+	private io: IoState;
 	private errors: string[] = [];
 	private stepCount = 0;
 	private frameDepth = 0;
 	private maxSteps: number;
 	private maxFrames: number;
+	private interactive: boolean;
 
 	private callContext: { varName: string; colStart?: number; colEnd?: number } | null = null;
 	private breakFlag = false;
 	private continueFlag = false;
 	private returnFlag = false;
 	private returnValue: CValue | null = null;
+	private needsInput = false;
 
 	constructor(source: string, opts?: InterpreterOptions) {
 		this.maxSteps = opts?.maxSteps ?? 500;
 		this.maxFrames = opts?.maxFrames ?? 256;
+		this.interactive = opts?.interactive ?? false;
 		const maxHeap = opts?.maxHeapBytes ?? 1024 * 1024;
 
 		this.memory = new Memory('Custom Program', source, maxHeap);
 		this.typeReg = new TypeRegistry();
+		this.io = new IoState(opts?.stdin ?? '');
+		this.memory.setIoEventsFlusher(
+			() => {
+				const events = this.io.flushEvents();
+				// Add/update stdin buffer entry in memory view when reads occur
+				if (events) {
+					const hasReads = events.some((e) => e.kind === 'read');
+					if (hasReads) {
+						this.memory.addStdinEntry(this.io.getStdinFull());
+						this.memory.updateStdinCursor(this.io.getStdinPos(), this.io.getStdinFull());
+					}
+				}
+				return events;
+			},
+			() => this.io.peekEvents(),
+		);
+
+		const memAccess = {
+			read: (addr: number) => this.memory.readMemory(addr),
+			write: (addr: number, val: number) => this.memory.writeMemory(addr, val),
+		};
 
 		const stdlib = createStdlib(
 			{
 				malloc: (size, allocator, line) => this.memory.mallocRuntime(size, allocator, line),
 				free: (address) => this.memory.freeByAddress(address),
 			},
-			{
-				read: (addr) => this.memory.readMemory(addr),
-				write: (addr, val) => this.memory.writeMemory(addr, val),
-			},
+			memAccess,
+			this.io,
 		);
 
 		this.evaluator = new Evaluator(this.memory, this.typeReg, (name, args, line, colStart, colEnd) => {
@@ -75,7 +99,9 @@ export class Interpreter {
 					colStart,
 					colEnd,
 				};
-				const result = callFunction(this.ctx(), fn, args, line);
+				// Drive callFunction generator synchronously.
+				// If it yields (needsInput set inside called function), we stop and return default.
+				const result = driveGenerator(callFunction(this.ctx(), fn, args, line));
 				this.callContext = savedCtx;
 				return result;
 			}
@@ -88,7 +114,7 @@ export class Interpreter {
 				}
 				const target = this.memory.getFunctionByIndex(idx);
 				if (target) {
-					return callFunction(this.ctx(), target.node, args, line);
+					return driveGenerator(callFunction(this.ctx(), target.node, args, line));
 				}
 				return { value: { type: primitiveType('int'), data: 0, address: 0 }, error: `Invalid function pointer at line ${line}` };
 			}
@@ -113,9 +139,11 @@ export class Interpreter {
 			get memory() { return self.memory; },
 			get evaluator() { return self.evaluator; },
 			get typeReg() { return self.typeReg; },
+			get io() { return self.io; },
 			get errors() { return self.errors; },
 			get maxSteps() { return self.maxSteps; },
 			get maxFrames() { return self.maxFrames; },
+			get interactive() { return self.interactive; },
 			get stepCount() { return self.stepCount; },
 			set stepCount(v) { self.stepCount = v; },
 			get frameDepth() { return self.frameDepth; },
@@ -130,9 +158,11 @@ export class Interpreter {
 			set returnValue(v) { self.returnValue = v; },
 			get callContext() { return self.callContext; },
 			set callContext(v) { self.callContext = v; },
+			get needsInput() { return self.needsInput; },
+			set needsInput(v) { self.needsInput = v; },
 			dispatch: (node, sharesStep) => self.executeStatement(node, sharesStep),
 			dispatchStatements: (stmts, first) => self.executeStatements(stmts, first),
-			callFunction: (fn, args, line) => callFunction(self.ctx(), fn, args, line),
+			callFunction: (fn, args, line) => callFunction(self.ctx(), fn, args, line) as Generator<void, { value: CValue; error?: string }, void>,
 			formatValue: (type, data, init) => formatValue(self.memory, type, data, init),
 			describeExpr,
 		};
@@ -144,6 +174,7 @@ export class Interpreter {
 		return this.memory.finish() as InterpretResult;
 	}
 
+	/** Synchronous interpretation — runs to completion without interactive pausing. */
 	interpretAST(ast: ASTNode & { type: 'translation_unit' }): InterpretResult {
 		for (const node of ast.children) {
 			if (node.type === 'struct_definition') {
@@ -175,7 +206,10 @@ export class Interpreter {
 		});
 
 		if (mainFn.body.type === 'compound_statement') {
-			this.executeStatements(mainFn.body.children, true);
+			// Drive the generator synchronously — needsInput just causes early break (EOF behavior)
+			const gen = this.executeStatements(mainFn.body.children, true);
+			while (!gen.next().done) { /* drain */ }
+			this.needsInput = false; // Clear — in sync mode, needsInput is treated as EOF
 		}
 
 		detectLeaks(this.memory);
@@ -187,32 +221,120 @@ export class Interpreter {
 		};
 	}
 
-	// === Statement dispatch ===
+	/** Generator-based interpretation — yields when stdin is exhausted and input is needed.
+	 *  Send a string to provide input, or null to signal EOF (Ctrl+D). */
+	*interpretGen(ast: ASTNode & { type: 'translation_unit' }): Generator<
+		{ type: 'need_input'; program: Program },
+		InterpretResult,
+		string | null
+	> {
+		for (const node of ast.children) {
+			if (node.type === 'struct_definition') {
+				this.typeReg.defineStruct(node.name, node.fields);
+			} else if (node.type === 'function_definition' && node.name !== 'main') {
+				this.memory.defineFunction(node.name, node);
+			}
+		}
 
-	private executeStatements(statements: ASTNode[], firstSharesStep = false): void {
+		const mainFn = ast.children.find(
+			(n) => n.type === 'function_definition' && n.name === 'main'
+		);
+
+		if (!mainFn || mainFn.type !== 'function_definition') {
+			this.errors.push('No main() function found');
+			return { ...this.memory.finish(), errors: this.errors };
+		}
+
+		this.memory.defineFunction('main', mainFn);
+
+		const firstLine = this.findFirstStatementLine(mainFn.body);
+		this.memory.beginStep({ line: firstLine }, 'Enter main()');
+		this.memory.pushScopeRuntime('main');
+		this.memory.emitScopeEntry('main', [], {
+			caller: '_start',
+			returnAddr: '0x00400580',
+			file: '',
+			line: mainFn.line,
+		});
+
+		if (mainFn.body.type === 'compound_statement') {
+			// Use the yielding version of executeStatements
+			yield* this.executeStatementsYielding(mainFn.body.children, true);
+		}
+
+		detectLeaks(this.memory);
+
+		const result = this.memory.finish();
+		return {
+			program: result.program,
+			errors: [...this.errors, ...result.errors],
+		};
+	}
+
+	// === Statement dispatch (generators) ===
+
+	/**
+	 * Execute statements, yielding NeedInput when stdin is exhausted.
+	 * This is the top-level yielding wrapper — it checks needsInput after each statement
+	 * and yields the partial program up to the caller (interpretGen).
+	 */
+	private *executeStatementsYielding(
+		statements: ASTNode[],
+		firstSharesStep = false,
+	): Generator<{ type: 'need_input'; program: Program }, void, string | null> {
 		for (let i = 0; i < statements.length; i++) {
 			if (this.breakFlag || this.continueFlag || this.returnFlag) break;
 			if (this.stepCount >= this.maxSteps) {
 				this.errors.push(`Step limit exceeded (${this.maxSteps})`);
 				break;
 			}
-			this.executeStatement(statements[i], firstSharesStep && i === 0);
+			yield* this.executeStatement(statements[i], firstSharesStep && i === 0);
+
+			// After each statement, check if input is needed
+			while (this.needsInput) {
+				const partialProgram: Program = {
+					name: this.memory.programName,
+					source: this.memory.programSource,
+					steps: this.memory.getSteps(),
+				};
+				const input: string | null = yield { type: 'need_input', program: partialProgram };
+				if (input === null) {
+					// EOF signal — getchar returns -1, scanf returns EOF
+					this.io.signalEof();
+				} else {
+					this.io.appendStdin(input);
+				}
+				this.needsInput = false;
+				// Re-execute sharing the existing step (don't create a duplicate)
+				yield* this.executeStatement(statements[i], true);
+			}
 		}
 	}
 
-	private executeStatement(node: ASTNode, sharesStep = false): void {
+	private *executeStatements(statements: ASTNode[], firstSharesStep = false): Generator<void, void, void> {
+		for (let i = 0; i < statements.length; i++) {
+			if (this.breakFlag || this.continueFlag || this.returnFlag || this.needsInput) break;
+			if (this.stepCount >= this.maxSteps) {
+				this.errors.push(`Step limit exceeded (${this.maxSteps})`);
+				break;
+			}
+			yield* this.executeStatement(statements[i], firstSharesStep && i === 0);
+		}
+	}
+
+	private *executeStatement(node: ASTNode, sharesStep = false): Generator<void, void, void> {
 		const ctx = this.ctx();
 		switch (node.type) {
 			case 'declaration': executeDeclaration(ctx, node, sharesStep); break;
 			case 'assignment': executeAssignment(ctx, node, sharesStep); break;
-			case 'expression_statement': executeExpressionStatement(ctx, node, sharesStep); break;
+			case 'expression_statement': yield* executeExpressionStatement(ctx, node, sharesStep); break;
 			case 'return_statement': executeReturn(ctx, node, sharesStep); break;
-			case 'if_statement': executeIf(ctx, node); break;
-			case 'for_statement': executeFor(ctx, node); break;
-			case 'while_statement': executeWhile(ctx, node); break;
-			case 'do_while_statement': executeDoWhile(ctx, node); break;
-			case 'switch_statement': executeSwitch(ctx, node); break;
-			case 'compound_statement': executeBlock(ctx, node); break;
+			case 'if_statement': yield* executeIf(ctx, node); break;
+			case 'for_statement': yield* executeFor(ctx, node); break;
+			case 'while_statement': yield* executeWhile(ctx, node); break;
+			case 'do_while_statement': yield* executeDoWhile(ctx, node); break;
+			case 'switch_statement': yield* executeSwitch(ctx, node); break;
+			case 'compound_statement': yield* executeBlock(ctx, node); break;
 			case 'break_statement':
 				if (!sharesStep) { this.memory.beginStep({ line: node.line }, 'break'); this.stepCount++; }
 				this.breakFlag = true;
@@ -235,4 +357,16 @@ export class Interpreter {
 		if ('line' in body) return body.line as number;
 		return 1;
 	}
+}
+
+/** Drive a generator to completion synchronously, returning its final value.
+ * If the generator yields (needsInput was set), we stop and return a default value. */
+function driveGenerator<T>(gen: Generator<void, T, void>): T {
+	let result = gen.next();
+	while (!result.done) {
+		// Generator yielded — something set needsInput deep inside.
+		// We can't provide input here (evaluator callback is sync), so just keep driving.
+		result = gen.next();
+	}
+	return result.value;
 }

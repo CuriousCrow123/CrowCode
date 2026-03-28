@@ -2,6 +2,7 @@ export type {
 	MemoryEntry,
 	ScopeInfo,
 	HeapInfo,
+	IoEvent,
 	SourceLocation,
 	SnapshotOp,
 	ProgramStep,

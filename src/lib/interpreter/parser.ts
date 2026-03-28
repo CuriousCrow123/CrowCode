@@ -1,5 +1,6 @@
 import type { Node, Parser as ParserType } from 'web-tree-sitter';
 import type { ASTNode, ASTCaseClause, CTypeSpec, ASTParam, ASTStructField } from './types';
+import { processEscapes, processCharLiteral } from './escapes';
 
 let cachedParser: ParserType | null = null;
 
@@ -462,7 +463,11 @@ function convertFor(node: Node, errors: string[]): ASTNode {
 	const updateNode = node.childForFieldName('update');
 	const bodyNode = node.childForFieldName('body')!;
 
-	const init = initNode ? (convertNode(initNode, errors) ?? convertExpression(initNode, errors)) : undefined;
+	const init = initNode
+		? (initNode.type === 'declaration'
+			? convertNode(initNode, errors)
+			: convertExpression(initNode, errors) ?? convertNode(initNode, errors))
+		: undefined;
 	const condition = condNode ? convertExpression(condNode, errors) : undefined;
 	const update = updateNode ? convertExpression(updateNode, errors) : undefined;
 	const body = convertNode(bodyNode, errors)!;
@@ -557,11 +562,17 @@ export function convertExpression(node: Node, errors: string[]): ASTNode | null 
 			return { type: 'number_literal', value: parseNumber(text), isFloat, line: line(node) };
 		}
 
-		case 'string_literal':
-			return { type: 'string_literal', value: node.text.slice(1, -1), line: line(node) };
+		case 'string_literal': {
+			const escaped = processEscapes(node.text.slice(1, -1));
+			for (const w of escaped.warnings) errors.push(`Warning: ${w} at line ${line(node)}`);
+			return { type: 'string_literal', value: escaped.value, line: line(node) };
+		}
 
-		case 'char_literal':
-			return { type: 'char_literal', value: node.text.charCodeAt(1), line: line(node) };
+		case 'char_literal': {
+			const charResult = processCharLiteral(node.text);
+			for (const w of charResult.warnings) errors.push(`Warning: ${w} at line ${line(node)}`);
+			return { type: 'char_literal', value: charResult.value, line: line(node) };
+		}
 
 		case 'null':
 		case 'nullptr':

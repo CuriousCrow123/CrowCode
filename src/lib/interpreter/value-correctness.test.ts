@@ -861,7 +861,7 @@ describe('sprintf', () => {
 		expect(errors).toHaveLength(0);
 		const sprintfStep = program.steps.find((s) => s.description?.includes('sprintf'));
 		expect(sprintfStep).toBeDefined();
-		expect(sprintfStep!.description).toContain('dist=500');
+		expect(sprintfStep!.evaluation).toContain('dist=500');
 	});
 
 	it('sprintf does not crash with zero args beyond format', () => {
@@ -1856,9 +1856,10 @@ describe('step description quality', () => {
 	int x = 3 + 4;
 	return 0;
 }`);
-		// Second declaration should have its own step with "int x = 7"
-		const declStep = program.steps.find(s => s.description?.includes('x') && s.description?.includes('7'));
+		// Second declaration should have its own step with "Declare int x" and eval "= 7"
+		const declStep = program.steps.find(s => s.description?.includes('Declare') && s.description?.includes('x'));
 		expect(declStep).toBeDefined();
+		expect(declStep!.evaluation).toContain('7');
 	});
 
 	it('for-loop init shows variable', () => {
@@ -1877,7 +1878,7 @@ describe('step description quality', () => {
 }`);
 		const checkSteps = program.steps.filter(s => s.description?.includes('check'));
 		expect(checkSteps.length).toBeGreaterThan(0);
-		expect(checkSteps[0].description).toMatch(/true|false/);
+		expect(checkSteps[0].evaluation).toMatch(/true|false/);
 	});
 
 	it('for-loop update shows new value', () => {
@@ -1885,8 +1886,9 @@ describe('step description quality', () => {
 	for (int i = 0; i < 3; i++) {}
 	return 0;
 }`);
-		const updateStep = program.steps.find(s => s.description?.includes('i++') && s.description?.includes('i = 1'));
+		const updateStep = program.steps.find(s => s.description?.includes('i++'));
 		expect(updateStep).toBeDefined();
+		expect(updateStep!.evaluation).toContain('i = 1');
 	});
 
 	it('malloc step describes allocation', () => {
@@ -1895,7 +1897,7 @@ describe('step description quality', () => {
 	free(p);
 	return 0;
 }`);
-		const mallocStep = program.steps.find(s => s.description?.includes('malloc') && s.description?.includes('allocate'));
+		const mallocStep = program.steps.find(s => s.description?.includes('Allocate') && s.description?.includes('malloc'));
 		expect(mallocStep).toBeDefined();
 	});
 
@@ -1905,7 +1907,7 @@ describe('step description quality', () => {
 	free(p);
 	return 0;
 }`);
-		const freeStep = program.steps.find(s => s.description?.includes('free') && s.description?.includes('deallocate'));
+		const freeStep = program.steps.find(s => s.description?.includes('Free memory'));
 		expect(freeStep).toBeDefined();
 	});
 });
@@ -1965,11 +1967,10 @@ describe('control flow sub-steps', () => {
 	while (i < 3) { i++; }
 	return 0;
 }`);
-		const checkSteps = program.steps.filter(s => s.description?.includes('while: check'));
+		const checkSteps = program.steps.filter(s => s.description?.includes('while: check') && s.subStep);
 		expect(checkSteps.length).toBe(3);
 		for (const s of checkSteps) {
-			expect(s.subStep).toBe(true);
-			expect(s.description).toContain('→ true');
+			expect(s.evaluation).toContain('→ true');
 		}
 	});
 
@@ -1979,7 +1980,7 @@ describe('control flow sub-steps', () => {
 	while (i < 3) { i++; }
 	return 0;
 }`);
-		const exitStep = program.steps.find(s => s.description?.includes('while:') && s.description?.includes('false'));
+		const exitStep = program.steps.find(s => s.evaluation?.includes('false') && s.description?.includes('while:'));
 		expect(exitStep).toBeDefined();
 		expect(exitStep!.description).toContain('i < 3');
 		expect(exitStep!.subStep).toBeFalsy();
@@ -1991,12 +1992,11 @@ describe('control flow sub-steps', () => {
 	do { x += 10; } while (x < 30);
 	return 0;
 }`);
-		const checkSteps = program.steps.filter(s => s.description?.includes('do-while: check'));
+		const checkSteps = program.steps.filter(s => s.description?.includes('do-while: check') && s.subStep);
 		// x goes 10, 20 (both < 30, so 2 true checks), then 30 (false, exit)
 		expect(checkSteps.length).toBe(2);
 		for (const s of checkSteps) {
-			expect(s.subStep).toBe(true);
-			expect(s.description).toContain('→ true');
+			expect(s.evaluation).toContain('→ true');
 		}
 	});
 
@@ -2006,7 +2006,7 @@ describe('control flow sub-steps', () => {
 	do { x += 10; } while (x < 30);
 	return 0;
 }`);
-		const exitStep = program.steps.find(s => s.description?.includes('do-while:') && s.description?.includes('false'));
+		const exitStep = program.steps.find(s => s.evaluation?.includes('false') && s.description?.includes('do-while:'));
 		expect(exitStep).toBeDefined();
 		expect(exitStep!.description).toContain('x < 30');
 	});
@@ -2019,7 +2019,7 @@ describe('control flow sub-steps', () => {
 }`);
 		const ifStep = program.steps.find(s => s.description?.includes('if:') && s.description?.includes('x > 5'));
 		expect(ifStep).toBeDefined();
-		expect(ifStep!.description).toContain('→ true');
+		expect(ifStep!.evaluation).toContain('→ true');
 	});
 
 	it('if condition step shows false when not taken', () => {
@@ -2030,7 +2030,7 @@ describe('control flow sub-steps', () => {
 }`);
 		const ifStep = program.steps.find(s => s.description?.includes('if:') && s.description?.includes('x > 5'));
 		expect(ifStep).toBeDefined();
-		expect(ifStep!.description).toContain('→ false');
+		expect(ifStep!.evaluation).toContain('→ false');
 	});
 
 	it('if/else shows condition before branch body', () => {
@@ -2499,11 +2499,12 @@ int main() {
 	int result = factorial(3);
 	return 0;
 }`);
+		// Only the outermost return should assign to 'result'
 		const returnSteps = program.steps.filter(s =>
-			s.description?.includes('factorial() returns') && s.description?.includes('assign to')
+			s.description?.includes('Return from factorial()') && s.evaluation?.includes('result')
 		);
 		expect(returnSteps.length).toBe(1);
-		expect(returnSteps[0].description).toContain('assign to result');
+		expect(returnSteps[0].evaluation).toContain('result');
 	});
 
 	it('nested non-recursive call inner return does not say "assign to"', () => {
@@ -2514,7 +2515,7 @@ int main() {
 	return 0;
 }`);
 		const innerReturns = program.steps.filter(s =>
-			s.description?.includes('inner() returns') && s.description?.includes('assign to')
+			s.description?.includes('Return from inner()') && s.evaluation?.includes('val')
 		);
 		expect(innerReturns.length).toBe(0);
 	});
@@ -2562,7 +2563,7 @@ describe('MINOR-2: for-loop exit condition', () => {
 	return 0;
 }`);
 		const falseStep = program.steps.find(s =>
-			s.description?.includes('false') && s.description?.includes('i < 2')
+			s.evaluation?.includes('false') && s.description?.includes('i < 2')
 		);
 		expect(falseStep).toBeDefined();
 	});

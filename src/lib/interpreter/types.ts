@@ -14,6 +14,7 @@ export type CValue = {
 	data: number | null;
 	address: number;
 	initialized?: boolean;
+	stringValue?: string;
 };
 
 // === Child Specification (for emitter) ===
@@ -62,6 +63,9 @@ export type InterpreterOptions = {
 	maxSteps?: number;
 	maxFrames?: number;
 	maxHeapBytes?: number;
+	stdin?: string;
+	/** Enable interactive mode — handlers set needsInput when stdin is exhausted. */
+	interactive?: boolean;
 };
 
 // === AST Node Types ===
