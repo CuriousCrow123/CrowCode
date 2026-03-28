@@ -42,7 +42,7 @@ Run `npm run check` to verify.
 
 ## Adding an Interpreter Feature
 
-1. Check [docs/interpreter-status.md](docs/interpreter-status.md) for the current feature matrix
+1. Check [docs/feature-inventory.md](docs/feature-inventory.md) for the complete feature inventory
 2. Write value assertions in `value-correctness.test.ts` using the `interpretAndBuild()` helper
 3. Add a full-program integration test in `manual-programs.test.ts`
 4. Run `snapshot-regression.test.ts` to verify no regressions to existing programs

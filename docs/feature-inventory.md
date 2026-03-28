@@ -1,7 +1,7 @@
-# C Interpreter — Feature Status
+# CrowCode Feature Inventory
 
 Last updated: 2026-03-28
-Test suite: 832 passing, 0 skipped (832 total across 23 files)
+Test suite: 837 passing, 0 skipped (837 total across 23 files)
 
 ---
 
@@ -17,8 +17,8 @@ Test suite: 832 passing, 0 skipped (832 total across 23 files)
 | `double` | 8 | Yes | Full JS `number` precision. |
 | `void` | 0 | Yes | Used as pointer target type for `malloc` return. |
 | Pointers (`int*`, `char*`, etc.) | 4 | Yes | 32-bit addresses. Hex display. Pointer arithmetic scales by `sizeof(*p)`. |
-| Arrays (`int[N]`) | N × element | Yes | Stack-allocated. Indexed children. Bounds checking on read and write. |
-| Multi-dimensional arrays (`int[M][N]`) | M × N × element | Yes | Flattened `[i][j]` children. Nested init_list parsing. |
+| Arrays (`int[N]`) | N x element | Yes | Stack-allocated. Indexed children. Bounds checking on read and write. |
+| Multi-dimensional arrays (`int[M][N]`) | M x N x element | Yes | Flattened `[i][j]` children. Nested init_list parsing. |
 | Structs | Computed with alignment | Yes | Fields with offsets/padding. Nested structs. Init lists. |
 | String literals (`char *s = "hello"`) | Heap-allocated | Yes | Char array with null terminator. Individual char children. |
 | Function pointers (`int (*fp)(int,int)`) | 4 (pointer-sized) | Yes | Declare, assign, reassign, call through pointer. Display shows `-> funcName`. |
@@ -76,7 +76,7 @@ Test suite: 832 passing, 0 skipped (832 total across 23 files)
 | Comma `,` | Evaluates all, returns last | Yes |
 | `sizeof(type)` | Returns size from type system | Yes |
 | `sizeof(expr)` | Returns size of expression's type. Arrays return full size (not decayed pointer). | Yes |
-| Cast `(type)expr` | Truncation: char→8-bit, short→16-bit, int→`\|0`. Float-to-int: `Math.trunc`. Int-to-float: preserves value. | Yes |
+| Cast `(type)expr` | Truncation: char->8-bit, short->16-bit, int->`\|0`. Float-to-int: `Math.trunc`. Int-to-float: preserves value. | Yes |
 | Address-of `&` | Returns stack or heap address | Yes |
 | Dereference `*` | Reads via memReader. Null pointer check. | Yes |
 | Array-to-pointer decay | `int *p = arr` assigns base address. Works in assignment, function args, arithmetic. | Yes |
@@ -87,7 +87,7 @@ Test suite: 832 passing, 0 skipped (832 total across 23 files)
 
 | Construct | Sub-step generation | Tested | Notes |
 |-----------|-------------------|--------|-------|
-| `if` / `else` / `else if` | Condition shown as step with `→ true/false` result | Yes | Not a sub-step — condition is the main event on the if-line |
+| `if` / `else` / `else if` | Condition shown as step with `-> true/false` result | Yes | Not a sub-step — condition is the main event on the if-line |
 | `for` (init; cond; update) | Init, condition check (sub-step), body, update (sub-step) per iteration | Yes | Full column highlighting for condition and update expressions |
 | `while` | Condition check (sub-step) per iteration | Yes | |
 | `do-while` | Body first, then condition check (sub-step) | Yes | |
@@ -140,14 +140,14 @@ Test suite: 832 passing, 0 skipped (832 total across 23 files)
 
 ## Standard Library
 
-### Working
+### Implemented (26 functions)
 | Function | Notes |
 |----------|-------|
 | `malloc(size)` | Step emission with allocation description |
 | `calloc(count, size)` | Zero-init children visible |
 | `free(ptr)` | Status change + dangling pointer display |
-| `printf(fmt, ...)` | Real output via IoState → ConsolePanel. Supports `%d`, `%i`, `%u`, `%x`, `%X`, `%c`, `%f`, `%p`, `%%`, field width, precision, flags. Step description shows output produced. |
-| `scanf(fmt, ...)` | Reads from pre-supplied stdin via IoState. Writes through to variables with `setValue` ops. Supports `%d`, `%i`, `%c`, `%f`, `%x`, `%*` (suppression). Correct whitespace semantics per specifier. Missing `&` detected with error (bare array names accepted — arrays decay to pointers). Step description shows assigned values. **Limitation:** return value not available as expression — `while (scanf(...) != -1)` doesn't work. Use `while (1) { scanf(...); if (x == -1) break; }` instead. |
+| `printf(fmt, ...)` | Real output via IoState -> ConsolePanel. Supports `%d`, `%i`, `%u`, `%x`, `%X`, `%c`, `%f`, `%p`, `%%`, field width, precision, flags. Step description shows output produced. |
+| `scanf(fmt, ...)` | Reads from pre-supplied stdin via IoState. Writes through to variables with `setValue` ops. Supports `%d`, `%i`, `%c`, `%f`, `%x`, `%*` (suppression). Correct whitespace semantics per specifier. Missing `&` detected with error (bare array names accepted — arrays decay to pointers). Step description shows assigned values. Return value available as expression — `while (scanf(...) != EOF)` works. Returns item count on success, 0 on match failure, -1 on EOF. |
 | `puts(str)` | Writes string + `\n` to stdout. |
 | `putchar(c)` | Writes single character to stdout. |
 | `getchar()` | Reads single character from stdin. Returns `int` (-1 on EOF). In interactive mode, pauses when stdin is exhausted. EOF signaled via Ctrl+D button or keyboard shortcut (sends `null` through generator protocol). |
@@ -203,11 +203,54 @@ Test suite: 832 passing, 0 skipped (832 total across 23 files)
 | Changed-value highlighting | Working | `diffSnapshots()` marks values that changed between steps |
 | Console output panel | Working | ConsolePanel shows interleaved stdout/stdin segments with per-step highlighting. Pre-computed for O(1) stepping. |
 | stdin input panel | Working | StdinInput textarea auto-detected from source. Shows consumed/remaining during stepping with strikethrough. |
-| I/O step descriptions | Working | printf shows output produced (`→ "x = 42\n"`), scanf shows assigned values (`→ x = 42`). |
+| I/O step descriptions | Working | printf shows output produced (`-> "x = 42\n"`), scanf shows assigned values (`-> x = 42`). |
 | Escape sequence processing | Working | `\n`, `\t`, `\r`, `\0`, `\\`, `\'`, `\"` converted to byte values at parse time. Unknown escapes: drop backslash (GCC behavior) with warning. |
 | Interactive stdin | Working | Generator-based interpreter pauses at scanf/getchar/fgets/gets when stdin exhausted. UI shows inline input field on the scanf step. Debugger-style stepping: user navigates to scanf step, enters input, step description updates. Stdin echoes interleaved with stdout, step-indexed (backstepping hides future echoes). EOF support via Ctrl+D button and keyboard shortcut — `getchar()` returns -1, `scanf` treats as no-match. |
 | I/O mode toggle | Working | Pre-supplied (default) / Interactive toggle. Pre-supplied: textarea before run. Interactive: inline input in ConsolePanel at pause points. |
 | `fflush(stdout)` | Working | Recognized as no-op in stdlib (CrowCode has no output buffering). |
+
+---
+
+## UI Features
+
+| Feature | Notes |
+|---------|-------|
+| CodeMirror editor | C/C++ syntax highlighting, One Dark theme, active step line + expression highlighting |
+| Multi-tab editor | Tab create/delete, persistent code via localStorage, cached run results across tab switches |
+| Step controls | Previous/Next buttons, keyboard shortcuts (Arrow Left/Right, S for sub-step toggle) |
+| Step scrubber | Range slider for quick navigation to any step |
+| Sub-step mode | Toggle between line-level and expression-level stepping |
+| Collapsible cards | Click scope/heap card headers to expand/collapse |
+| Error/warning display | Compilation errors (red), warnings (amber), below toolbar |
+| Responsive layout | Desktop: 2-column (editor + I/O left, controls + memory right). Mobile: stacked. |
+| Example program dropdown | 46 programs across 14 categories, loads source + optional stdin |
+
+---
+
+## Engine
+
+| Feature | Notes |
+|---------|-------|
+| 4 op types | `add`, `remove`, `set`, `setHeapStatus` |
+| buildSnapshots() | Constructs full memory state per step from ops |
+| diffSnapshots() | Detects added/removed/changed entries between steps |
+| validateProgram() | Rules all Programs must satisfy (duplicate ids, missing addresses, subStep anchors) |
+| Navigation helpers | Visible indices filtering, nearest index mapping |
+| Sub-step anchoring | Sub-steps reference parent step |
+| buildConsoleOutputs() | Pre-computed for O(1) stepping |
+| Snapshot immutability | `structuredClone()` for isolation |
+
+---
+
+## Infrastructure
+
+| Feature | Notes |
+|---------|-------|
+| Tree-sitter WASM parser | CST-to-AST conversion for C |
+| Web Worker | Off-thread interpretation with message protocol |
+| SvelteKit + static adapter | GitHub Pages deployment, CI/CD on push to main |
+| Tailwind CSS | Dark theme styling (One Dark color scheme) |
+| Vitest | 837 tests across 23 files |
 
 ---
 
@@ -219,7 +262,7 @@ Test suite: 832 passing, 0 skipped (832 total across 23 files)
 | Preprocessor | `#include` ignored gracefully | `#define`, `#ifdef`, etc. ignored with warning | By design — not a real preprocessor |
 | 3D+ arrays | Type system supports nesting | Only 2D write/init tested; 3D untested | Medium difficulty to fix |
 | `sprintf` format specifiers | `%d`, `%i`, `%x`, `%c`, `%s`, `%%` with byte-by-byte writes | `%f`, `%p`, `%u` not yet supported in sprintf's internal formatter (they work in printf). | `evaluateSprintfResult` uses a simpler parser than `applyPrintfFormat` |
-| `scanf` format specifiers | `%d`, `%i`, `%c`, `%f`, `%x`, `%*` (suppression) | `%i` octal/hex prefix not implemented (treated as `%d`). `%s` consumes but doesn't write to char array byte-by-byte. Return value not available as expression (scanf handled as statement interceptor, not stdlib function). | |
+| `scanf` format specifiers | `%d`, `%i`, `%c`, `%f`, `%x`, `%*` (suppression) | `%i` octal/hex prefix not implemented (treated as `%d`). `%s` consumes but doesn't write to char array byte-by-byte. | |
 | printf/scanf length modifiers | Length modifiers parsed and ignored | `%ld`, `%lf`, `%zu` not distinguished from `%d`, `%f` | `%lf` is common in student code with `double` |
 | Empty loop bodies | Doesn't crash, loop variable advances | May produce interpreter errors internally | |
 
@@ -228,38 +271,148 @@ Test suite: 832 passing, 0 skipped (832 total across 23 files)
 ## Not Implemented
 
 ### Language Features
-| Feature | Parser | Interpreter | Notes |
-|---------|--------|------------|-------|
-| `enum` | No | No | Not parsed |
-| `union` | No | No | Not parsed |
-| `typedef` | Warned | No | Parser warns "not supported" |
-| `goto` / labels | No | No | Not parsed |
-| `static` / `extern` / `const` | Parsed | Ignored | Qualifiers recognized but not enforced |
-| `volatile` / `register` | Parsed | Ignored | Qualifiers recognized but not enforced |
-| Variable-length arrays | No | No | Parser error: "Variable-length arrays are not supported" |
-| Global variables | No | No | Only function and struct definitions at top level |
-| Multiple declarators | No | No | `int a, b;` only declares `a` |
-| Forward declarations | No | No | Functions must appear before `main()` |
-| Bit-fields | No | No | `int x:4` not parsed |
-| `#define` macros | Warned | No | Preprocessor directives ignored with warning |
-| Designated initializers | No | No | `.field = val` syntax not supported |
-| Variadic functions | No | No | `...` parameter not supported |
-| Inline assembly | No | No | N/A for browser environment |
-| `(*fp)(args)` dereference call | No | No | `fp(args)` works; explicit `(*fp)(args)` not parsed |
-| Function pointers in structs | No | No | `struct { int (*cb)(int); }` not supported |
-| Compound literals | Partial | Partial | `(struct Point){1, 2}` treated as init_list |
-| Unsigned integer semantics | No | No | Qualifiers parsed but all arithmetic is signed |
-| Pointer-pointer subtraction | No | No | Only pointer ± integer supported |
+| Feature | Parser | Interpreter | Difficulty | Notes |
+|---------|--------|------------|------------|-------|
+| `enum` | No | No | Medium | Not parsed. Very common in student code. |
+| `union` | No | No | Medium | Not parsed |
+| `typedef` | Warned | No | Medium | Parser warns "not supported" |
+| `goto` / labels | No | No | Medium | Not parsed |
+| `static` / `extern` / `const` | Parsed | Ignored | Low-Medium | Qualifiers recognized but not enforced |
+| `volatile` / `register` | Parsed | Ignored | Low | Qualifiers recognized but not enforced |
+| Variable-length arrays | No | No | High | Parser error: "Variable-length arrays are not supported" |
+| Global variables | No | No | Medium | Only function and struct definitions at top level |
+| Multiple declarators | No | No | Low | `int a, b;` only declares `a` |
+| Forward declarations | No | No | Medium | Functions must appear before `main()` |
+| Bit-fields | No | No | High | `int x:4` not parsed |
+| `#define` macros | Warned | No | High | Preprocessor directives ignored with warning |
+| Designated initializers | No | No | Medium | `.field = val` syntax not supported |
+| Variadic functions | No | No | High | `...` parameter not supported |
+| Inline assembly | No | No | N/A | N/A for browser environment |
+| `(*fp)(args)` dereference call | No | No | Low | `fp(args)` works; explicit `(*fp)(args)` not parsed |
+| Function pointers in structs | No | No | Medium | `struct { int (*cb)(int); }` not supported |
+| Compound literals | Partial | Partial | Medium | `(struct Point){1, 2}` treated as init_list |
+| Unsigned integer semantics | No | No | High | Qualifiers parsed but all arithmetic is signed |
+| Pointer-pointer subtraction | No | No | Low | Only pointer +/- integer supported |
+
+### Format String Gaps
+| Gap | Difficulty | Notes |
+|-----|------------|-------|
+| `%e`, `%E`, `%g`, `%G` in printf/scanf | Medium | Scientific notation |
+| `%f`, `%p`, `%u` in sprintf | Low | Already work in printf, just need wiring to sprintf |
+| `%s` byte-by-byte write in scanf | Medium | Currently consumes but doesn't write to char array |
+| `%i` octal/hex prefix in scanf | Low | Currently treated as `%d` |
+| `%ld`, `%lf`, `%zu` length modifiers | Low | Parsed and ignored; `%lf` common in student code |
+| Float modulo (`%` operator) | Low | Not supported for float types |
+| `%n` specifier | Low | Writes count of chars read so far |
 
 ### Runtime Limitations
 | Limitation | Notes |
 |-----------|-------|
-| Interactive stdin limitations | Multi-specifier scanf (`"%d %d"`) may not pause correctly mid-call if buffer runs dry between specifiers. Separate scanf calls (one per value) work correctly. `scanf` return value not usable as expression — `while (scanf(...) != -1)` goes through evaluator stdlib path which doesn't handle scanf. Use sentinel pattern: `while (1) { scanf(...); if (val == -1) break; }`. Type-mismatch input (e.g., letters for `%d`) permanently blocks the read buffer (bad chars stay at read position). Statement-level re-execution: when a while loop pauses at scanf, resume re-executes the entire while statement from the condition — scanf must be at the top of the loop body to avoid double-processing. |
+| Interactive stdin limitations | Multi-specifier scanf (`"%d %d"`) may not pause correctly mid-call if buffer runs dry between specifiers. Separate scanf calls (one per value) work correctly. Type-mismatch input (e.g., letters for `%d`) returns 0 (match failure) — non-matching chars remain in buffer. Statement-level re-execution: when a while loop pauses at scanf, resume re-executes the entire while statement from the condition — scanf must be at the top of the loop body to avoid double-processing. |
 | No FILE* operations | `fopen`/`fclose`/`fread`/`fwrite` not supported — only stdin/stdout/stderr |
 | No `sscanf`/`fscanf` | Only `scanf` (reads from stdin). `sscanf` (from string) and `fscanf` (from file) not implemented. |
 | No `%e`/`%g` format specifiers | Scientific notation (`%e`, `%E`, `%g`, `%G`) not supported in printf or scanf |
 | Single source file | No multi-file compilation or linking |
 | No recursive struct pointer types | `struct Node { struct Node *next; }` — pointer fields work but self-referential layout depends on registry order |
+| Single-precision float truncation | `float` uses JS double, no `Math.fround` |
+| Empty loop body errors | May produce internal interpreter errors |
+| `EOF` / `NULL` macro definitions | Users must use `-1` and `0` literals |
+
+---
+
+## Prioritized Remaining Work
+
+### Priority 1: High-Impact Language Features
+Common in introductory C coursework; users will expect these to work.
+
+| Feature | Difficulty | Notes |
+|---------|------------|-------|
+| Global variables | Medium | Only function/struct defs at top level currently |
+| `enum` declarations | Medium | Very common in student code |
+| Multiple declarators (`int a, b;`) | Low | Parser only declares first variable |
+| `typedef` | Medium | Parser warns "not supported" |
+| Forward declarations / prototypes | Medium | Functions must appear before `main()` |
+| `const` enforcement | Low | Qualifier recognized but not enforced |
+| Unsigned integer semantics | High | All arithmetic is signed; would need separate paths |
+
+### Priority 2: High-Impact Standard Library
+Functions that appear frequently in student programs.
+
+| Function | Category | Difficulty | Notes |
+|----------|----------|------------|-------|
+| `atoi` | Conversion | Low | Parse string to int |
+| `atof` | Conversion | Low | Parse string to float |
+| `rand` / `srand` | Random | Low | Used in nearly every intro CS assignment |
+| `exit(code)` | Process | Low | Early program termination |
+| `isalpha/isdigit/isspace` | Character | Low | Character classification |
+| `toupper/tolower` | Character | Low | Character conversion |
+| `memcpy` | Memory | Medium | Byte-by-byte copy with visualization |
+| `memset` | Memory | Medium | Fill memory region |
+| `realloc` | Memory | Medium | Resize heap block (common dynamic array pattern) |
+| `strncpy/strncmp` | String | Low | Bounded string operations |
+| `strchr/strstr` | String | Low | String search |
+
+### Priority 3: Medium-Impact Language Features
+
+| Feature | Difficulty | Notes |
+|---------|------------|-------|
+| `union` types | Medium | |
+| `long` 64-bit arithmetic | High | Would need BigInt or separate eval path |
+| 3D+ arrays | Medium | Type system supports nesting but untested |
+| `goto` / labels | Medium | Uncommon in modern code but taught |
+| `static` local variables | Medium | Persist across function calls |
+| Designated initializers (`.field = val`) | Medium | |
+| Pointer-pointer subtraction | Low | Only pointer +/- integer supported |
+| `(*fp)(args)` dereference call | Low | `fp(args)` works; explicit syntax doesn't |
+| Function pointers in structs | Medium | `struct { int (*cb)(int); }` |
+| Variable-length arrays | High | Parser error currently |
+| Bit-fields | High | |
+| Compound literals | Medium | Cast treated as init_list |
+| Recursive struct pointer types | Medium | Self-referential layout depends on registry order |
+
+### Priority 4: Medium-Impact Standard Library
+
+| Function | Category | Difficulty | Notes |
+|----------|----------|------------|-------|
+| `strtol/strtoul/strtod` | Conversion | Medium | More robust than atoi |
+| `strncat` | String | Low | Bounded concatenation |
+| `strrchr/strtok` | String | Medium | String manipulation |
+| `memmove` | Memory | Medium | Overlapping copy |
+| `sin/cos/tan` | Math | Low | Direct `Math.*` mapping |
+| `log/exp` | Math | Low | Direct `Math.*` mapping |
+| `ceil/floor/round/fabs/fmod` | Math | Low | Direct `Math.*` mapping |
+| `sscanf` | I/O | Medium | Parse from string instead of stdin |
+| `qsort` | Sort | High | Needs function pointer callback support |
+| `bsearch` | Search | Medium | Binary search with comparator |
+| `assert` | Debug | Low | Condition check with abort |
+
+### Priority 5: Low-Impact / Hard to Model
+Rarely needed for educational use or fundamentally difficult in a browser.
+
+| Feature | Difficulty | Notes |
+|---------|------------|-------|
+| `#define` macros | High | Would need preprocessor pass |
+| `#ifdef` conditional compilation | High | Would need preprocessor pass |
+| Multi-file compilation | Very High | No linker model |
+| `fopen/fclose/fread/fwrite` | High | No real filesystem in browser |
+| `fscanf` | High | Depends on FILE* |
+| `abort/atexit/system` | Medium | Process control, limited browser model |
+| `time/clock` | Low | Could stub with Date.now() |
+| Variadic user-defined functions | High | `...` parameter |
+| Inline assembly | N/A | Not applicable in browser |
+| `volatile/register` enforcement | Low | Rarely meaningful |
+
+### Visualization Opportunities
+Not bugs or missing C features, but would improve the educational value.
+
+| Feature | Difficulty | Notes |
+|---------|------------|-------|
+| Padding bytes visible in struct layout | Low | Show gray cells for alignment padding |
+| Pointer chain visualization | Medium | Linked list / tree arrow diagrams |
+| Call stack diagram | Medium | Visual stack growing downward |
+| Undefined behavior annotations | Medium | Highlight UB when it occurs |
+| Type promotion visualization | Medium | Show implicit casts in mixed expressions |
+| Memory address map | Medium | Overview of stack/heap layout |
 
 ---
 
@@ -308,7 +461,7 @@ Test suite: 832 passing, 0 skipped (832 total across 23 files)
 
 ## Test Coverage
 
-832 tests across 23 files:
+837 tests across 23 files:
 
 ### Engine tests (10 files, 103 tests)
 
@@ -328,7 +481,7 @@ Test suite: 832 passing, 0 skipped (832 total across 23 files)
 
 Engine subtotal: **103 tests**
 
-### Interpreter tests (11 files, 613 tests)
+### Interpreter tests (12 files, 734 tests)
 
 | Test file | Tests | Focus |
 |-----------|-------|-------|
@@ -340,9 +493,26 @@ Engine subtotal: **103 tests**
 | `snapshot-regression.test.ts` | 34 | Regression safety net: 7 programs captured before Memory refactor |
 | `worker.test.ts` | 6 | Worker message contract |
 | `value-correctness.test.ts` | 198 | Value assertions: scalars, structs, arrays, pointers, functions, control flow, sprintf, bounds checking, sub-steps, edge cases, BUG-1 through BUG-7 regressions |
-| `manual-programs.test.ts` | 60 | 44 full C programs through complete pipeline (parse → interpret → validate → buildSnapshots → verify values) |
+| `manual-programs.test.ts` | 60 | 44 full C programs through complete pipeline (parse -> interpret -> validate -> buildSnapshots -> verify values) |
 | `format.test.ts` | 47 | Printf/scanf format string parser: specifiers, width/precision, flags, tokenization, whitespace rules |
 | `io-state.test.ts` | 54 | IoState: stdin consumption (readInt/readChar/readString/readLine), \\n residue, stdout/stderr, step event lifecycle, appendStdin, signalEof, peekEvents |
 | `interactive.test.ts` | 67 | Interactive generator protocol: pause/resume mechanics, EOF signal (null sentinel), buffer carryover, \\n residue through interactive path, partial program validity, sync/interactive parity, console output correctness, format specifiers, Grade Calculator integration (14 tests) |
 
-Interpreter subtotal: **680 tests**
+Interpreter subtotal: **734 tests**
+
+---
+
+## Summary
+
+| Metric | Count |
+|--------|-------|
+| Implemented data types | 13 (including pointers, arrays, structs) |
+| Implemented operators | 35+ |
+| Implemented control flow constructs | 9 |
+| Implemented stdlib functions | 26 |
+| Example programs | 46 |
+| Tests | 837 |
+| Remaining language features | ~20 |
+| Remaining stdlib functions | ~40 |
+| Remaining format/I/O gaps | ~7 |
+| Remaining runtime gaps | ~9 |

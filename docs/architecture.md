@@ -297,7 +297,7 @@ Control flow constructs emit sub-steps for condition evaluation:
 
 #### Supported C Features
 
-See [interpreter-status.md](interpreter-status.md) for the complete feature matrix with test coverage.
+See [feature-inventory.md](feature-inventory.md) for the complete feature inventory with test coverage.
 
 ---
 

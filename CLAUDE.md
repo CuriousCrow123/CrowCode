@@ -60,4 +60,5 @@ Live at: `https://CuriousCrow123.github.io/CrowCode/`
 | `docs/architecture.md` | System architecture and principles |
 | `docs/decisions/` | Architecture Decision Records (why things are the way they are) |
 | `docs/research/op-generation-requirements.md` | Full op generation contract for interpreter |
+| `docs/feature-inventory.md` | Complete feature inventory, remaining work, and test coverage |
 | `CONTRIBUTING.md` | Setup, conventions, testing, and PR process for contributors |
