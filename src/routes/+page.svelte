@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { Program } from '$lib/types';
 	import type { InteractiveSession } from '$lib/interpreter/service';
-	import type { TranscriptEntry } from '$lib/components/TerminalPanel.svelte';
 	import { createEditorTabStore, initPersistence } from '$lib/stores/editor-tabs.svelte';
 	import { testPrograms, getCategories } from '$lib/test-programs';
 	import EditorTabs from '$lib/components/EditorTabs.svelte';
@@ -10,7 +9,6 @@
 	import StepControls from '$lib/components/StepControls.svelte';
 	import ConsolePanel from '$lib/components/ConsolePanel.svelte';
 	import StdinInput from '$lib/components/StdinInput.svelte';
-	import TerminalPanel from '$lib/components/TerminalPanel.svelte';
 	import { buildSnapshots, buildConsoleOutputs, getVisibleIndices, nearestVisibleIndex } from '$lib/engine';
 
 	const store = createEditorTabStore();
@@ -33,9 +31,8 @@
 	let errors = $state<string[]>([]);
 	let warnings = $state<string[]>([]);
 
-	// Interactive mode transcript (accumulated across pause/resume cycles)
-	let interactiveTranscript = $state<TranscriptEntry[]>([]);
-	let transcriptProcessedSteps = 0; // how many steps we've already extracted stdout from
+	// Interactive mode: history of user-submitted stdin (echoed in console)
+	let interactiveStdinHistory = $state<string[]>([]);
 
 	// Per-tab run result cache
 	interface CachedRun {
@@ -55,8 +52,7 @@
 		mode = { state: 'running' };
 		errors = [];
 		warnings = [];
-		interactiveTranscript = [];
-		transcriptProcessedSteps = 0;
+		interactiveStdinHistory = [];
 
 		try {
 			if (ioMode === 'interactive') {
@@ -184,6 +180,9 @@
 		const resumeFn = mode.resume;
 		const gen = runGeneration;
 
+		// Echo input into stdin history (shown in console)
+		interactiveStdinHistory = [...interactiveStdinHistory, text];
+
 		// Flip state SYNCHRONOUSLY before async work (prevents double-submit)
 		mode = { state: 'running' };
 
@@ -212,24 +211,6 @@
 		mode = { state: 'editing' };
 	}
 
-	/** Append NEW stdout entries from steps we haven't processed yet. */
-	function appendTranscriptFromProgram(program: Program): void {
-		const newEntries: TranscriptEntry[] = [];
-		for (let i = transcriptProcessedSteps; i < program.steps.length; i++) {
-			const step = program.steps[i];
-			if (step.ioEvents) {
-				for (const event of step.ioEvents) {
-					if (event.kind === 'write' && event.target === 'stdout') {
-						newEntries.push({ type: 'stdout', text: event.text });
-					}
-				}
-			}
-		}
-		transcriptProcessedSteps = program.steps.length;
-		if (newEntries.length > 0) {
-			interactiveTranscript = [...interactiveTranscript, ...newEntries];
-		}
-	}
 
 	function edit() {
 		// Cancel interactive session if paused
@@ -534,7 +515,7 @@
 					>Interactive</button>
 				</div>
 			{/if}
-			<!-- Pre-supplied mode: StdinInput + ConsolePanel -->
+			<!-- Pre-supplied mode: StdinInput + ConsolePanel (output only) -->
 			{#if ioMode === 'presupplied'}
 				{#if needsStdin}
 					<StdinInput
@@ -551,18 +532,13 @@
 					/>
 				{/if}
 			{:else}
-				<!-- Interactive mode: step-indexed console + inline input at pause point -->
-				{#if (mode.state === 'viewing' || mode.state === 'waiting_for_input') && hasConsoleOutput}
+				<!-- Interactive mode: integrated console with output + inline input -->
+				{#if (mode.state === 'viewing' || mode.state === 'waiting_for_input') && (hasConsoleOutput || mode.state === 'waiting_for_input')}
 					<ConsolePanel
 						stdout={currentConsoleOutput}
 						newOutput={newConsoleOutput}
-					/>
-				{/if}
-				{#if mode.state === 'waiting_for_input' && internalIndex >= steps.length - 1}
-					<!-- Input prompt — shown only when user has reached the pause step -->
-					<TerminalPanel
-						transcript={[]}
-						waitingForInput={true}
+						stdinHistory={interactiveStdinHistory}
+						waitingForInput={mode.state === 'waiting_for_input' && internalIndex >= steps.length - 1}
 						onSubmitInput={handleSubmitInput}
 						onEof={handleEof}
 					/>
