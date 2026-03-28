@@ -19,7 +19,7 @@ export type EvalResult = {
 	error?: string;
 };
 
-export type CallHandler = (name: string, args: CValue[], line: number, colStart?: number, colEnd?: number) => EvalResult;
+export type CallHandler = (name: string, args: CValue[], line: number, colStart?: number, colEnd?: number, callNode?: ASTNode & { type: 'call_expression' }) => EvalResult;
 export type MemoryReader = (address: number) => number | undefined;
 
 /** Interface for the subset of Memory/Environment that the Evaluator needs. */
@@ -355,7 +355,7 @@ export class Evaluator {
 		}
 
 		if (this.onCall) {
-			return this.onCall(node.callee, args, node.line, (node as any).colStart, (node as any).colEnd);
+			return this.onCall(node.callee, args, node.line, (node as any).colStart, (node as any).colEnd, node);
 		}
 
 		return this.err(`No call handler for '${node.callee}'`);
