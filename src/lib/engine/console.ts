@@ -10,9 +10,6 @@ export function buildConsoleOutputs(steps: ProgramStep[]): string[] {
 			for (const event of step.ioEvents) {
 				if (event.kind === 'write') {
 					accumulated += event.text;
-				} else if (event.kind === 'read') {
-					// Echo consumed stdin to console (matches real terminal behavior)
-					accumulated += event.consumed;
 				}
 			}
 		}

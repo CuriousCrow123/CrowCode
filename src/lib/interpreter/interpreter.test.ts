@@ -603,6 +603,50 @@ describe('stdio — printf', () => {
 	});
 });
 
+describe('stdio — escape sequences', () => {
+	it('printf with \\n produces real newline in output', () => {
+		const src = `int main() { printf("a\\nb"); return 0; }`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		const step = program.steps.find((s) => s.ioEvents?.some((e) => e.kind === 'write'));
+		expect(step!.ioEvents![0].text).toBe('a\nb');
+	});
+
+	it('printf with \\t produces real tab in output', () => {
+		const src = `int main() { printf("a\\tb"); return 0; }`;
+		const { program } = run(src);
+		const step = program.steps.find((s) => s.ioEvents?.some((e) => e.kind === 'write'));
+		expect(step!.ioEvents![0].text).toBe('a\tb');
+	});
+
+	it('char literal \\n has value 10', () => {
+		const src = `int main() { char c = '\\n'; return 0; }`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'c')?.value).toBe('10');
+	});
+
+	it('char literal \\0 has value 0', () => {
+		const src = `int main() { char c = '\\0'; return 0; }`;
+		const { program, errors } = run(src);
+		expect(errors).toHaveLength(0);
+		const snapshots = buildSnapshots(program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'c')?.value).toBe('0');
+	});
+
+	it('putchar with \\n writes newline to stdout', () => {
+		const src = `int main() { putchar('\\n'); return 0; }`;
+		const { program } = run(src);
+		const step = program.steps.find((s) =>
+			s.ioEvents?.some((e) => e.kind === 'write' && e.text === '\n')
+		);
+		expect(step).toBeDefined();
+	});
+});
+
 describe('stdio — getchar', () => {
 	it('getchar reads from stdin', () => {
 		const src = `int main() { int c = getchar(); return 0; }`;

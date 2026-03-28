@@ -36,7 +36,7 @@ describe('buildConsoleOutputs', () => {
 		expect(outputs[1]).toBe('');
 	});
 
-	it('echoes consumed stdin inline', () => {
+	it('read events do not add text to console output (no echo in pre-supplied mode)', () => {
 		const steps = [
 			step([{ kind: 'write', target: 'stdout', text: 'Enter: ' }]),
 			step([{ kind: 'read', source: 'stdin', consumed: '42', cursorPos: 2 }]),
@@ -44,8 +44,8 @@ describe('buildConsoleOutputs', () => {
 		];
 		const outputs = buildConsoleOutputs(steps);
 		expect(outputs[0]).toBe('Enter: ');
-		expect(outputs[1]).toBe('Enter: 42');
-		expect(outputs[2]).toBe('Enter: 42Got it!');
+		expect(outputs[1]).toBe('Enter: ');
+		expect(outputs[2]).toBe('Enter: Got it!');
 	});
 
 	it('handles empty steps array', () => {
