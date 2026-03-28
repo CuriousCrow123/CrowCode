@@ -19,6 +19,13 @@ export type HandlerContext = {
 	continueFlag: boolean;
 	returnFlag: boolean;
 	returnValue: CValue | null;
+	/**
+	 * Set by input handlers (scanf, getchar, fgets, gets) when stdin is exhausted.
+	 * Unlike breakFlag/continueFlag/returnFlag which stop execution permanently,
+	 * needsInput causes the generator to yield and resume after new input is provided.
+	 * The generator must reset this to false after each yield.
+	 */
+	needsInput: boolean;
 	/** Active function-call context: which variable receives the return value, and column ranges for highlighting. */
 	callContext: { varName: string; colStart?: number; colEnd?: number } | null;
 

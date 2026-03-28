@@ -107,6 +107,7 @@ export class Memory implements MemoryReader {
 	private currentStep: ProgramStep | null = null;
 	private errors: string[] = [];
 	private ioEventsFlusher: (() => IoEvent[] | undefined) | null = null;
+	private ioEventsPeeker: (() => IoEvent[] | undefined) | null = null;
 
 	// === Program metadata ===
 	private programName: string;
@@ -122,8 +123,9 @@ export class Memory implements MemoryReader {
 	// Step lifecycle
 	// ========================================
 
-	setIoEventsFlusher(flusher: () => IoEvent[] | undefined): void {
+	setIoEventsFlusher(flusher: () => IoEvent[] | undefined, peeker?: () => IoEvent[] | undefined): void {
 		this.ioEventsFlusher = flusher;
+		if (peeker) this.ioEventsPeeker = peeker;
 	}
 
 	beginStep(location: SourceLocation, description?: string, evaluation?: string): void {
@@ -162,6 +164,28 @@ export class Memory implements MemoryReader {
 			this.steps.push(this.currentStep);
 		}
 		this.currentStep = null;
+	}
+
+	/**
+	 * Read-only snapshot of steps accumulated so far, including the in-flight step.
+	 * Does NOT mutate Memory state — safe to call during generator pause.
+	 */
+	getSteps(): ProgramStep[] {
+		const steps = [...this.steps];
+		if (this.currentStep) {
+			// Clone the in-flight step with its ops so far — non-destructive
+			const inflight: ProgramStep = {
+				...this.currentStep,
+				ops: [...this.currentStep.ops],
+			};
+			// Peek (not flush) io events for the inflight step snapshot
+			if (this.ioEventsPeeker) {
+				const events = this.ioEventsPeeker();
+				if (events) inflight.ioEvents = events;
+			}
+			steps.push(inflight);
+		}
+		return steps;
 	}
 
 	finish(): { program: Program; errors: string[] } {

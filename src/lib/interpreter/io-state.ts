@@ -3,14 +3,30 @@ import type { IoEvent } from '$lib/types';
 // === IoState: Manages stdin/stdout/stderr buffers and IoEvent recording ===
 
 export class IoState {
-	private readonly stdinBuffer: string;
+	private stdinBuffer: string;
 	private stdinPos = 0;
 	private stdoutBuffer = '';
 	private stderrBuffer = '';
 	private stepEvents: IoEvent[] = [];
+	private eofSignaled = false;
 
 	constructor(stdin: string = '') {
 		this.stdinBuffer = stdin;
+	}
+
+	/** Append new input to the stdin buffer. Used during interactive mode. */
+	appendStdin(text: string): void {
+		this.stdinBuffer += text;
+	}
+
+	/** Signal that no more input will be provided (Ctrl+D / EOF). */
+	signalEof(): void {
+		this.eofSignaled = true;
+	}
+
+	/** Whether EOF has been explicitly signaled by the user. */
+	isEofSignaled(): boolean {
+		return this.eofSignaled;
 	}
 
 	// === Stdout ===
@@ -36,7 +52,7 @@ export class IoState {
 	// === Stdin ===
 
 	isExhausted(): boolean {
-		return this.stdinPos >= this.stdinBuffer.length;
+		return this.eofSignaled || this.stdinPos >= this.stdinBuffer.length;
 	}
 
 	getStdinPos(): number {
@@ -338,5 +354,11 @@ export class IoState {
 		const events = this.stepEvents;
 		this.stepEvents = [];
 		return events;
+	}
+
+	/** Non-destructive peek at pending IoEvents (for partial snapshots). */
+	peekEvents(): IoEvent[] | undefined {
+		if (this.stepEvents.length === 0) return undefined;
+		return [...this.stepEvents];
 	}
 }

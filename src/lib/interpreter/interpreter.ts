@@ -48,6 +48,7 @@ export class Interpreter {
 	private continueFlag = false;
 	private returnFlag = false;
 	private returnValue: CValue | null = null;
+	private needsInput = false;
 
 	constructor(source: string, opts?: InterpreterOptions) {
 		this.maxSteps = opts?.maxSteps ?? 500;
@@ -57,18 +58,21 @@ export class Interpreter {
 		this.memory = new Memory('Custom Program', source, maxHeap);
 		this.typeReg = new TypeRegistry();
 		this.io = new IoState(opts?.stdin ?? '');
-		this.memory.setIoEventsFlusher(() => {
-			const events = this.io.flushEvents();
-			// Add/update stdin buffer entry in memory view when reads occur
-			if (events) {
-				const hasReads = events.some((e) => e.kind === 'read');
-				if (hasReads) {
-					this.memory.addStdinEntry(this.io.getStdinFull());
-					this.memory.updateStdinCursor(this.io.getStdinPos(), this.io.getStdinFull());
+		this.memory.setIoEventsFlusher(
+			() => {
+				const events = this.io.flushEvents();
+				// Add/update stdin buffer entry in memory view when reads occur
+				if (events) {
+					const hasReads = events.some((e) => e.kind === 'read');
+					if (hasReads) {
+						this.memory.addStdinEntry(this.io.getStdinFull());
+						this.memory.updateStdinCursor(this.io.getStdinPos(), this.io.getStdinFull());
+					}
 				}
-			}
-			return events;
-		});
+				return events;
+			},
+			() => this.io.peekEvents(),
+		);
 
 		const memAccess = {
 			read: (addr: number) => this.memory.readMemory(addr),
@@ -149,6 +153,8 @@ export class Interpreter {
 			set returnValue(v) { self.returnValue = v; },
 			get callContext() { return self.callContext; },
 			set callContext(v) { self.callContext = v; },
+			get needsInput() { return self.needsInput; },
+			set needsInput(v) { self.needsInput = v; },
 			dispatch: (node, sharesStep) => self.executeStatement(node, sharesStep),
 			dispatchStatements: (stmts, first) => self.executeStatements(stmts, first),
 			callFunction: (fn, args, line) => callFunction(self.ctx(), fn, args, line),

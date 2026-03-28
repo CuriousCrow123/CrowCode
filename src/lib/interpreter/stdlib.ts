@@ -65,6 +65,8 @@ export function createStdlib(
 				return handleSqrt(args);
 			case 'pow':
 				return handlePow(args);
+			case 'fflush':
+				return ok(0); // No-op — CrowCode has no output buffering
 			default:
 				return { value: voidVal(), error: `Unknown stdlib function: ${name}` };
 		}

@@ -780,6 +780,10 @@ export function executeCallStatement(ctx: HandlerContext, call: ASTNode & { type
 			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
 			ctx.stepCount++;
 		}
+		if (ctx.io.isExhausted() && !ctx.io.isEofSignaled()) {
+			ctx.needsInput = true;
+			return;
+		}
 		const result = ctx.evaluator.eval(call);
 		if (result.error) ctx.errors.push(result.error);
 		return;
@@ -980,8 +984,11 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 
 	// Check for EOF before first read
 	if (ctx.io.isExhausted()) {
-		// scanf returns EOF (-1) when input exhaustion occurs before first match
-		// The return value is used if scanf is in an expression (handled by evaluator)
+		if (!ctx.io.isEofSignaled()) {
+			// Interactive mode: signal that we need more input
+			ctx.needsInput = true;
+		}
+		// In pre-supplied mode (or after EOF signal): scanf returns EOF (-1)
 		return;
 	}
 
@@ -1089,6 +1096,12 @@ function executeFgetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 	const sizeResult = ctx.evaluator.eval(call.args[1]);
 	const maxLen = sizeResult.value?.data ?? 256;
 
+	// Check for empty stdin before reading
+	if (ctx.io.isExhausted()) {
+		if (!ctx.io.isEofSignaled()) ctx.needsInput = true;
+		return;
+	}
+
 	// Read from stdin
 	const result = ctx.io.readLine(maxLen);
 	if (!result) return; // EOF
@@ -1106,6 +1119,16 @@ function executeFgetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 function executeGetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expression' }, line: number, sharesStep: boolean): void {
 	if (call.args.length < 1) {
 		ctx.errors.push('gets: requires at least 1 argument');
+		return;
+	}
+
+	// Check for empty stdin before reading
+	if (ctx.io.isExhausted()) {
+		if (!sharesStep) {
+			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
+			ctx.stepCount++;
+		}
+		if (!ctx.io.isEofSignaled()) ctx.needsInput = true;
 		return;
 	}
 

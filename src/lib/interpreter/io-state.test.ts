@@ -316,4 +316,77 @@ describe('IoState', () => {
 			expect(io.getStdinPos()).toBe(3);
 		});
 	});
+
+	describe('appendStdin', () => {
+		it('extends the buffer and makes isExhausted false', () => {
+			const io = new IoState('');
+			expect(io.isExhausted()).toBe(true);
+			io.appendStdin('hello\n');
+			expect(io.isExhausted()).toBe(false);
+		});
+
+		it('new input is readable after append', () => {
+			const io = new IoState('');
+			io.appendStdin('42\n');
+			expect(io.readInt()?.value).toBe(42);
+		});
+
+		it('appends after existing unconsumed input', () => {
+			const io = new IoState('10\n');
+			io.appendStdin('20\n');
+			expect(io.readInt()?.value).toBe(10);
+			expect(io.readInt()?.value).toBe(20);
+		});
+
+		it('appends after fully consumed input', () => {
+			const io = new IoState('A');
+			io.readChar();
+			expect(io.isExhausted()).toBe(true);
+			io.appendStdin('B');
+			expect(io.isExhausted()).toBe(false);
+			expect(io.readChar()?.value).toBe('B'.charCodeAt(0));
+		});
+	});
+
+	describe('signalEof', () => {
+		it('makes isExhausted return true even with buffer content', () => {
+			const io = new IoState('hello');
+			expect(io.isExhausted()).toBe(false);
+			io.signalEof();
+			expect(io.isExhausted()).toBe(true);
+		});
+
+		it('prevents appendStdin from making buffer available', () => {
+			const io = new IoState('');
+			io.signalEof();
+			io.appendStdin('more');
+			// EOF is permanent — still exhausted
+			expect(io.isExhausted()).toBe(true);
+		});
+
+		it('isEofSignaled reflects state', () => {
+			const io = new IoState('');
+			expect(io.isEofSignaled()).toBe(false);
+			io.signalEof();
+			expect(io.isEofSignaled()).toBe(true);
+		});
+	});
+
+	describe('peekEvents', () => {
+		it('returns pending events without consuming them', () => {
+			const io = new IoState('');
+			io.writeStdout('hello');
+			const peeked = io.peekEvents();
+			expect(peeked).toHaveLength(1);
+			expect(peeked![0]).toMatchObject({ kind: 'write', text: 'hello' });
+			// Events still available for flush
+			const flushed = io.flushEvents();
+			expect(flushed).toHaveLength(1);
+		});
+
+		it('returns undefined when no events', () => {
+			const io = new IoState('');
+			expect(io.peekEvents()).toBeUndefined();
+		});
+	});
 });
