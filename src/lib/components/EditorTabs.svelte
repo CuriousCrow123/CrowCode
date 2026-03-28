@@ -15,10 +15,22 @@
 		onclose: (index: number) => void;
 	} = $props();
 
+	let confirmIndex = $state<number | null>(null);
+
 	function handleClose(index: number) {
 		if (tabs.length <= 1) return;
-		if (!confirm(`Delete "${tabs[index].name}"? This cannot be undone.`)) return;
-		onclose(index);
+		confirmIndex = index;
+	}
+
+	function confirmDelete() {
+		if (confirmIndex !== null) {
+			onclose(confirmIndex);
+			confirmIndex = null;
+		}
+	}
+
+	function cancelDelete() {
+		confirmIndex = null;
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -37,6 +49,8 @@
 		}
 	}
 </script>
+
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && confirmIndex !== null) cancelDelete(); }} />
 
 <!-- svelte-ignore a11y_interactive_supports_focus -->
 <div
@@ -64,7 +78,7 @@
 					tabindex={-1}
 					aria-label="Close {tab.name}"
 					onclick={() => handleClose(i)}
-					class="px-1.5 py-1.5 rounded-r text-xs transition-colors {active === i
+					class="px-1.5 py-1.5 rounded-r text-sm font-mono leading-none transition-colors {active === i
 						? 'bg-blue-500/20 text-zinc-500 hover:text-zinc-300 border border-blue-500/30 border-l-0'
 						: 'bg-zinc-800 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700'}"
 				>
@@ -81,3 +95,36 @@
 		+
 	</button>
 </div>
+
+{#if confirmIndex !== null}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+		onclick={(e) => { if (e.target === e.currentTarget) cancelDelete(); }}
+	>
+		<div class="w-full max-w-sm mx-4 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60 overflow-hidden">
+			<div class="px-5 pt-5 pb-4">
+				<h3 class="text-sm font-mono text-zinc-200 mb-2">Delete tab</h3>
+				<p class="text-sm font-mono text-zinc-400">
+					Delete "<span class="text-zinc-200">{tabs[confirmIndex].name}</span>"? This cannot be undone.
+				</p>
+			</div>
+			<div class="flex justify-end gap-2 px-5 py-3 border-t border-zinc-800">
+				<button
+					onclick={cancelDelete}
+					class="px-3 py-1.5 rounded text-sm font-mono text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-600 transition-colors"
+				>
+					Cancel
+				</button>
+				<!-- svelte-ignore a11y_autofocus -->
+				<button
+					onclick={confirmDelete}
+					autofocus
+					class="px-3 py-1.5 rounded text-sm font-mono bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-colors"
+				>
+					Delete
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
