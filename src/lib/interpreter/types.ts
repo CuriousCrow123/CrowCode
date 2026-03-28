@@ -64,6 +64,8 @@ export type InterpreterOptions = {
 	maxFrames?: number;
 	maxHeapBytes?: number;
 	stdin?: string;
+	/** Enable interactive mode — handlers set needsInput when stdin is exhausted. */
+	interactive?: boolean;
 };
 
 // === AST Node Types ===

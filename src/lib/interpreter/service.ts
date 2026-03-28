@@ -68,7 +68,7 @@ export async function runProgramInteractive(source: string): Promise<Interactive
 
 	await new Promise((resolve) => requestAnimationFrame(resolve));
 
-	const { generator, parseErrors } = interpretInteractive(p, source, { maxSteps: MAX_STEPS });
+	const { generator, parseErrors } = interpretInteractive(p, source, { maxSteps: MAX_STEPS, interactive: true });
 	let cancelled = false;
 
 	function advance(result: IteratorResult<{ type: 'need_input'; program: Program }, InterpretResult>): InteractiveSession {

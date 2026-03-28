@@ -13,6 +13,7 @@ export type HandlerContext = {
 	readonly errors: string[];
 	readonly maxSteps: number;
 	readonly maxFrames: number;
+	readonly interactive: boolean;
 	stepCount: number;
 	frameDepth: number;
 	breakFlag: boolean;

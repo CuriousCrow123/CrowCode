@@ -42,6 +42,7 @@ export class Interpreter {
 	private frameDepth = 0;
 	private maxSteps: number;
 	private maxFrames: number;
+	private interactive: boolean;
 
 	private callContext: { varName: string; colStart?: number; colEnd?: number } | null = null;
 	private breakFlag = false;
@@ -53,6 +54,7 @@ export class Interpreter {
 	constructor(source: string, opts?: InterpreterOptions) {
 		this.maxSteps = opts?.maxSteps ?? 500;
 		this.maxFrames = opts?.maxFrames ?? 256;
+		this.interactive = opts?.interactive ?? false;
 		const maxHeap = opts?.maxHeapBytes ?? 1024 * 1024;
 
 		this.memory = new Memory('Custom Program', source, maxHeap);
@@ -141,6 +143,7 @@ export class Interpreter {
 			get errors() { return self.errors; },
 			get maxSteps() { return self.maxSteps; },
 			get maxFrames() { return self.maxFrames; },
+			get interactive() { return self.interactive; },
 			get stepCount() { return self.stepCount; },
 			set stepCount(v) { self.stepCount = v; },
 			get frameDepth() { return self.frameDepth; },

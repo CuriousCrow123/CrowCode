@@ -780,7 +780,7 @@ export function* executeCallStatement(ctx: HandlerContext, call: ASTNode & { typ
 			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
 			ctx.stepCount++;
 		}
-		if (ctx.io.isExhausted() && !ctx.io.isEofSignaled()) {
+		if (ctx.interactive && !ctx.io.isEofSignaled()) {
 			ctx.needsInput = true;
 			return;
 		}
@@ -984,11 +984,9 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 
 	// Check for EOF before first read
 	if (ctx.io.isExhausted()) {
-		if (!ctx.io.isEofSignaled()) {
-			// Interactive mode: signal that we need more input
+		if (ctx.interactive && !ctx.io.isEofSignaled()) {
 			ctx.needsInput = true;
 		}
-		// In pre-supplied mode (or after EOF signal): scanf returns EOF (-1)
 		return;
 	}
 
@@ -1040,9 +1038,10 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 		}
 
 		if (!readResult) {
-			// Input exhaustion or match failure
-			// If buffer is now exhausted and EOF not signaled, request more input
-			if (ctx.io.isExhausted() && !ctx.io.isEofSignaled()) {
+			// Read failed — in interactive mode, pause for more input
+			// (readInt/readFloat reset position on failure, so isExhausted() may be false
+			//  even though the remaining content is just unconsumed whitespace)
+			if (ctx.interactive && !ctx.io.isEofSignaled()) {
 				ctx.needsInput = true;
 			}
 			break;
@@ -1102,7 +1101,7 @@ function executeFgetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 
 	// Check for empty stdin before reading
 	if (ctx.io.isExhausted()) {
-		if (!ctx.io.isEofSignaled()) ctx.needsInput = true;
+		if (ctx.interactive && !ctx.io.isEofSignaled()) ctx.needsInput = true;
 		return;
 	}
 
@@ -1132,7 +1131,7 @@ function executeGetsCall(ctx: HandlerContext, call: ASTNode & { type: 'call_expr
 			ctx.memory.beginStep({ line }, formatPrintfDesc(ctx, call));
 			ctx.stepCount++;
 		}
-		if (!ctx.io.isEofSignaled()) ctx.needsInput = true;
+		if (ctx.interactive && !ctx.io.isEofSignaled()) ctx.needsInput = true;
 		return;
 	}
 
