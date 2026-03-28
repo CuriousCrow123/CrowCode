@@ -1,7 +1,8 @@
-# CrowCode Feature Inventory
+# CrowCode C Language Support
+
+What C features does CrowCode's interpreter support? This document tracks data types, operators, control flow, functions, memory management, standard library coverage, and known gaps.
 
 Last updated: 2026-03-28
-Test suite: 837 passing, 0 skipped (837 total across 23 files)
 
 ---
 
@@ -181,79 +182,6 @@ Test suite: 837 passing, 0 skipped (837 total across 23 files)
 
 ---
 
-## Visualization
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Stack variables with addresses | Working | Hex addresses, type display |
-| Struct children (fields) | Working | Nested display with dot-prefixed names |
-| Array children (elements) | Working | Indexed display. Capped at 20 for display. |
-| 2D array children | Working | Flattened `[i][j]` display names |
-| Heap blocks with metadata | Working | Address, type, size, status (color-coded: green/orange/red), alloc site |
-| String literal heap blocks | Working | Individual character children with null terminator |
-| Pointer display | Working | Hex address, `NULL`, or `(dangling)` after free |
-| Function pointer display | Working | Shows `-> funcName` |
-| Uninitialized variable display | Working | Shows `(uninit)` |
-| Scope entry/exit | Working | Block scopes `{ }`, for/while scopes |
-| Variable shadowing | Working | Inner scope variable separate from outer |
-| Step descriptions | Working | Computed values, operator text, condition results |
-| Sub-steps (hidden in line mode) | Working | For/while/do-while condition checks and loop updates |
-| Column highlighting | Working | Condition and update expressions in loops and if statements |
-| Drilldown modal | Working | Navigate into nested structs/arrays via breadcrumb path |
-| Changed-value highlighting | Working | `diffSnapshots()` marks values that changed between steps |
-| Console output panel | Working | ConsolePanel shows interleaved stdout/stdin segments with per-step highlighting. Pre-computed for O(1) stepping. |
-| stdin input panel | Working | StdinInput textarea auto-detected from source. Shows consumed/remaining during stepping with strikethrough. |
-| I/O step descriptions | Working | printf shows output produced (`-> "x = 42\n"`), scanf shows assigned values (`-> x = 42`). |
-| Escape sequence processing | Working | `\n`, `\t`, `\r`, `\0`, `\\`, `\'`, `\"` converted to byte values at parse time. Unknown escapes: drop backslash (GCC behavior) with warning. |
-| Interactive stdin | Working | Generator-based interpreter pauses at scanf/getchar/fgets/gets when stdin exhausted. UI shows inline input field on the scanf step. Debugger-style stepping: user navigates to scanf step, enters input, step description updates. Stdin echoes interleaved with stdout, step-indexed (backstepping hides future echoes). EOF support via Ctrl+D button and keyboard shortcut — `getchar()` returns -1, `scanf` treats as no-match. |
-| I/O mode toggle | Working | Pre-supplied (default) / Interactive toggle. Pre-supplied: textarea before run. Interactive: inline input in ConsolePanel at pause points. |
-| `fflush(stdout)` | Working | Recognized as no-op in stdlib (CrowCode has no output buffering). |
-
----
-
-## UI Features
-
-| Feature | Notes |
-|---------|-------|
-| CodeMirror editor | C/C++ syntax highlighting, One Dark theme, active step line + expression highlighting |
-| Multi-tab editor | Tab create/delete, persistent code via localStorage, cached run results across tab switches |
-| Step controls | Previous/Next buttons, keyboard shortcuts (Arrow Left/Right, S for sub-step toggle) |
-| Step scrubber | Range slider for quick navigation to any step |
-| Sub-step mode | Toggle between line-level and expression-level stepping |
-| Collapsible cards | Click scope/heap card headers to expand/collapse |
-| Error/warning display | Compilation errors (red), warnings (amber), below toolbar |
-| Responsive layout | Desktop: 2-column (editor + I/O left, controls + memory right). Mobile: stacked. |
-| Example program dropdown | 46 programs across 14 categories, loads source + optional stdin |
-
----
-
-## Engine
-
-| Feature | Notes |
-|---------|-------|
-| 4 op types | `add`, `remove`, `set`, `setHeapStatus` |
-| buildSnapshots() | Constructs full memory state per step from ops |
-| diffSnapshots() | Detects added/removed/changed entries between steps |
-| validateProgram() | Rules all Programs must satisfy (duplicate ids, missing addresses, subStep anchors) |
-| Navigation helpers | Visible indices filtering, nearest index mapping |
-| Sub-step anchoring | Sub-steps reference parent step |
-| buildConsoleOutputs() | Pre-computed for O(1) stepping |
-| Snapshot immutability | `structuredClone()` for isolation |
-
----
-
-## Infrastructure
-
-| Feature | Notes |
-|---------|-------|
-| Tree-sitter WASM parser | CST-to-AST conversion for C |
-| Web Worker | Off-thread interpretation with message protocol |
-| SvelteKit + static adapter | GitHub Pages deployment, CI/CD on push to main |
-| Tailwind CSS | Dark theme styling (One Dark color scheme) |
-| Vitest | 837 tests across 23 files |
-
----
-
 ## Partially Working
 
 | Feature | What works | What doesn't | Notes |
@@ -402,18 +330,6 @@ Rarely needed for educational use or fundamentally difficult in a browser.
 | Inline assembly | N/A | Not applicable in browser |
 | `volatile/register` enforcement | Low | Rarely meaningful |
 
-### Visualization Opportunities
-Not bugs or missing C features, but would improve the educational value.
-
-| Feature | Difficulty | Notes |
-|---------|------------|-------|
-| Padding bytes visible in struct layout | Low | Show gray cells for alignment padding |
-| Pointer chain visualization | Medium | Linked list / tree arrow diagrams |
-| Call stack diagram | Medium | Visual stack growing downward |
-| Undefined behavior annotations | Medium | Highlight UB when it occurs |
-| Type promotion visualization | Medium | Show implicit casts in mixed expressions |
-| Memory address map | Medium | Overview of stack/heap layout |
-
 ---
 
 ## Architecture Constraints
@@ -434,85 +350,3 @@ Not bugs or missing C features, but would improve the educational value.
 | String function max length | 10,000 bytes | No (hardcoded in `stdlib.ts`) |
 | Number literal formats | Decimal, hex (`0x`), binary (`0b`), octal (leading `0`), float (`.` or `e`/`E`) | No |
 
----
-
-## Test Programs
-
-46 programs in the Custom tab dropdown across 14 categories:
-
-| Category | Count | Programs |
-|----------|-------|----------|
-| Scalars | 4 | Integer Lifecycle, Char and Casting, All Compound Operators, Increment/Decrement |
-| Structs | 2 | Simple Struct, Nested Structs |
-| Arrays | 2 | Array Init and Loop, Array Squared in Loop |
-| Heap | 3 | malloc/free Lifecycle, calloc Zero-Init, Heap Array with Loop |
-| Struct+Pointer | 2 | Heap Struct via Pointer, Full Memory Basics |
-| Functions | 2 | Simple Function Call, Recursive Factorial |
-| Control Flow | 4 | If/Else Branching, While Loop, Nested Loops, Break and Continue |
-| Scope | 1 | Variable Shadowing |
-| Strings | 1 | sprintf Formats |
-| Errors | 1 | Memory Leak Detection |
-| New Features | 8 | Switch/Case, String Literal, Float Arithmetic, Uninitialized Variable, Chained Assignment, Function Pointer, 2D Array, Array-to-Pointer Decay |
-| Runtime Safety | 3 | Use-After-Free, String Functions, Math Functions |
-| Integration | 6 | Matrix Identity, Fibonacci Array, Bubble Sort, Multi-Function Clamp, Recursive Fibonacci, Entity System |
-| stdio | 7 | Basic printf, puts/putchar, getchar Loop, scanf + printf, scanf \\n Residue, printf Format Specifiers, Grade Calculator |
-
----
-
-## Test Coverage
-
-837 tests across 23 files:
-
-### Engine tests (10 files, 103 tests)
-
-| Test file | Tests | Focus |
-|-----------|-------|-------|
-| `snapshot.test.ts` | 14 | Core `applyOps` and `buildSnapshots`: add/remove/set, error reporting, immutability |
-| `snapshot-edge-cases.test.ts` | 24 | `setHeapStatus`, deep nesting, multi-op interactions, empty/edge states |
-| `diff.test.ts` | 6 | Added/removed/changed detection, nested entries, empty snapshots |
-| `navigation.test.ts` | 9 | Visible indices filtering, nearest index mapping |
-| `validate.test.ts` | 8 | Duplicate ids, missing addresses, subStep anchor rule |
-| `substep.test.ts` | 14 | Sub-step snapshot correctness, navigation, diffing, scope lifecycle |
-| `integration.test.ts` | 10 | Snapshot building, scope lifecycle, isolation, diffing, navigation with inline programs |
-| `bugs.test.ts` | 4 | Regression tests (visiblePosition = -1, etc.) |
-| `summary.test.ts` | 9 | Display summary computation for nested values |
-| `console.test.ts` | 5 | `buildConsoleOutputs()` accumulation, backward stepping (no stdin echo) |
-| `escapes.test.ts` | 30 | `processEscapes()` and `processCharLiteral()`: named escapes, unknown escapes, edge cases |
-
-Engine subtotal: **103 tests**
-
-### Interpreter tests (12 files, 734 tests)
-
-| Test file | Tests | Focus |
-|-----------|-------|-------|
-| `parser.test.ts` | 35 | AST conversion for all node types |
-| `evaluator.test.ts` | 60 | Expression evaluation, operators, 32-bit wrapping, pointer scaling |
-| `interpreter.test.ts` | 60 | Statement handling, stdlib, validation, integration pipelines, **stdio integration (printf ioEvents, scanf write-through, \\n residue, step descriptions, escape sequence regression)** |
-| `memory.test.ts` | 41 | Unified Memory class: scopes, heap, op recording, ID generation |
-| `types-c.test.ts` | 32 | Type sizes, alignment, struct layout, TypeRegistry |
-| `snapshot-regression.test.ts` | 34 | Regression safety net: 7 programs captured before Memory refactor |
-| `worker.test.ts` | 6 | Worker message contract |
-| `value-correctness.test.ts` | 198 | Value assertions: scalars, structs, arrays, pointers, functions, control flow, sprintf, bounds checking, sub-steps, edge cases, BUG-1 through BUG-7 regressions |
-| `manual-programs.test.ts` | 60 | 44 full C programs through complete pipeline (parse -> interpret -> validate -> buildSnapshots -> verify values) |
-| `format.test.ts` | 47 | Printf/scanf format string parser: specifiers, width/precision, flags, tokenization, whitespace rules |
-| `io-state.test.ts` | 54 | IoState: stdin consumption (readInt/readChar/readString/readLine), \\n residue, stdout/stderr, step event lifecycle, appendStdin, signalEof, peekEvents |
-| `interactive.test.ts` | 67 | Interactive generator protocol: pause/resume mechanics, EOF signal (null sentinel), buffer carryover, \\n residue through interactive path, partial program validity, sync/interactive parity, console output correctness, format specifiers, Grade Calculator integration (14 tests) |
-
-Interpreter subtotal: **734 tests**
-
----
-
-## Summary
-
-| Metric | Count |
-|--------|-------|
-| Implemented data types | 13 (including pointers, arrays, structs) |
-| Implemented operators | 35+ |
-| Implemented control flow constructs | 9 |
-| Implemented stdlib functions | 26 |
-| Example programs | 46 |
-| Tests | 837 |
-| Remaining language features | ~20 |
-| Remaining stdlib functions | ~40 |
-| Remaining format/I/O gaps | ~7 |
-| Remaining runtime gaps | ~9 |

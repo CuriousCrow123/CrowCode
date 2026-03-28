@@ -8,13 +8,34 @@ Interactive C memory visualizer. Step through C programs and watch stack frames,
 
 ## Features
 
+### Memory Visualization
 - Watch stack frames grow as functions are called and shrink when they return
 - See local variables appear, hold values, and disappear when they go out of scope
 - Follow heap allocations from `malloc()` to `free()` — with leak and use-after-free detection
-- Step forward and backward at your own pace, with sub-step mode for loop internals
-- **Interactive stdin** — programs with `scanf`/`getchar` pause for input, just like a real terminal. Enter values one at a time, see memory update live. Ctrl+D sends EOF.
-- Console output with `printf`/`puts`/`putchar` — see stdout build up as you step through
-- Write your own C code in the Custom tab — parsed and interpreted entirely in the browser
+- Drill into nested structs and arrays with a breadcrumb modal
+- Changed values highlighted on each step via snapshot diffing
+
+### Memory Safety Detection
+- Null pointer dereference, double free, use-after-free
+- Stack and heap array bounds checking
+- Memory leak detection at program end
+- Division by zero, stack overflow (256 frames)
+
+### I/O Support
+- `printf`/`puts`/`putchar`/`fprintf` — see stdout build up as you step through
+- `scanf`/`getchar`/`fgets`/`gets` with full format specifier support (`%d`, `%c`, `%f`, `%x`, `%*`)
+- `sprintf`/`snprintf`, `strlen`/`strcpy`/`strcmp`/`strcat`, `abs`/`sqrt`/`pow` — 26 stdlib functions total
+- **Interactive stdin** — programs pause at `scanf`/`getchar` for input, just like a real terminal. Ctrl+D sends EOF.
+- **Pre-supplied stdin** — paste input upfront, see consumed/remaining as you step
+- Escape sequence processing (`\n`, `\t`, `\0`, etc.)
+
+### Navigation & Editor
+- Step forward and backward, with sub-step mode for loop condition checks and increments
+- Step scrubber for quick navigation to any step
+- 46 example programs across 14 categories with fuzzy search
+- Multi-tab editor with localStorage persistence
+- Write your own C code — parsed and interpreted entirely in the browser
+- Resizable panels and fullscreen mode
 
 ## Quick Start
 
@@ -37,7 +58,7 @@ Open [localhost:5173/CrowCode](http://localhost:5173/CrowCode) in your browser.
 npm run dev        # Dev server at localhost:5173/CrowCode
 npm run build      # Static build to build/
 npm run preview    # Preview the static build
-npm test           # Run all tests (~830 via Vitest)
+npm test           # Run all tests (~837 via Vitest)
 npm run test:watch # Watch mode
 npm run check      # TypeScript + Svelte type verification
 ```

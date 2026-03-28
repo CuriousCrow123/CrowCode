@@ -53,8 +53,8 @@ C source code ──→ tree-sitter ──→ AST ──→ Interpreter ──�
 | Module | Responsibility | Key files |
 |--------|---------------|-----------|
 | **Engine** (`src/lib/engine/`) | Snapshot building, diffing, validation, navigation, console output | `snapshot.ts`, `diff.ts`, `validate.ts`, `navigation.ts`, `console.ts` |
-| **Interpreter** (`src/lib/interpreter/`) | C source → `Program` conversion: parsing, evaluation, statement execution, memory management, I/O state | `parser.ts`, `memory.ts`, `evaluator.ts`, `interpreter.ts`, `io-state.ts`, `service.ts` |
-| **Components** (`src/lib/components/`) | Svelte UI: code editor, memory view, step controls, console panel, tabs | `CodeEditor.svelte`, `MemoryView.svelte`, `ConsolePanel.svelte`, `EditorTabs.svelte` |
+| **Interpreter** (`src/lib/interpreter/`) | C source → `Program` conversion: parsing, evaluation, statement execution, memory management, I/O state, format strings | `parser.ts`, `memory.ts`, `evaluator.ts`, `interpreter.ts`, `io-state.ts`, `format.ts`, `escapes.ts`, `stdlib.ts`, `service.ts` |
+| **Components** (`src/lib/components/`) | Svelte UI: code editor, memory view, step controls, console, stdin, tabs, feature search | `CodeEditor.svelte`, `MemoryView.svelte`, `StepControls.svelte`, `ConsolePanel.svelte`, `TerminalPanel.svelte`, `StdinInput.svelte`, `EditorTabs.svelte`, `FeatureSearch.svelte` |
 | **Stores** (`src/lib/stores/`) | Application state: editor tabs, localStorage persistence | `editor-tabs.svelte.ts` |
 
 ### Directory Structure
@@ -86,19 +86,25 @@ src/lib/
 │   ├── types-c.ts                  C type system (primitives, pointers, arrays, structs)
 │   ├── stdlib.ts                   Standard library (malloc, calloc, free, sprintf, strlen, etc.)
 │   ├── io-state.ts                 Stdin/stdout I/O state (buffer, read position, events, EOF)
+│   ├── format.ts                   Printf/scanf format string tokenizer
 │   ├── escapes.ts                  Escape sequence processing (\n, \t, \0, etc.)
 │   └── index.ts                    Barrel export (interpretSync, interpretInteractive, resetParserCache)
 ├── components/
 │   ├── CodeEditor.svelte           CodeMirror 6 wrapper, read-only, line/range highlight
-│   ├── StepControls.svelte         Navigation UI (prev/next/play/speed/sub-step)
+│   ├── StepControls.svelte         Navigation UI (prev/next/play/speed/sub-step/scrubber)
 │   ├── MemoryView.svelte           Renders scope cards + heap card from MemoryEntry[]
 │   ├── ScopeCard.svelte            Stack frame card with variable table
 │   ├── HeapCard.svelte             Heap allocation table with status coloring
 │   ├── MemoryRow.svelte            Single variable row (name, type, value, address)
 │   ├── DrilldownModal.svelte       Modal for navigating into nested structs/arrays
-│   ├── ConsolePanel.svelte         Console output + interactive stdin input field
+│   ├── ConsolePanel.svelte         Console output with per-step stdout/stdin highlighting
+│   ├── TerminalPanel.svelte        Combined console + interactive stdin input
+│   ├── StdinInput.svelte           Pre-supplied stdin textarea with consumed/remaining display
 │   ├── EditorTabs.svelte           Tab bar for switching between programs
+│   ├── FeatureSearch.svelte        Searchable example program dropdown (fuzzy search)
 │   └── constants.ts                Shared constants (MAX_VALUE_LENGTH)
+├── data/
+│   └── features.ts                 Generated feature list for FeatureSearch (from feature-inventory.md)
 ├── stores/
 │   └── editor-tabs.svelte.ts       Multi-tab state, localStorage persistence, run cache
 ├── test-programs.ts                46 test programs for the editor dropdown
@@ -255,6 +261,8 @@ C source string
 
 **Interpreter** (`interpreter.ts`): Statement execution engine. Walks the AST top-down, calling evaluator for expressions and Memory for both runtime state changes and visualization steps. Two entry points: `interpretAST()` for synchronous execution (pre-supplied stdin), and `interpretGen()` — a generator that yields `NeedInputSignal` when stdin is exhausted. The generator accepts `string | null` (null = EOF via Ctrl+D). The `handlers/` subdirectory contains factored-out statement and control-flow handlers.
 
+**Format** (`format.ts`): Printf/scanf format string tokenizer. Parses format strings like `"%d %s\n"` into typed tokens (literals and specifiers). Each specifier captures flags, width, precision, length modifier, and conversion character. Used by both printf (output formatting) and scanf (input parsing) in `stdlib.ts`.
+
 **I/O State** (`io-state.ts`): Manages stdin buffer (read position, append, EOF signal) and stdout/stderr event recording. Read methods: `readInt`, `readChar`, `readFloat`, `readString`, `readLine`. Events flushed per-step for console output and stdin cursor visualization.
 
 **Service** (`service.ts`): Main-thread interpreter entry point. Initializes tree-sitter WASM (using `import.meta.env.BASE_URL` for path resolution), runs the full parse → interpret pipeline, and enforces a `MAX_STEPS = 500` limit. Provides two modes: `runProgram()` for synchronous execution and `runProgramInteractive()` which returns an `InteractiveSession` with `resume(input)`, `sendEof()`, and `cancel()` methods.
@@ -297,7 +305,7 @@ Control flow constructs emit sub-steps for condition evaluation:
 
 #### Supported C Features
 
-See [feature-inventory.md](feature-inventory.md) for the complete feature inventory with test coverage.
+See [feature-inventory.md](feature-inventory.md) for the complete C language feature inventory.
 
 ---
 
@@ -330,6 +338,22 @@ Modal overlay for navigating into nested structs/arrays. Maintains a breadcrumb 
 #### MemoryRow
 
 Single table row for a variable. Shows name, type, value, address. Clickable if the entry has children (shows `›` indicator). Long values are truncatable with "(more)"/"(less)" toggle.
+
+#### ConsolePanel
+
+Renders interleaved stdout/stdin transcript segments with per-step highlighting. Pre-computed output means stepping is O(1). In pre-supplied mode, shows cumulative output up to the current step with strikethrough on consumed stdin.
+
+#### TerminalPanel
+
+Combined console output + interactive stdin input container. In interactive mode, shows a transcript of stdout/stdin interleaved with an input field at the bottom when the interpreter is waiting for input. Handles submit and Ctrl+D (EOF) events.
+
+#### StdinInput
+
+Pre-supplied stdin textarea. Shows consumed vs remaining characters during stepping with strikethrough. Auto-detected from source (appears when the program uses scanf/getchar/fgets/gets).
+
+#### FeatureSearch
+
+Searchable example program dropdown. Fuzzy-matches against 46 programs across 14 categories using fuzzysort. Shows category, supported features as tags, and source preview on hover.
 
 ---
 
@@ -397,7 +421,7 @@ npm test          # run all tests
 npm run test:watch # watch mode
 ```
 
-832 tests across 23 test files:
+837 tests across 23 test files:
 
 ### Engine tests (10 files)
 
