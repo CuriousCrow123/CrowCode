@@ -10,6 +10,7 @@
 	import ConsolePanel, { type ConsoleSegment } from '$lib/components/ConsolePanel.svelte';
 	import StdinInput from '$lib/components/StdinInput.svelte';
 	import { buildSnapshots, buildConsoleOutputs, getVisibleIndices, nearestVisibleIndex } from '$lib/engine';
+	import FeatureSearch from '$lib/components/FeatureSearch.svelte';
 
 	const store = createEditorTabStore();
 	initPersistence(store);
@@ -303,6 +304,9 @@
 		select.value = '';
 	}
 
+	// Feature search modal
+	let showFeatures = $state(false);
+
 	// stdin state (per-tab)
 	let stdinInput = $state('');
 	const needsStdin = $derived(/\b(scanf|getchar|fgets|gets)\s*\(/.test(store.activeTab.source));
@@ -448,11 +452,20 @@
 		internalIndex = nearestVisibleIndex(newVisible, internalIndex);
 	}
 
-	// Keyboard shortcuts (only in viewing mode)
+	// Keyboard shortcuts
 	function handleKeydown(e: KeyboardEvent) {
-		if (mode.state !== 'viewing' && mode.state !== 'waiting_for_input') return;
 		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 		if (e.target instanceof HTMLElement && e.target.closest('.cm-editor')) return;
+
+		// ? toggles feature search (works in any mode)
+		if (e.key === '?') {
+			e.preventDefault();
+			showFeatures = !showFeatures;
+			return;
+		}
+
+		// Step navigation only in viewing mode
+		if (mode.state !== 'viewing' && mode.state !== 'waiting_for_input') return;
 		switch (e.key) {
 			case 'ArrowLeft':
 				e.preventDefault();
@@ -493,6 +506,13 @@
 		/>
 
 		<div class="flex items-center gap-2 ml-auto">
+			<button
+				onclick={() => showFeatures = true}
+				class="px-3 py-1.5 rounded text-sm font-mono text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-600 transition-colors"
+				title="Search supported C features (?)"
+			>
+				Features
+			</button>
 			<select
 				onchange={loadTestProgram}
 				aria-label="Load example program"
@@ -646,3 +666,7 @@
 		</div>
 	</div>
 </main>
+
+{#if showFeatures}
+	<FeatureSearch onclose={() => showFeatures = false} />
+{/if}
