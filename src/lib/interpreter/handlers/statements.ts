@@ -102,6 +102,18 @@ export function executeDeclaration(ctx: HandlerContext, node: ASTNode & { type: 
 					initData = callResult.value;
 					initWasFunctionCall = !!callResult.isUserFunc;
 				}
+				// On resume (sharesStep=true), the variable was already declared during
+				// the needsInput path above. Update its value instead of re-declaring.
+				if (sharesStep && initData !== null) {
+					const existing = ctx.memory.lookupVariable(node.name);
+					if (existing) {
+						ctx.memory.setValue(node.name, initData);
+						displayValue = ctx.formatValue(type, initData, true);
+						const { desc, eval: evalStr } = formatDeclDescription(node.name, type, displayValue);
+						ctx.memory.updateStepDescription(desc, evalStr);
+						return;
+					}
+				}
 			} else {
 				const result = ctx.evaluator.eval(node.initializer);
 				if (result.error) ctx.errors.push(result.error);
@@ -985,9 +997,13 @@ export function isStdioFunction(name: string): boolean {
  * Expects `&identifier` → returns identifier name.
  * Returns null if the argument is not `&identifier`.
  */
-function extractScanfTargetVar(arg: ASTNode): string | null {
+function extractScanfTargetVar(arg: ASTNode): { name: string; hasAddressOf: boolean } | null {
 	if (arg.type === 'unary_expression' && arg.operator === '&' && arg.operand.type === 'identifier') {
-		return arg.operand.name;
+		return { name: arg.operand.name, hasAddressOf: true };
+	}
+	// Accept bare identifiers — arrays decay to pointers in scanf calls (e.g., scanf("%s", s))
+	if (arg.type === 'identifier') {
+		return { name: arg.name, hasAddressOf: false };
 	}
 	return null;
 }
@@ -1089,18 +1105,26 @@ function executeScanfCall(ctx: HandlerContext, call: ASTNode & { type: 'call_exp
 		// Write through to target variable
 		if (argIdx < call.args.length) {
 			const targetArg = call.args[argIdx];
-			const varName = extractScanfTargetVar(targetArg);
+			const target = extractScanfTargetVar(targetArg);
 
-			if (varName === null) {
+			if (target === null) {
 				ctx.errors.push(`scanf: argument ${argIdx} must be a pointer (missing &?)`);
+			} else if (!target.hasAddressOf) {
+				// Bare identifier without & — only valid for array types (arrays decay to pointers)
+				const v = ctx.memory.lookupVariable(target.name);
+				if (v && isArrayCType(v.type)) {
+					ctx.memory.setValue(target.name, readResult.value);
+				} else {
+					ctx.errors.push(`scanf: argument ${argIdx} must be a pointer (missing &?)`);
+				}
 			} else {
-				ctx.memory.setValue(varName, readResult.value);
+				ctx.memory.setValue(target.name, readResult.value);
 				// Track for description enrichment
 				if (spec.specifier === 'c') {
 					const charRepr = readResult.value === 10 ? "'\\n'" : readResult.value === 9 ? "'\\t'" : `'${String.fromCharCode(readResult.value)}'`;
-					assignments.push(`${varName} = ${charRepr} (${readResult.value})`);
+					assignments.push(`${target.name} = ${charRepr} (${readResult.value})`);
 				} else {
-					assignments.push(`${varName} = ${readResult.value}`);
+					assignments.push(`${target.name} = ${readResult.value}`);
 				}
 			}
 			argIdx++;

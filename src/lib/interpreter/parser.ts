@@ -463,7 +463,11 @@ function convertFor(node: Node, errors: string[]): ASTNode {
 	const updateNode = node.childForFieldName('update');
 	const bodyNode = node.childForFieldName('body')!;
 
-	const init = initNode ? (convertNode(initNode, errors) ?? convertExpression(initNode, errors)) : undefined;
+	const init = initNode
+		? (initNode.type === 'declaration'
+			? convertNode(initNode, errors)
+			: convertExpression(initNode, errors) ?? convertNode(initNode, errors))
+		: undefined;
 	const condition = condNode ? convertExpression(condNode, errors) : undefined;
 	const update = updateNode ? convertExpression(updateNode, errors) : undefined;
 	const body = convertNode(bodyNode, errors)!;
