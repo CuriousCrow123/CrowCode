@@ -1,7 +1,7 @@
 ---
 title: "Fix stdio escape sequences, add console toggle, and interactive stdin"
 type: fix
-status: active
+status: completed
 date: 2026-03-27
 deepened: 2026-03-27
 ---

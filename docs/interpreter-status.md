@@ -1,7 +1,7 @@
 # C Interpreter — Feature Status
 
-Last updated: 2026-03-27
-Test suite: 716 passing, 0 skipped (716 total across 21 files)
+Last updated: 2026-03-28
+Test suite: 765 passing, 0 skipped (765 total across 22 files)
 
 ---
 
@@ -201,9 +201,13 @@ Test suite: 716 passing, 0 skipped (716 total across 21 files)
 | Column highlighting | Working | Condition and update expressions in loops and if statements |
 | Drilldown modal | Working | Navigate into nested structs/arrays via breadcrumb path |
 | Changed-value highlighting | Working | `diffSnapshots()` marks values that changed between steps |
-| Console output panel | Working | ConsolePanel shows cumulative stdout with per-step emerald highlighting. Pre-computed for O(1) stepping. |
+| Console output panel | Working | ConsolePanel shows interleaved stdout/stdin segments with per-step highlighting. Pre-computed for O(1) stepping. |
 | stdin input panel | Working | StdinInput textarea auto-detected from source. Shows consumed/remaining during stepping with strikethrough. |
 | I/O step descriptions | Working | printf shows output produced (`→ "x = 42\n"`), scanf shows assigned values (`→ x = 42`). |
+| Escape sequence processing | Working | `\n`, `\t`, `\r`, `\0`, `\\`, `\'`, `\"` converted to byte values at parse time. Unknown escapes: drop backslash (GCC behavior) with warning. |
+| Interactive stdin | Working | Generator-based interpreter pauses at scanf/getchar/fgets/gets when stdin exhausted. UI shows inline input field on the scanf step. Debugger-style stepping: user navigates to scanf step, enters input, step description updates. Stdin echoes interleaved with stdout, step-indexed (backstepping hides future echoes). |
+| I/O mode toggle | Working | Pre-supplied (default) / Interactive toggle. Pre-supplied: textarea before run. Interactive: inline input in ConsolePanel at pause points. |
+| `fflush(stdout)` | Working | Recognized as no-op in stdlib (CrowCode has no output buffering). |
 
 ---
 
@@ -250,7 +254,7 @@ Test suite: 716 passing, 0 skipped (716 total across 21 files)
 ### Runtime Limitations
 | Limitation | Notes |
 |-----------|-------|
-| Pre-supplied stdin only | stdin must be provided before execution (no interactive/blocking input). Per-tab stdin not persisted across tab switches. |
+| Interactive stdin limitations | Multi-specifier scanf (`"%d %d"`) may not pause correctly mid-call if buffer runs dry between specifiers. Separate scanf calls (one per value) work correctly. Interactive mode for functions called via expressions (not as statements) falls back to EOF. |
 | No FILE* operations | `fopen`/`fclose`/`fread`/`fwrite` not supported — only stdin/stdout/stderr |
 | No `sscanf`/`fscanf` | Only `scanf` (reads from stdin). `sscanf` (from string) and `fscanf` (from file) not implemented. |
 | No `%e`/`%g` format specifiers | Scientific notation (`%e`, `%E`, `%g`, `%G`) not supported in printf or scanf |
@@ -319,7 +323,8 @@ Test suite: 716 passing, 0 skipped (716 total across 21 files)
 | `integration.test.ts` | 10 | Snapshot building, scope lifecycle, isolation, diffing, navigation with inline programs |
 | `bugs.test.ts` | 4 | Regression tests (visiblePosition = -1, etc.) |
 | `summary.test.ts` | 9 | Display summary computation for nested values |
-| `console.test.ts` | 5 | `buildConsoleOutputs()` accumulation, backward stepping, stdin echo |
+| `console.test.ts` | 5 | `buildConsoleOutputs()` accumulation, backward stepping (no stdin echo) |
+| `escapes.test.ts` | 30 | `processEscapes()` and `processCharLiteral()`: named escapes, unknown escapes, edge cases |
 
 Engine subtotal: **103 tests**
 
@@ -329,7 +334,7 @@ Engine subtotal: **103 tests**
 |-----------|-------|-------|
 | `parser.test.ts` | 35 | AST conversion for all node types |
 | `evaluator.test.ts` | 60 | Expression evaluation, operators, 32-bit wrapping, pointer scaling |
-| `interpreter.test.ts` | 55 | Statement handling, stdlib, validation, integration pipelines, **stdio integration (printf ioEvents, scanf write-through, \\n residue, step descriptions)** |
+| `interpreter.test.ts` | 60 | Statement handling, stdlib, validation, integration pipelines, **stdio integration (printf ioEvents, scanf write-through, \\n residue, step descriptions, escape sequence regression)** |
 | `memory.test.ts` | 41 | Unified Memory class: scopes, heap, op recording, ID generation |
 | `types-c.test.ts` | 32 | Type sizes, alignment, struct layout, TypeRegistry |
 | `snapshot-regression.test.ts` | 34 | Regression safety net: 7 programs captured before Memory refactor |
@@ -337,6 +342,6 @@ Engine subtotal: **103 tests**
 | `value-correctness.test.ts` | 198 | Value assertions: scalars, structs, arrays, pointers, functions, control flow, sprintf, bounds checking, sub-steps, edge cases, BUG-1 through BUG-7 regressions |
 | `manual-programs.test.ts` | 60 | 44 full C programs through complete pipeline (parse → interpret → validate → buildSnapshots → verify values) |
 | `format.test.ts` | 47 | Printf/scanf format string parser: specifiers, width/precision, flags, tokenization, whitespace rules |
-| `io-state.test.ts` | 45 | IoState: stdin consumption (readInt/readChar/readString/readLine), \\n residue, stdout/stderr, step event lifecycle |
+| `io-state.test.ts` | 54 | IoState: stdin consumption (readInt/readChar/readString/readLine), \\n residue, stdout/stderr, step event lifecycle, appendStdin, signalEof, peekEvents |
 
 Interpreter subtotal: **613 tests**
