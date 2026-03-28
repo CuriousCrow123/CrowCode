@@ -884,7 +884,7 @@ int main() {
 		source: `#include <stdio.h>
 
 // Interactive grade calculator.
-// Enter scores one at a time, then Ctrl+D to finish.
+// Enter scores one at a time, -1 to finish.
 // Try it in Interactive mode!
 
 int main() {
@@ -893,9 +893,13 @@ int main() {
     int count = 0;
     int highest = 0;
 
-    printf("Enter scores (Ctrl+D to finish):\\n");
+    printf("Enter scores (-1 to finish):\\n");
 
-    while (scanf("%d", &score) != -1) {
+    while (1) {
+        scanf("%d", &score);
+        if (score == -1) {
+            break;
+        }
         if (score < 0 || score > 100) {
             printf("Invalid! Use 0-100.\\n");
         } else {
@@ -932,7 +936,7 @@ int main() {
 
     return 0;
 }`,
-		stdin: '85\n92\n78\n95\n88\n',
+		stdin: '85\n92\n78\n-1\n',
 	},
 ];
 

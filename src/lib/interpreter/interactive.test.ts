@@ -832,3 +832,329 @@ describe('scanf format specifiers through interactive path', () => {
 		expect(fVal).toBeCloseTo(3.14, 1);
 	});
 });
+
+// === Grade Calculator integration test ===
+
+describe('grade calculator — full interactive session', () => {
+	const gradeSrc = `#include <stdio.h>
+
+int main() {
+    int score;
+    int total = 0;
+    int count = 0;
+    int highest = 0;
+
+    printf("Enter scores (-1 to finish):\\n");
+
+    while (1) {
+        scanf("%d", &score);
+        if (score == -1) {
+            break;
+        }
+        if (score < 0 || score > 100) {
+            printf("Invalid! Use 0-100.\\n");
+        } else {
+            total = total + score;
+            count = count + 1;
+            if (score > highest) {
+                highest = score;
+            }
+            printf("  Score #%d: %d\\n", count, score);
+        }
+    }
+
+    printf("\\n--- Results ---\\n");
+    printf("Scores entered: %d\\n", count);
+    printf("Total: %d\\n", total);
+    printf("Highest: %d\\n", highest);
+
+    if (count > 0) {
+        int avg = total / count;
+        printf("Average: %d\\n", avg);
+
+        if (avg >= 90) {
+            printf("Grade: A\\n");
+        } else if (avg >= 80) {
+            printf("Grade: B\\n");
+        } else if (avg >= 70) {
+            printf("Grade: C\\n");
+        } else {
+            printf("Grade: F\\n");
+        }
+    } else {
+        printf("No scores entered.\\n");
+    }
+
+    return 0;
+}`;
+
+	// --- Pause 1: initial prompt, waiting for first score ---
+
+	it('pauses at first scanf with prompt already displayed', () => {
+		const gen = interactive(gradeSrc, { maxSteps: 300 });
+		const r = gen.next();
+		expect(r.done).toBe(false);
+		const partial = (r.value as { program: Program }).program;
+		// Partial programs from while loops may have anchor rule violations
+		// (last step is subStep=true from "while: check"). This is a known
+		// limitation of partial programs paused mid-loop.
+		const console = buildConsoleOutputs(partial.steps);
+		expect(console[console.length - 1]).toBe('Enter scores (-1 to finish):\n');
+	});
+
+	// --- Score 1: 85 ---
+
+	it('after first score (85): count=1, total=85, highest=85, echoed in console', () => {
+		const gen = interactive(gradeSrc, { maxSteps: 300 });
+		gen.next(); // pause 1
+		const r2 = gen.next('85\n');
+		expect(r2.done).toBe(false); // pauses again for next score
+
+		const partial = (r2.value as { program: Program }).program;
+
+		const snapshots = buildSnapshots(partial);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'score')?.value).toBe('85');
+		expect(findEntry(last, 'total')?.value).toBe('85');
+		expect(findEntry(last, 'count')?.value).toBe('1');
+		expect(findEntry(last, 'highest')?.value).toBe('85');
+
+		const console = buildConsoleOutputs(partial.steps);
+		const output = console[console.length - 1];
+		expect(output).toContain('Enter scores (-1 to finish):');
+		expect(output).toContain('Score #1: 85');
+	});
+
+	// --- Score 2: 92 (new highest) ---
+
+	it('after second score (92): count=2, total=177, highest=92', () => {
+		const gen = interactive(gradeSrc, { maxSteps: 300 });
+		gen.next();
+		gen.next('85\n');
+		const r3 = gen.next('92\n');
+		expect(r3.done).toBe(false);
+
+		const partial = (r3.value as { program: Program }).program;
+
+		const snapshots = buildSnapshots(partial);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'score')?.value).toBe('92');
+		expect(findEntry(last, 'total')?.value).toBe('177');
+		expect(findEntry(last, 'count')?.value).toBe('2');
+		expect(findEntry(last, 'highest')?.value).toBe('92');
+
+		const console = buildConsoleOutputs(partial.steps);
+		const output = console[console.length - 1];
+		expect(output).toContain('Score #1: 85');
+		expect(output).toContain('Score #2: 92');
+	});
+
+	// --- Score 3: 78 (does not change highest) ---
+
+	it('after third score (78): count=3, total=255, highest still 92', () => {
+		const gen = interactive(gradeSrc, { maxSteps: 300 });
+		gen.next();
+		gen.next('85\n');
+		gen.next('92\n');
+		const r4 = gen.next('78\n');
+		expect(r4.done).toBe(false);
+
+		const snapshots = buildSnapshots((r4.value as { program: Program }).program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'score')?.value).toBe('78');
+		expect(findEntry(last, 'total')?.value).toBe('255');
+		expect(findEntry(last, 'count')?.value).toBe('3');
+		expect(findEntry(last, 'highest')?.value).toBe('92'); // 78 < 92, unchanged
+
+		const console = buildConsoleOutputs((r4.value as { program: Program }).program.steps);
+		expect(console[console.length - 1]).toContain('Score #3: 78');
+	});
+
+	// --- Sentinel -1: loop exits, results printed ---
+
+	it('sending -1 terminates loop and prints results with grade B', () => {
+		const gen = interactive(gradeSrc, { maxSteps: 300 });
+		gen.next();
+		gen.next('85\n');
+		gen.next('92\n');
+		gen.next('78\n');
+		const r5 = gen.next('-1\n');
+		expect(r5.done).toBe(true);
+
+		const result = r5.value as InterpretResult;
+		expect(result.errors).toHaveLength(0);
+
+		const snapshots = buildSnapshots(result.program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'score')?.value).toBe('-1');
+		expect(findEntry(last, 'total')?.value).toBe('255');
+		expect(findEntry(last, 'count')?.value).toBe('3');
+		expect(findEntry(last, 'highest')?.value).toBe('92');
+
+		const console = buildConsoleOutputs(result.program.steps);
+		const output = console[console.length - 1];
+		expect(output).toContain('--- Results ---');
+		expect(output).toContain('Scores entered: 3');
+		expect(output).toContain('Total: 255');
+		expect(output).toContain('Highest: 92');
+		expect(output).toContain('Average: 85');
+		expect(output).toContain('Grade: B');
+	});
+
+	// --- Full session via driveInteractive ---
+
+	it('driveInteractive yields exactly 4 times (3 scores + sentinel)', () => {
+		const { result, yieldCount } = driveInteractive(
+			gradeSrc, ['85\n', '92\n', '78\n', '-1\n'], { maxSteps: 300 },
+		);
+		expect(yieldCount).toBe(4);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	// --- Sync/interactive parity ---
+
+	it('sync and interactive produce identical final values', () => {
+		const syncResult = interpretSync(parser, gradeSrc, { stdin: '85\n92\n78\n-1\n', maxSteps: 300 });
+		const { result: interResult } = driveInteractive(
+			gradeSrc, ['85\n', '92\n', '78\n', '-1\n'], { maxSteps: 300 },
+		);
+
+		const syncSnaps = buildSnapshots(syncResult.program);
+		const interSnaps = buildSnapshots(interResult.program);
+		const syncLast = syncSnaps[syncSnaps.length - 1];
+		const interLast = interSnaps[interSnaps.length - 1];
+
+		for (const name of ['score', 'total', 'count', 'highest', 'avg']) {
+			expect(findEntry(interLast, name)?.value).toBe(findEntry(syncLast, name)?.value);
+		}
+
+		const syncConsole = buildConsoleOutputs(syncResult.program.steps);
+		const interConsole = buildConsoleOutputs(interResult.program.steps);
+		expect(interConsole[interConsole.length - 1]).toBe(syncConsole[syncConsole.length - 1]);
+	});
+
+	// --- Edge: immediate -1 (no scores) ---
+
+	it('immediate -1 prints "No scores entered"', () => {
+		const gen = interactive(gradeSrc, { maxSteps: 300 });
+		gen.next(); // pause at first scanf
+		const r = gen.next('-1\n');
+		expect(r.done).toBe(true);
+
+		const result = r.value as InterpretResult;
+		expect(result.errors).toHaveLength(0);
+
+		const snapshots = buildSnapshots(result.program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'count')?.value).toBe('0');
+		expect(findEntry(last, 'total')?.value).toBe('0');
+
+		const console = buildConsoleOutputs(result.program.steps);
+		expect(console[console.length - 1]).toContain('No scores entered.');
+		// Should NOT contain "Grade:" or "Average:"
+		expect(console[console.length - 1]).not.toContain('Grade:');
+		expect(console[console.length - 1]).not.toContain('Average:');
+	});
+
+	// --- Edge: invalid score (out of range) ---
+
+	it('out-of-range score (150) prints error, does not count', () => {
+		const gen = interactive(gradeSrc, { maxSteps: 300 });
+		gen.next();
+		const r2 = gen.next('150\n'); // invalid
+		expect(r2.done).toBe(false);
+
+		const partial = (r2.value as { program: Program }).program;
+		const snapshots = buildSnapshots(partial);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'count')?.value).toBe('0'); // not counted
+		expect(findEntry(last, 'total')?.value).toBe('0'); // not added
+
+		const console = buildConsoleOutputs(partial.steps);
+		expect(console[console.length - 1]).toContain('Invalid! Use 0-100.');
+	});
+
+	// --- Edge: all high scores → Grade A ---
+
+	it('all scores >= 90 produces Grade A', () => {
+		const { result } = driveInteractive(
+			gradeSrc, ['95\n', '92\n', '98\n', '-1\n'], { maxSteps: 300 },
+		);
+		expect(result.errors).toHaveLength(0);
+
+		const console = buildConsoleOutputs(result.program.steps);
+		const output = console[console.length - 1];
+		expect(output).toContain('Average: 95'); // (95+92+98)/3 = 95
+		expect(output).toContain('Grade: A');
+	});
+
+	// --- Edge: low scores → Grade F ---
+
+	it('low scores produce Grade F', () => {
+		const { result } = driveInteractive(
+			gradeSrc, ['50\n', '60\n', '-1\n'], { maxSteps: 300 },
+		);
+
+		const console = buildConsoleOutputs(result.program.steps);
+		const output = console[console.length - 1];
+		expect(output).toContain('Average: 55'); // (50+60)/2 = 55
+		expect(output).toContain('Grade: F');
+	});
+
+	// --- Partial program validity at every pause ---
+
+	it('pauses exactly 4 times before completing', () => {
+		const gen = interactive(gradeSrc, { maxSteps: 300 });
+		const inputs: (string | null)[] = ['85\n', '92\n', '78\n', '-1\n'];
+		let r = gen.next();
+		let pauseCount = 0;
+
+		while (!r.done) {
+			const partial = (r.value as { program: Program }).program;
+			expect(partial.steps.length).toBeGreaterThan(0);
+			pauseCount++;
+
+			if (pauseCount > inputs.length) break;
+			r = gen.next(inputs[pauseCount - 1]);
+		}
+
+		expect(pauseCount).toBe(4);
+		expect(r.done).toBe(true);
+	});
+
+	// --- Console output accumulates correctly across all pauses ---
+
+	it('console output grows monotonically across pauses', () => {
+		const gen = interactive(gradeSrc, { maxSteps: 300 });
+		const inputs = ['85\n', '92\n', '78\n', '-1\n'];
+		let r = gen.next();
+		let prevLen = 0;
+		let pauseIdx = 0;
+
+		while (!r.done) {
+			const partial = (r.value as { program: Program }).program;
+			const console = buildConsoleOutputs(partial.steps);
+			const curLen = console[console.length - 1].length;
+			expect(curLen).toBeGreaterThanOrEqual(prevLen);
+			prevLen = curLen;
+
+			if (pauseIdx >= inputs.length) break;
+			r = gen.next(inputs[pauseIdx]);
+			pauseIdx++;
+		}
+	});
+
+	// --- Buffer carryover: two scores in one input ---
+
+	it('two scores in single input: both processed without extra pause', () => {
+		const gen = interactive(gradeSrc, { maxSteps: 300 });
+		gen.next(); // pause 1
+		const r2 = gen.next('85\n92\n'); // two scores at once
+		expect(r2.done).toBe(false); // pauses for THIRD score (not second)
+
+		const snapshots = buildSnapshots((r2.value as { program: Program }).program);
+		const last = snapshots[snapshots.length - 1];
+		expect(findEntry(last, 'count')?.value).toBe('2'); // both processed
+		expect(findEntry(last, 'total')?.value).toBe('177');
+	});
+});
