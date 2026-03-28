@@ -12,6 +12,8 @@ Interactive C memory visualizer. Step through C programs and watch stack frames,
 - See local variables appear, hold values, and disappear when they go out of scope
 - Follow heap allocations from `malloc()` to `free()` — with leak and use-after-free detection
 - Step forward and backward at your own pace, with sub-step mode for loop internals
+- **Interactive stdin** — programs with `scanf`/`getchar` pause for input, just like a real terminal. Enter values one at a time, see memory update live. Ctrl+D sends EOF.
+- Console output with `printf`/`puts`/`putchar` — see stdout build up as you step through
 - Write your own C code in the Custom tab — parsed and interpreted entirely in the browser
 
 ## Quick Start
@@ -35,7 +37,7 @@ Open [localhost:5173/CrowCode](http://localhost:5173/CrowCode) in your browser.
 npm run dev        # Dev server at localhost:5173/CrowCode
 npm run build      # Static build to build/
 npm run preview    # Preview the static build
-npm test           # Run all tests (~600 via Vitest)
+npm test           # Run all tests (~830 via Vitest)
 npm run test:watch # Watch mode
 npm run check      # TypeScript + Svelte type verification
 ```
