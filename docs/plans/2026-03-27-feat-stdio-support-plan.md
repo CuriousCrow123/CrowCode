@@ -562,8 +562,8 @@ it('cumulative stdout across multiple printf calls', () => {
 
 ## Alternatives Considered
 
-### Interactive async input (rejected for v1)
-Could pause the interpreter mid-execution and prompt the user for input. Rejected because it requires rewriting the synchronous interpreter into an async generator or coroutine model. The pre-supplied input approach covers the educational use case well and avoids architectural upheaval. Can revisit in v2.
+### Interactive async input (rejected for v1, implemented in v2)
+Originally rejected because it required rewriting the synchronous interpreter into a generator model. **Implemented in v2** via `interpretGen` — a generator-based interpreter that yields `NeedInputSignal` when stdin is exhausted. The generator protocol accepts `string | null` (null = EOF via Ctrl+D). See `interpreter.ts:interpretGen`, `service.ts:InteractiveSession`, and `interactive.test.ts` (67 tests). Known limitation: `scanf` return value not available as expression — handled as statement interceptor, not stdlib function.
 
 ### FILE* struct visualization (deferred)
 Showing the internal FILE struct (fd, buffer, buf_pos, flags) would be deeply educational but adds significant complexity. The buffer concept can be taught through the stdin/stdout visualization without exposing the full struct. Deferred to v2.

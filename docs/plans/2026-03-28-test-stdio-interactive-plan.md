@@ -610,8 +610,11 @@ These are documented simplifications where CrowCode diverges from the C standard
 | `scanf("%d")` on non-matching input | Returns 0, 'a' stays in buffer, variable unchanged | Re-pauses waiting for more input (interactive mode) | Different UX than real C — acceptable for educational tool |
 | Literal chars in format (`scanf("(%d)")`) | Matches literal parentheses in input | Skipped for v1 — literal tokens ignored | Uncommon in intro courses |
 | `scanf("%[^\n]")` scansets | Reads until char not in set | Not implemented | Intermediate feature |
-| `scanf` inside non-main functions | Blocks waiting for input like any other scanf | Silently EOFs (driveGenerator swallows needsInput) | Known architectural limitation |
+| `scanf` inside non-main functions | Blocks waiting for input like any other scanf | Pauses for input (needsInput propagates through driveGenerator) | Actually correct — tested and confirmed |
 | `scanf("%d\n")` trailing whitespace | Hangs waiting for non-whitespace after the number | Trailing whitespace token ignored (same as `"%d"`) | Reasonable simplification |
+| `scanf` return value as expression | `while (scanf(...) != -1)` uses return value | Not available — scanf handled as statement interceptor, not stdlib function. Goes through evaluator which doesn't know scanf. | Use sentinel pattern: `while (1) { scanf(...); if (val == -1) break; }` |
+| Type-mismatch input in interactive mode | `scanf("%d")` with `"abc\n"` returns 0, 'a' stays in buffer, program continues | Re-pauses; bad chars permanently block read position even after new input appended | Documented divergence — buffer poisoning is permanent |
+| `while` loop re-execution on resume | N/A (real C doesn't pause) | Entire while statement re-executes from condition on resume. scanf must be at top of loop body to avoid double-processing of scores. | Architectural limitation of statement-level re-execution |
 
 ## Edge Cases
 

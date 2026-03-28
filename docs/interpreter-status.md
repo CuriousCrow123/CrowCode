@@ -1,7 +1,7 @@
 # C Interpreter — Feature Status
 
 Last updated: 2026-03-28
-Test suite: 765 passing, 0 skipped (765 total across 22 files)
+Test suite: 832 passing, 0 skipped (832 total across 23 files)
 
 ---
 
@@ -147,10 +147,10 @@ Test suite: 765 passing, 0 skipped (765 total across 22 files)
 | `calloc(count, size)` | Zero-init children visible |
 | `free(ptr)` | Status change + dangling pointer display |
 | `printf(fmt, ...)` | Real output via IoState → ConsolePanel. Supports `%d`, `%i`, `%u`, `%x`, `%X`, `%c`, `%f`, `%p`, `%%`, field width, precision, flags. Step description shows output produced. |
-| `scanf(fmt, ...)` | Reads from pre-supplied stdin via IoState. Writes through to variables with `setValue` ops. Supports `%d`, `%i`, `%c`, `%f`, `%x`, `%*` (suppression). Correct whitespace semantics per specifier. Missing `&` detected with error. Step description shows assigned values. |
+| `scanf(fmt, ...)` | Reads from pre-supplied stdin via IoState. Writes through to variables with `setValue` ops. Supports `%d`, `%i`, `%c`, `%f`, `%x`, `%*` (suppression). Correct whitespace semantics per specifier. Missing `&` detected with error (bare array names accepted — arrays decay to pointers). Step description shows assigned values. **Limitation:** return value not available as expression — `while (scanf(...) != -1)` doesn't work. Use `while (1) { scanf(...); if (x == -1) break; }` instead. |
 | `puts(str)` | Writes string + `\n` to stdout. |
 | `putchar(c)` | Writes single character to stdout. |
-| `getchar()` | Reads single character from stdin. Returns `int` (-1 on EOF). |
+| `getchar()` | Reads single character from stdin. Returns `int` (-1 on EOF). In interactive mode, pauses when stdin is exhausted. EOF signaled via Ctrl+D button or keyboard shortcut (sends `null` through generator protocol). |
 | `fprintf(stream, fmt, ...)` | Routes to stdout or stderr based on first argument. |
 | `fputs(str, stream)` | Writes string to stdout or stderr. |
 | `fgets(buf, n, stdin)` | Reads up to n-1 chars from stdin (fgets semantics: includes `\n`, null-terminates). Result shown as quoted string on heap entry. |
@@ -205,7 +205,7 @@ Test suite: 765 passing, 0 skipped (765 total across 22 files)
 | stdin input panel | Working | StdinInput textarea auto-detected from source. Shows consumed/remaining during stepping with strikethrough. |
 | I/O step descriptions | Working | printf shows output produced (`→ "x = 42\n"`), scanf shows assigned values (`→ x = 42`). |
 | Escape sequence processing | Working | `\n`, `\t`, `\r`, `\0`, `\\`, `\'`, `\"` converted to byte values at parse time. Unknown escapes: drop backslash (GCC behavior) with warning. |
-| Interactive stdin | Working | Generator-based interpreter pauses at scanf/getchar/fgets/gets when stdin exhausted. UI shows inline input field on the scanf step. Debugger-style stepping: user navigates to scanf step, enters input, step description updates. Stdin echoes interleaved with stdout, step-indexed (backstepping hides future echoes). |
+| Interactive stdin | Working | Generator-based interpreter pauses at scanf/getchar/fgets/gets when stdin exhausted. UI shows inline input field on the scanf step. Debugger-style stepping: user navigates to scanf step, enters input, step description updates. Stdin echoes interleaved with stdout, step-indexed (backstepping hides future echoes). EOF support via Ctrl+D button and keyboard shortcut — `getchar()` returns -1, `scanf` treats as no-match. |
 | I/O mode toggle | Working | Pre-supplied (default) / Interactive toggle. Pre-supplied: textarea before run. Interactive: inline input in ConsolePanel at pause points. |
 | `fflush(stdout)` | Working | Recognized as no-op in stdlib (CrowCode has no output buffering). |
 
@@ -219,7 +219,7 @@ Test suite: 765 passing, 0 skipped (765 total across 22 files)
 | Preprocessor | `#include` ignored gracefully | `#define`, `#ifdef`, etc. ignored with warning | By design — not a real preprocessor |
 | 3D+ arrays | Type system supports nesting | Only 2D write/init tested; 3D untested | Medium difficulty to fix |
 | `sprintf` format specifiers | `%d`, `%i`, `%x`, `%c`, `%s`, `%%` with byte-by-byte writes | `%f`, `%p`, `%u` not yet supported in sprintf's internal formatter (they work in printf). | `evaluateSprintfResult` uses a simpler parser than `applyPrintfFormat` |
-| `scanf` format specifiers | `%d`, `%i`, `%c`, `%f`, `%x`, `%*` (suppression) | `%i` octal/hex prefix not implemented (treated as `%d`). `%s` consumes but doesn't write to char array byte-by-byte. | |
+| `scanf` format specifiers | `%d`, `%i`, `%c`, `%f`, `%x`, `%*` (suppression) | `%i` octal/hex prefix not implemented (treated as `%d`). `%s` consumes but doesn't write to char array byte-by-byte. Return value not available as expression (scanf handled as statement interceptor, not stdlib function). | |
 | printf/scanf length modifiers | Length modifiers parsed and ignored | `%ld`, `%lf`, `%zu` not distinguished from `%d`, `%f` | `%lf` is common in student code with `double` |
 | Empty loop bodies | Doesn't crash, loop variable advances | May produce interpreter errors internally | |
 
@@ -254,7 +254,7 @@ Test suite: 765 passing, 0 skipped (765 total across 22 files)
 ### Runtime Limitations
 | Limitation | Notes |
 |-----------|-------|
-| Interactive stdin limitations | Multi-specifier scanf (`"%d %d"`) may not pause correctly mid-call if buffer runs dry between specifiers. Separate scanf calls (one per value) work correctly. Interactive mode for functions called via expressions (not as statements) falls back to EOF. |
+| Interactive stdin limitations | Multi-specifier scanf (`"%d %d"`) may not pause correctly mid-call if buffer runs dry between specifiers. Separate scanf calls (one per value) work correctly. `scanf` return value not usable as expression — `while (scanf(...) != -1)` goes through evaluator stdlib path which doesn't handle scanf. Use sentinel pattern: `while (1) { scanf(...); if (val == -1) break; }`. Type-mismatch input (e.g., letters for `%d`) permanently blocks the read buffer (bad chars stay at read position). Statement-level re-execution: when a while loop pauses at scanf, resume re-executes the entire while statement from the condition — scanf must be at the top of the loop body to avoid double-processing. |
 | No FILE* operations | `fopen`/`fclose`/`fread`/`fwrite` not supported — only stdin/stdout/stderr |
 | No `sscanf`/`fscanf` | Only `scanf` (reads from stdin). `sscanf` (from string) and `fscanf` (from file) not implemented. |
 | No `%e`/`%g` format specifiers | Scientific notation (`%e`, `%E`, `%g`, `%G`) not supported in printf or scanf |
@@ -285,7 +285,7 @@ Test suite: 765 passing, 0 skipped (765 total across 22 files)
 
 ## Test Programs
 
-45 programs in the Custom tab dropdown across 14 categories:
+46 programs in the Custom tab dropdown across 14 categories:
 
 | Category | Count | Programs |
 |----------|-------|----------|
@@ -302,13 +302,13 @@ Test suite: 765 passing, 0 skipped (765 total across 22 files)
 | New Features | 8 | Switch/Case, String Literal, Float Arithmetic, Uninitialized Variable, Chained Assignment, Function Pointer, 2D Array, Array-to-Pointer Decay |
 | Runtime Safety | 3 | Use-After-Free, String Functions, Math Functions |
 | Integration | 6 | Matrix Identity, Fibonacci Array, Bubble Sort, Multi-Function Clamp, Recursive Fibonacci, Entity System |
-| stdio | 6 | Basic printf, puts/putchar, getchar Loop, scanf + printf, scanf \\n Residue, printf Format Specifiers |
+| stdio | 7 | Basic printf, puts/putchar, getchar Loop, scanf + printf, scanf \\n Residue, printf Format Specifiers, Grade Calculator |
 
 ---
 
 ## Test Coverage
 
-716 tests across 21 files:
+832 tests across 23 files:
 
 ### Engine tests (10 files, 103 tests)
 
@@ -343,5 +343,6 @@ Engine subtotal: **103 tests**
 | `manual-programs.test.ts` | 60 | 44 full C programs through complete pipeline (parse → interpret → validate → buildSnapshots → verify values) |
 | `format.test.ts` | 47 | Printf/scanf format string parser: specifiers, width/precision, flags, tokenization, whitespace rules |
 | `io-state.test.ts` | 54 | IoState: stdin consumption (readInt/readChar/readString/readLine), \\n residue, stdout/stderr, step event lifecycle, appendStdin, signalEof, peekEvents |
+| `interactive.test.ts` | 67 | Interactive generator protocol: pause/resume mechanics, EOF signal (null sentinel), buffer carryover, \\n residue through interactive path, partial program validity, sync/interactive parity, console output correctness, format specifiers, Grade Calculator integration (14 tests) |
 
-Interpreter subtotal: **613 tests**
+Interpreter subtotal: **680 tests**
