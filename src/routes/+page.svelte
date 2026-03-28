@@ -436,6 +436,12 @@
 		if (pos < visibleIndices.length - 1) internalIndex = visibleIndices[pos + 1];
 	}
 
+	function seek(position: number) {
+		if (position >= 0 && position < visibleIndices.length) {
+			internalIndex = visibleIndices[position];
+		}
+	}
+
 	function toggleSubStep() {
 		subStepMode = !subStepMode;
 		const newVisible = getVisibleIndices(steps, subStepMode);
@@ -545,10 +551,10 @@
 	{/if}
 
 	<!-- Main area: editor + memory view -->
-	<div class="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-4">
+	<div class="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-4 overflow-hidden">
 		<!-- Left column: Code Editor + I/O -->
-		<div class="flex flex-col gap-3">
-			<div class="h-[55vh]">
+		<div class="flex flex-col gap-3 h-[70vh]">
+			<div class="h-[55vh] shrink-0">
 				<CodeEditor
 					source={store.activeTab.source}
 					location={editorLocation}
@@ -556,59 +562,62 @@
 					onchange={mode.state === 'editing' ? handleSourceChange : undefined}
 				/>
 			</div>
-			<!-- I/O mode toggle (visible when program uses stdin functions) -->
-			{#if needsStdin && mode.state === 'editing'}
-				<div class="flex items-center gap-2">
-					<span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">I/O Mode</span>
-					<button
-						onclick={() => ioMode = 'interactive'}
-						class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'interactive' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
-					>Interactive</button>
-					<button
-						onclick={() => ioMode = 'presupplied'}
-						class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'presupplied' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
-					>Pre-supplied</button>
-				</div>
-			{/if}
-			<!-- Pre-supplied mode: StdinInput + ConsolePanel (output only) -->
-			{#if ioMode === 'presupplied'}
-				{#if needsStdin}
-					<StdinInput
-						value={stdinInput}
-						onchange={(v) => stdinInput = v}
-						disabled={mode.state === 'viewing'}
-						consumed={stdinConsumed}
-					/>
+			<div class="min-h-0 flex-1 flex flex-col gap-3 overflow-y-auto">
+				<!-- I/O mode toggle (visible when program uses stdin functions) -->
+				{#if needsStdin && mode.state === 'editing'}
+					<div class="flex items-center gap-2 shrink-0">
+						<span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">I/O Mode</span>
+						<button
+							onclick={() => ioMode = 'interactive'}
+							class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'interactive' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
+						>Interactive</button>
+						<button
+							onclick={() => ioMode = 'presupplied'}
+							class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'presupplied' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
+						>Pre-supplied</button>
+					</div>
 				{/if}
-				{#if mode.state === 'viewing' && hasConsoleOutput}
-					<ConsolePanel
-						segments={preSuppliedSegments}
-						newOutputFrom={newConsoleOutput.length > 0 ? preSuppliedSegments.length - 1 : -1}
-					/>
+				<!-- Pre-supplied mode: StdinInput + ConsolePanel (output only) -->
+				{#if ioMode === 'presupplied'}
+					{#if needsStdin}
+						<StdinInput
+							value={stdinInput}
+							onchange={(v) => stdinInput = v}
+							disabled={mode.state === 'viewing'}
+							consumed={stdinConsumed}
+						/>
+					{/if}
+					{#if mode.state === 'viewing' && hasConsoleOutput}
+						<ConsolePanel
+							segments={preSuppliedSegments}
+							newOutputFrom={newConsoleOutput.length > 0 ? preSuppliedSegments.length - 1 : -1}
+						/>
+					{/if}
+				{:else}
+					<!-- Interactive mode: integrated console with interleaved output + input -->
+					{#if (mode.state === 'viewing' || mode.state === 'waiting_for_input') && (hasConsoleOutput || interactiveSegments.length > 0 || mode.state === 'waiting_for_input')}
+						<ConsolePanel
+							segments={interactiveSegments}
+							waitingForInput={mode.state === 'waiting_for_input' && internalIndex >= steps.length - 1}
+							onSubmitInput={handleSubmitInput}
+							onEof={handleEof}
+						/>
+					{/if}
 				{/if}
-			{:else}
-				<!-- Interactive mode: integrated console with interleaved output + input -->
-				{#if (mode.state === 'viewing' || mode.state === 'waiting_for_input') && (hasConsoleOutput || interactiveSegments.length > 0 || mode.state === 'waiting_for_input')}
-					<ConsolePanel
-						segments={interactiveSegments}
-						waitingForInput={mode.state === 'waiting_for_input' && internalIndex >= steps.length - 1}
-						onSubmitInput={handleSubmitInput}
-						onEof={handleEof}
-					/>
-				{/if}
-			{/if}
+			</div>
 		</div>
 
 		<!-- Memory View -->
-		<div class="flex flex-col">
+		<div class="flex flex-col h-[70vh]">
 			{#if mode.state === 'viewing' || mode.state === 'waiting_for_input'}
-				<div class="mb-3">
+				<div class="mb-3 shrink-0">
 					<StepControls
 						current={visiblePosition}
 						total={visibleIndices.length}
 						{subStepMode}
 						onprev={prev}
 						onnext={next}
+						onseek={seek}
 						ontogglesubstep={toggleSubStep}
 					/>
 					{#if stepDescriptions.length > 0}
@@ -626,11 +635,11 @@
 						</div>
 					{/if}
 				</div>
-				<div class="max-h-[70vh] overflow-y-auto">
+				<div class="min-h-0 flex-1 overflow-y-auto">
 					<MemoryView data={currentSnapshot} />
 				</div>
 			{:else}
-				<div class="h-[70vh] flex items-center justify-center text-zinc-600 text-sm font-mono">
+				<div class="flex-1 flex items-center justify-center text-zinc-600 text-sm font-mono">
 					Click Run to visualize memory
 				</div>
 			{/if}

@@ -159,7 +159,7 @@
 		if (loc && loc.line >= 1 && loc.line <= view.state.doc.lines) {
 			const lineObj = view.state.doc.line(loc.line);
 			view.dispatch({
-				effects: EditorView.scrollIntoView(lineObj.from, { y: 'center' }),
+				effects: EditorView.scrollIntoView(lineObj.from, { y: 'nearest' }),
 			});
 		}
 	});
