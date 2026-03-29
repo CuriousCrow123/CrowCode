@@ -31,12 +31,17 @@ async function getParser(): Promise<ParserType> {
 
 const emptyProgram: Program = { name: '', source: '', steps: [] };
 
+export type ProgressCallback = (stage: string, pct: number) => void;
+
 /**
  * Run a C program through the WASM compilation backend.
  * Returns the same RunResult as the interpreter service.
  */
-export async function runWasmProgram(source: string, stdin?: string): Promise<RunResult> {
+export async function runWasmProgram(source: string, stdin?: string, onProgress?: ProgressCallback): Promise<RunResult> {
+	onProgress?.('Initializing parser...', 0);
 	const parser = await getParser();
+
+	onProgress?.('Instrumenting source...', 15);
 	const { transformSource } = await import('./transformer');
 	const { instrumented, errors: transformErrors } = transformSource(parser, source);
 
@@ -44,13 +49,19 @@ export async function runWasmProgram(source: string, stdin?: string): Promise<Ru
 		return { program: emptyProgram, errors: transformErrors, warnings: [] };
 	}
 
+	onProgress?.('Loading compiler...', 30);
 	const { compile } = await import('./compiler');
+
+	onProgress?.('Compiling to WASM...', 45);
+	// Yield so the UI can paint the progress update
+	await new Promise((resolve) => requestAnimationFrame(resolve));
 	const { wasm, errors: compileErrors } = await compile(instrumented);
 
 	if (compileErrors.length > 0 || !wasm) {
 		return { program: emptyProgram, errors: compileErrors, warnings: [] };
 	}
 
+	onProgress?.('Executing program...', 75);
 	const { executeWasm } = await import('./runtime');
 
 	// Yield to let browser paint before blocking
@@ -59,6 +70,8 @@ export async function runWasmProgram(source: string, stdin?: string): Promise<Ru
 	const { program, errors: runtimeErrors } = await executeWasm(
 		wasm, 'user_program', source, MAX_STEPS, stdin,
 	);
+
+	onProgress?.('Done', 100);
 
 	const warnings: string[] = [];
 	if (program.steps.length >= MAX_STEPS) {
@@ -72,8 +85,11 @@ export async function runWasmProgram(source: string, stdin?: string): Promise<Ru
  * Interactive WASM execution — pauses when stdin is needed.
  * Uses progressive re-execution: on input, re-runs with accumulated stdin.
  */
-export async function runWasmProgramInteractive(source: string): Promise<InteractiveSession> {
+export async function runWasmProgramInteractive(source: string, onProgress?: ProgressCallback): Promise<InteractiveSession> {
+	onProgress?.('Initializing parser...', 0);
 	const parser = await getParser();
+
+	onProgress?.('Instrumenting source...', 15);
 	const { transformSource } = await import('./transformer');
 	const { instrumented, errors: transformErrors } = transformSource(parser, source);
 
@@ -84,7 +100,11 @@ export async function runWasmProgramInteractive(source: string): Promise<Interac
 		};
 	}
 
+	onProgress?.('Loading compiler...', 30);
 	const { compile } = await import('./compiler');
+
+	onProgress?.('Compiling to WASM...', 45);
+	await new Promise((resolve) => requestAnimationFrame(resolve));
 	const { wasm, errors: compileErrors } = await compile(instrumented);
 
 	if (compileErrors.length > 0 || !wasm) {
@@ -96,6 +116,8 @@ export async function runWasmProgramInteractive(source: string): Promise<Interac
 
 	let accumulatedStdin = '';
 	let cancelled = false;
+
+	onProgress?.('Executing program...', 75);
 
 	async function runWithStdin(stdin: string): Promise<InteractiveSession> {
 		const { executeWasm } = await import('./runtime');

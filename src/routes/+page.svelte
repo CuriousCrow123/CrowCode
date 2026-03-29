@@ -73,6 +73,10 @@
 	let errors = $state<string[]>([]);
 	let warnings = $state<string[]>([]);
 
+	// Compilation progress (for compiled backend)
+	let runStatus = $state('');
+	let runProgress = $state(0);
+
 	// Interactive mode: history of user-submitted stdin with the step index they were entered at
 	let interactiveStdinEntries = $state<{ text: string; afterStep: number }[]>([]);
 
@@ -89,12 +93,19 @@
 	// Abort guard for stale runs
 	let runGeneration = 0;
 
+	function updateProgress(stage: string, pct: number) {
+		runStatus = stage;
+		runProgress = pct;
+	}
+
 	async function run() {
 		const thisRun = ++runGeneration;
 		mode = { state: 'running' };
 		errors = [];
 		warnings = [];
 		interactiveStdinEntries = [];
+		runStatus = backendMode === 'compiled' ? 'Starting...' : 'Running...';
+		runProgress = 0;
 
 		try {
 			if (ioMode === 'interactive') {
@@ -114,7 +125,7 @@
 		if (backendMode === 'compiled') {
 			const { runWasmProgram } = await import('$lib/wasm-backend');
 			if (thisRun !== runGeneration) return;
-			result = await runWasmProgram(store.activeTab.source, stdinInput || undefined);
+			result = await runWasmProgram(store.activeTab.source, stdinInput || undefined, updateProgress);
 		} else {
 			const { runProgram } = await import('$lib/interpreter/service');
 			if (thisRun !== runGeneration) return;
@@ -155,7 +166,7 @@
 		if (backendMode === 'compiled') {
 			const { runWasmProgramInteractive } = await import('$lib/wasm-backend');
 			if (thisRun !== runGeneration) return;
-			session = await runWasmProgramInteractive(store.activeTab.source);
+			session = await runWasmProgramInteractive(store.activeTab.source, updateProgress);
 		} else {
 			const { runProgramInteractive } = await import('$lib/interpreter/service');
 			if (thisRun !== runGeneration) return;
@@ -629,6 +640,22 @@
 			{/if}
 		</div>
 	</div>
+
+	<!-- Compilation progress -->
+	{#if mode.state === 'running' && backendMode === 'compiled'}
+		<div class="w-full max-w-7xl mb-3">
+			<div class="flex items-center gap-3 mb-1.5">
+				<div class="w-3.5 h-3.5 border-2 border-blue-400/60 border-t-blue-400 rounded-full animate-spin"></div>
+				<span class="text-sm font-mono text-zinc-300">{runStatus}</span>
+			</div>
+			<div class="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+				<div
+					class="h-full bg-blue-500/70 rounded-full transition-all duration-300 ease-out"
+					style="width: {runProgress}%"
+				></div>
+			</div>
+		</div>
+	{/if}
 
 	<!-- Errors / Warnings -->
 	{#if errors.length > 0}
