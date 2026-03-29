@@ -77,6 +77,37 @@ This is the biggest structural issue. The interpreter solves this because it has
 
 **Fix needed:** `extractParamType` needs to check if the parameter's declarator is a `pointer_declarator` and append `*` accordingly.
 
+### Bug 6: Ops attributed to wrong source lines (off-by-one step flushing)
+
+**Symptom (multiple instances):**
+
+1. `struct Entity *player = malloc(...)` is on line 20, but the malloc op appears in Step 1 at **line 19** (`int main() {`). The user sees the malloc happening on the function signature line.
+
+2. `struct Vec2 dir = {1, 0}` is on line 29, but the `dir` declaration appears in Step 9 at **line 27** (the last loop body line). The user sees the dir variable appearing inside the for-loop.
+
+3. `int total = sumScores(...)` is on line 31, but the `total` declaration appears in Step 22 at **line 14** (inside sumScores). The user never sees a step for line 31.
+
+4. `if (total > 50)` is on line 32, but there is **no step at line 32**. Step 22 is at line 14, Step 23 jumps to line 33.
+
+**Root cause (op-collector `onStep` design):** The `onStep(line)` method uses a "flush previous" model:
+```
+ops accumulate → __crow_step(N) fires → flush ops as step at PREVIOUS line → set currentLine=N
+```
+
+So ops that happen between `__crow_step(19)` and `__crow_step(20)` get attributed to line 19, even though they belong to line 20. After a function call returns, accumulated ops from the callee's last step get merged with the caller's next declaration.
+
+**Fix needed:** Change the step flushing model. Instead of flushing accumulated ops under the *previous* line, the step call should flush under the *current* line. One approach:
+- `__crow_step(line)` should first set `this.currentLine = line`, THEN flush. This way the ops that accumulate between `__crow_step(19)` and `__crow_step(20)` get attributed to line 20 (because `__crow_step(20)` sets line=20 then flushes).
+- Or: restructure the transformer to emit `__crow_step` BEFORE the statement, not after.
+
+### Bug 7: Steps silently swallowed when all ops target unregistered names
+
+**Symptom:** In the entity program, lines 21-22 (`player->id = 1`, `player->pos.x = 3`) produce NO step at all. The step output jumps from line 20 to line 23.
+
+**Root cause:** These lines emit `__crow_set("player->pos", ...)` which targets an unregistered var name (Bug 2). `onSet` returns early without adding any op. When the next `__crow_step` fires, `currentOps` is empty, so no step is pushed. The line is completely invisible to the user.
+
+**Fix:** Fixing Bug 2 (use root variable name) will fix this — the sets will produce ops and steps will be emitted. But additionally, the step flushing should consider emitting empty steps (just a line location with no ops) so that every source line is represented, even if no memory changes are visible.
+
 ## Steps
 
 ### Step 1: Diagnostic test for every example program
@@ -116,7 +147,15 @@ This is the biggest structural issue. The interpreter solves this because it has
   ```
   The transformer walks struct definitions and computes field offsets using C alignment rules (matching xcc's ILP32 model). This registry is passed to the op collector alongside the instrumented source.
 
-### Step 5: Re-run all diagnostics to verify fixes
+### Step 5: Fix step line attribution (Bug 6)
+
+- **What:** Change `onStep(line)` so ops are attributed to the correct source line.
+- **Files:** `op-collector.ts`
+- **Current behavior:** `onStep(line)` flushes ops at `this.currentLine` (the PREVIOUS step's line), then sets `this.currentLine = line`.
+- **New behavior:** `onStep(line)` sets `this.currentLine = line` FIRST, then flushes. This way the `malloc` on line 20 gets attributed to line 20 (when `__crow_step(20)` fires), not line 19.
+- **Risk:** This changes step attribution for ALL programs — need to re-verify integration tests.
+
+### Step 6: Re-run all diagnostics to verify fixes
 
 - **What:** Re-run the diagnostic dump for all example programs. Verify that steps match source lines, struct fields are visible, pointer values aren't corrupted, and parameter types are correct.
 - **Verification:** Every program's dump is reviewed against the C source.
@@ -129,6 +168,10 @@ This is the biggest structural issue. The interpreter solves this because it has
 - [ ] Struct programs (p2.1, p2.2): struct children show field names and values
 - [ ] Function with pointer param: `arr` shows type `"int*"` not `"int"`
 - [ ] No steps are silently dropped (every C statement produces a step)
+- [ ] Ops attributed to correct source lines (malloc on line 20, not line 19)
+- [ ] `struct Vec2 dir` declaration shows up at line 29, not line 27
+- [ ] `int total = sumScores(...)` has its own step at line 31
+- [ ] `if (total > 50)` has a step at line 32
 - [ ] All 25 existing integration tests still pass
 
 ## References
