@@ -135,6 +135,7 @@ export async function compile(source: string): Promise<CompileResult> {
 			'-I/usr/include',
 			'-L/usr/lib',
 			'-Wl,--allow-undefined',
+			'-e', 'malloc,free',
 			'-o', '/output.wasm',
 			'/input.c',
 		],

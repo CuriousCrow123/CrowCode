@@ -103,13 +103,14 @@ export async function executeWasm(
 		wasi.setMemory(memory);
 		collector.setMemory(memory);
 
-		// Set up WASM exports for heap functions
-		const wasmExports = {
-			malloc: instance.exports.malloc as (size: number) => number,
-			free: instance.exports.free as (ptr: number) => void,
-			memory,
-		};
-		collector.setWasmExports(wasmExports);
+		// Set up WASM exports for heap functions (may not exist if program doesn't use malloc)
+		if (instance.exports.malloc && instance.exports.free) {
+			collector.setWasmExports({
+				malloc: instance.exports.malloc as (size: number) => number,
+				free: instance.exports.free as (ptr: number) => void,
+				memory,
+			});
+		}
 
 		// Execute
 		const start = instance.exports._start as () => void;
