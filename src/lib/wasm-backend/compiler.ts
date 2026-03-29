@@ -38,11 +38,17 @@ async function loadArtifacts(): Promise<{
 	if (!cachedHeaders) {
 		cachedHeaders = new Map();
 		const headerFiles = [
-			'assert.h', 'ctype.h', 'errno.h', 'fcntl.h', 'float.h',
-			'inttypes.h', 'limits.h', 'math.h', 'setjmp.h', 'signal.h',
+			'alloca.h', 'ar.h', 'assert.h', 'ctype.h', 'elf.h',
+			'errno.h', 'fcntl.h', 'float.h', 'inttypes.h', 'libgen.h',
+			'limits.h', 'math.h', 'setjmp.h', 'signal.h',
 			'stdarg.h', 'stdbool.h', 'stddef.h', 'stdint.h', 'stdio.h',
-			'stdlib.h', 'string.h', 'strings.h', 'time.h', 'unistd.h',
-			'alloca.h',
+			'stdlib.h', 'stdnoreturn.h', 'string.h', 'strings.h',
+			'time.h', 'unistd.h', 'wchar.h',
+			// Subdirectory headers
+			'sys/types.h', 'sys/stat.h', 'sys/wait.h', 'sys/ioctl.h', 'sys/random.h',
+			'mach/machine.h',
+			'mach-o/loader.h', 'mach-o/nlist.h', 'mach-o/reloc.h',
+			'mach-o/arm64/reloc.h', 'mach-o/x86_64/reloc.h',
 		];
 		const fetches = headerFiles.map(async (name) => {
 			try {
