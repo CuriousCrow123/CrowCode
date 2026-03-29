@@ -141,23 +141,26 @@ export class WasiShim {
 		return this.decoder.decode(this.bytes().subarray(ptr, ptr + len));
 	}
 
-	getImports(): Record<string, (...args: number[]) => number | void> {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	getImports(): Record<string, (...args: any[]) => number | void> {
 		return {
 			fd_write: (fd: number, iovsPtr: number, iovsLen: number, nwrittenPtr: number) =>
 				this.fd_write(fd, iovsPtr, iovsLen, nwrittenPtr),
 			fd_read: (fd: number, iovsPtr: number, iovsLen: number, nreadPtr: number) =>
 				this.fd_read(fd, iovsPtr, iovsLen, nreadPtr),
 			fd_close: (fd: number) => this.fd_close(fd),
-			fd_seek: (fd: number, offsetLo: number, offsetHi: number, whence: number, newOffsetPtr: number) =>
-				this.fd_seek(fd, offsetLo, offsetHi, whence, newOffsetPtr),
+			// fd_seek: (fd, offset: i64, whence, newOffsetPtr)
+			fd_seek: (fd: number, offset: bigint, whence: number, newOffsetPtr: number) =>
+				this.fd_seek(fd, Number(offset), whence, newOffsetPtr),
 			fd_prestat_get: (fd: number, bufPtr: number) => this.fd_prestat_get(fd, bufPtr),
 			fd_prestat_dir_name: (fd: number, pathPtr: number, pathLen: number) =>
 				this.fd_prestat_dir_name(fd, pathPtr, pathLen),
 			fd_filestat_get: (fd: number, bufPtr: number) => this.fd_filestat_get(fd, bufPtr),
 			fd_fdstat_get: (fd: number, bufPtr: number) => this.fd_fdstat_get(fd, bufPtr),
-			path_open: (dirFd: number, _lookupFlags: number, pathPtr: number, pathLen: number,
-				_oflags: number, _rightsBase: number, _rightsBaseLo: number,
-				_rightsInherit: number, _rightsInheritLo: number, fdPtr: number) =>
+			// path_open: (fd, dirflags, path, path_len, oflags, rights_base: i64, rights_inheriting: i64, fdflags, opened_fd)
+			path_open: (dirFd: number, _dirflags: number, pathPtr: number, pathLen: number,
+				_oflags: number, _rightsBase: bigint, _rightsInheriting: bigint,
+				_fdflags: number, fdPtr: number) =>
 				this.path_open(dirFd, pathPtr, pathLen, fdPtr),
 			path_filestat_get: (fd: number, _flags: number, pathPtr: number, pathLen: number, bufPtr: number) =>
 				this.path_filestat_get(fd, pathPtr, pathLen, bufPtr),
@@ -172,7 +175,7 @@ export class WasiShim {
 				return WASI_ERRNO_SUCCESS;
 			},
 			environ_get: () => WASI_ERRNO_SUCCESS,
-			clock_time_get: (_clockId: number, _precision: number, timePtr: number) => {
+			clock_time_get: (_clockId: number, _precision: bigint, timePtr: number) => {
 				const now = BigInt(Date.now()) * BigInt(1_000_000);
 				this.view().setBigUint64(timePtr, now, true);
 				return WASI_ERRNO_SUCCESS;
@@ -280,7 +283,7 @@ export class WasiShim {
 		return WASI_ERRNO_SUCCESS;
 	}
 
-	private fd_seek(fd: number, offsetLo: number, _offsetHi: number, whence: number, newOffsetPtr: number): number {
+	private fd_seek(fd: number, offset: number, whence: number, newOffsetPtr: number): number {
 		const entry = this.fds.get(fd);
 		if (!entry) return WASI_ERRNO_BADF;
 
@@ -288,9 +291,9 @@ export class WasiShim {
 		const size = file ? file.content.length : 0;
 
 		switch (whence) {
-			case 0: entry.offset = offsetLo; break; // SEEK_SET
-			case 1: entry.offset += offsetLo; break; // SEEK_CUR
-			case 2: entry.offset = size + offsetLo; break; // SEEK_END
+			case 0: entry.offset = offset; break; // SEEK_SET
+			case 1: entry.offset += offset; break; // SEEK_CUR
+			case 2: entry.offset = size + offset; break; // SEEK_END
 			default: return WASI_ERRNO_INVAL;
 		}
 

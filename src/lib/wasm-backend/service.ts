@@ -38,12 +38,16 @@ export type ProgressCallback = (stage: string, pct: number) => void;
  * Returns the same RunResult as the interpreter service.
  */
 export async function runWasmProgram(source: string, stdin?: string, onProgress?: ProgressCallback): Promise<RunResult> {
+	const t0 = performance.now();
+
 	onProgress?.('Initializing parser...', 0);
 	const parser = await getParser();
+	const tParser = performance.now();
 
 	onProgress?.('Instrumenting source...', 15);
 	const { transformSource } = await import('./transformer');
 	const { instrumented, errors: transformErrors } = transformSource(parser, source);
+	const tTransform = performance.now();
 
 	if (transformErrors.length > 0) {
 		return { program: emptyProgram, errors: transformErrors, warnings: [] };
@@ -56,6 +60,7 @@ export async function runWasmProgram(source: string, stdin?: string, onProgress?
 	// Yield so the UI can paint the progress update
 	await new Promise((resolve) => requestAnimationFrame(resolve));
 	const { wasm, errors: compileErrors } = await compile(instrumented);
+	const tCompile = performance.now();
 
 	if (compileErrors.length > 0 || !wasm) {
 		return { program: emptyProgram, errors: compileErrors, warnings: [] };
@@ -69,6 +74,15 @@ export async function runWasmProgram(source: string, stdin?: string, onProgress?
 
 	const { program, errors: runtimeErrors } = await executeWasm(
 		wasm, 'user_program', source, MAX_STEPS, stdin,
+	);
+	const tExec = performance.now();
+
+	console.log(
+		`[wasm-backend] parser: ${(tParser - t0).toFixed(0)}ms, ` +
+		`transform: ${(tTransform - tParser).toFixed(0)}ms, ` +
+		`compile: ${(tCompile - tTransform).toFixed(0)}ms, ` +
+		`execute: ${(tExec - tCompile).toFixed(0)}ms, ` +
+		`total: ${(tExec - t0).toFixed(0)}ms`
 	);
 
 	onProgress?.('Done', 100);
