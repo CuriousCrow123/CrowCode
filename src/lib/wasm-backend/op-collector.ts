@@ -156,6 +156,19 @@ export class OpCollector {
 		const hexAddr = '0x' + addr.toString(16).padStart(8, '0');
 
 		const value = this.readValue(addr, size, typeStr);
+
+		// If variable already exists in this scope (e.g., loop var re-declared each iteration),
+		// emit a setValue instead of addEntry to avoid duplicate IDs.
+		const existing = this.varRegistry.get(name);
+		if (existing && existing.scopeId === scopeId) {
+			existing.addr = addr;
+			existing.size = size;
+			existing.type = typeStr;
+			this.currentOps.push({ op: 'setValue', id: entryId, value });
+			this.updateChildValues(existing);
+			return;
+		}
+
 		const children = this.buildChildren(addr, size, typeStr, entryId);
 
 		const entry: MemoryEntry = {
