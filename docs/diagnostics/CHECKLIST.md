@@ -28,13 +28,13 @@
 | p4.2 — calloc Zero-Init | PASS | — | Heap block allocated then freed |
 | p4.4 — Heap Array with Loop | PASS | — | n=5 |
 | p10.3 — Memory Leak Detection | PASS | — | b leaked correctly |
-| p5.1 — Heap Struct via Pointer | FAIL (2 bugs) | BUG-p5.1-1,2 | Arrow corrupts ptr, nested field skipped |
+| p5.1 — Heap Struct via Pointer | FIXED | BUG-p5.1-1,2 (fixed) | Arrow now uses &p, nested walks to root |
 | p5.3 — Full Memory Basics | NOT STARTED | | |
 | p8.2 — Variable Shadowing | FAIL (1 bug) | BUG-p8.2-1 | x shows 25 not 10 (inner shadow overwrites display) |
 | p13.1 — Switch / Case | PASS | — | day=3, type=1 |
 | p11.2 — Matrix Identity | NOT STARTED | | |
 | p11.5 — Fibonacci Array | PASS | — | fib=[0,1,1,2,3,5,8,13,21,34] |
-| p15.1 — Entity System | FAIL (5 bugs) | BUG-p15.1-1..5 | Arrow ptr corrupt, nested fields skip, no struct children, ptr param type |
+| p15.1 — Entity System | PARTIAL (1 bug) | BUG-p2.1-1 remains | Arrow+nested+param fixed; struct children still missing |
 | p16.1 — Basic printf | NOT STARTED | | |
 | p16.2 — puts and putchar | NOT STARTED | | |
 | p16.3 — getchar Loop | NOT STARTED | | |
@@ -57,7 +57,7 @@
 | BUG-custom-1 | Line numbers off by 1 | onStep flushes ops at previous line | op-collector | **FIXED** |
 | BUG-p13.5-1 | Chained assignment only tracks outermost | extractSetTarget only emits __crow_set for LHS | transformer | Known limitation |
 | BUG-p2.1-1 | Struct has no children | buildChildren has no struct type registry | op-collector | Open |
-| BUG-p5.1-1 | Arrow field corrupts pointer display | __crow_set("p", p, ...) reads heap not stack | transformer | Open |
-| BUG-p5.1-2 | Nested field targets unregistered name | extractSetTarget doesn't walk to root var | transformer | Open |
-| BUG-p15.1-5 | Pointer param type loses `*` | extractParamType ignores pointer_declarator | transformer | Open |
+| BUG-p5.1-1 | Arrow field corrupts pointer display | __crow_set("p", p, ...) reads heap not stack | transformer | **FIXED** |
+| BUG-p5.1-2 | Nested field targets unregistered name | extractSetTarget doesn't walk to root var | transformer | **FIXED** |
+| BUG-p15.1-5 | Pointer param type loses `*` | extractParamType ignores pointer_declarator | transformer | **FIXED** |
 | BUG-p8.2-1 | Variable shadowing: inner x overwrites display | No push/pop scope for anonymous blocks | transformer | Open |

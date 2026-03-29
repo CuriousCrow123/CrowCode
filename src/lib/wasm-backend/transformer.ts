@@ -727,7 +727,23 @@ function extractParameters(declarator: SyntaxNode): ParamInfo[] {
 
 function extractParamType(param: SyntaxNode): string {
 	const typeNode = param.childForFieldName('type');
-	return typeNode?.text ?? 'int';
+	let type = typeNode?.text ?? 'int';
+	// Check if declarator is a pointer (e.g., int *p → "int*")
+	const declarator = param.childForFieldName('declarator');
+	if (declarator) {
+		let node = declarator;
+		while (node.type === 'pointer_declarator') {
+			type += '*';
+			for (let i = 0; i < node.childCount; i++) {
+				const child = node.child(i)!;
+				if (child.type !== '*') {
+					node = child;
+					break;
+				}
+			}
+		}
+	}
+	return type;
 }
 
 function extractParamName(param: SyntaxNode): string | null {
@@ -843,15 +859,10 @@ function extractSetTarget(node: SyntaxNode | null): { name: string; addrExpr: st
 	}
 
 	if (node.type === 'field_expression') {
-		// p.x = ... or p->x = ... → track the parent struct
-		const obj = node.childForFieldName('argument') ?? node.child(0);
-		if (obj) {
-			const name = obj.text;
-			const isArrow = node.children.some(c => c.text === '->');
-			return {
-				name,
-				addrExpr: isArrow ? name : `&${name}`,
-			};
+		// p.x = ..., p->x = ..., or p->pos.x = ... → walk to the root variable
+		const root = extractFieldRoot(node);
+		if (root) {
+			return { name: root, addrExpr: `&${root}` };
 		}
 	}
 
@@ -863,6 +874,23 @@ function extractSetTarget(node: SyntaxNode | null): { name: string; addrExpr: st
 		}
 	}
 
+	return null;
+}
+
+/**
+ * Walk a field_expression chain to find the root variable name.
+ * e.g., player->pos.x → "player", p.x → "p"
+ */
+function extractFieldRoot(node: SyntaxNode): string | null {
+	let current = node;
+	while (current.type === 'field_expression') {
+		const obj = current.childForFieldName('argument') ?? current.child(0);
+		if (!obj) return null;
+		current = obj;
+	}
+	if (current.type === 'identifier') {
+		return current.text;
+	}
 	return null;
 }
 
