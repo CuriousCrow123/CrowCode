@@ -184,6 +184,28 @@ export class WasiShim {
 			},
 			poll_oneoff: () => WASI_ERRNO_NOSYS,
 			sched_yield: () => WASI_ERRNO_SUCCESS,
+			// Filesystem stubs (not needed but xcc imports them)
+			path_unlink_file: () => WASI_ERRNO_NOSYS,
+			path_rename: () => WASI_ERRNO_NOSYS,
+			path_create_directory: () => WASI_ERRNO_NOSYS,
+			path_remove_directory: () => WASI_ERRNO_NOSYS,
+			path_symlink: () => WASI_ERRNO_NOSYS,
+			path_readlink: () => WASI_ERRNO_NOSYS,
+			fd_readdir: () => WASI_ERRNO_NOSYS,
+			fd_allocate: () => WASI_ERRNO_NOSYS,
+			fd_sync: () => WASI_ERRNO_SUCCESS,
+			fd_datasync: () => WASI_ERRNO_SUCCESS,
+			fd_fdstat_set_flags: () => WASI_ERRNO_SUCCESS,
+			fd_filestat_set_size: () => WASI_ERRNO_NOSYS,
+			fd_filestat_set_times: () => WASI_ERRNO_NOSYS,
+			fd_pread: () => WASI_ERRNO_NOSYS,
+			fd_pwrite: () => WASI_ERRNO_NOSYS,
+			fd_renumber: () => WASI_ERRNO_NOSYS,
+			fd_advise: () => WASI_ERRNO_SUCCESS,
+			sock_recv: () => WASI_ERRNO_NOSYS,
+			sock_send: () => WASI_ERRNO_NOSYS,
+			sock_shutdown: () => WASI_ERRNO_NOSYS,
+			sock_accept: () => WASI_ERRNO_NOSYS,
 		};
 	}
 
