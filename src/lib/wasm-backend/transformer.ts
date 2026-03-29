@@ -1,0 +1,952 @@
+/**
+ * Source transformer: takes user C source and injects __crow_* instrumentation calls.
+ *
+ * Uses tree-sitter's CST to identify insertion points, then applies text insertions
+ * in reverse order (bottom-up) to preserve positions. This is text surgery, not AST
+ * rewriting — the output is valid C that xcc compiles with --allow-undefined.
+ */
+
+import type { Parser as ParserType, SyntaxNode } from 'web-tree-sitter';
+
+export type TransformResult = {
+	instrumented: string;
+	errors: string[];
+};
+
+type Insertion = {
+	/** Byte offset in the original source */
+	offset: number;
+	/** Text to insert */
+	text: string;
+	/** Higher priority insertions go first when at same offset */
+	priority: number;
+};
+
+type Replacement = {
+	startOffset: number;
+	endOffset: number;
+	text: string;
+};
+
+/**
+ * Transform C source into instrumented C with __crow_* calls.
+ */
+export function transformSource(parser: ParserType, source: string): TransformResult {
+	const tree = parser.parse(source);
+	if (!tree || !tree.rootNode) {
+		return { instrumented: source, errors: ['Failed to parse source'] };
+	}
+
+	// Check for parse errors
+	const errors: string[] = [];
+	findErrors(tree.rootNode, errors);
+	if (errors.length > 0) {
+		return { instrumented: source, errors };
+	}
+
+	const insertions: Insertion[] = [];
+	const replacements: Replacement[] = [];
+
+	// Walk the CST and collect instrumentation points
+	walkNode(tree.rootNode, insertions, replacements);
+
+	// Apply transformations
+	let result = applyReplacements(source, replacements);
+	result = applyInsertions(result, insertions, replacements);
+
+	// Prepend __crow.h include
+	result = '#include "__crow.h"\n' + result;
+
+	return { instrumented: result, errors: [] };
+}
+
+function findErrors(node: SyntaxNode, errors: string[]): void {
+	if (node.type === 'ERROR') {
+		const pos = node.startPosition;
+		errors.push(`Parse error at line ${pos.row + 1}, column ${pos.column + 1}: unexpected '${node.text.slice(0, 30)}'`);
+	}
+	for (let i = 0; i < node.childCount; i++) {
+		findErrors(node.child(i)!, errors);
+	}
+}
+
+/**
+ * Walk the CST and collect insertion points for instrumentation.
+ */
+function walkNode(
+	node: SyntaxNode,
+	insertions: Insertion[],
+	replacements: Replacement[],
+): void {
+	switch (node.type) {
+		case 'function_definition':
+			instrumentFunction(node, insertions, replacements);
+			return; // Don't recurse — instrumentFunction handles children
+
+		case 'declaration':
+			// Only instrument top-level declarations inside function bodies
+			if (isInFunctionBody(node)) {
+				instrumentDeclaration(node, insertions, replacements);
+			}
+			break;
+
+		case 'expression_statement':
+			if (isInFunctionBody(node)) {
+				instrumentExpressionStatement(node, insertions, replacements);
+			}
+			break;
+
+		case 'return_statement':
+			if (isInFunctionBody(node)) {
+				instrumentReturn(node, insertions);
+			}
+			break;
+
+		case 'for_statement':
+			instrumentFor(node, insertions, replacements);
+			return;
+
+		case 'while_statement':
+		case 'do_statement':
+			instrumentLoop(node, insertions, replacements);
+			return;
+
+		case 'if_statement':
+			instrumentIf(node, insertions, replacements);
+			return;
+
+		case 'switch_statement':
+			instrumentSwitch(node, insertions, replacements);
+			return;
+	}
+
+	// Default: recurse into children
+	for (let i = 0; i < node.childCount; i++) {
+		walkNode(node.child(i)!, insertions, replacements);
+	}
+}
+
+/**
+ * Instrument a function definition:
+ * - Push scope after opening brace
+ * - Declare parameters
+ * - Recurse into body statements
+ * - Pop scope before closing brace (if no explicit return)
+ */
+function instrumentFunction(
+	node: SyntaxNode,
+	insertions: Insertion[],
+	replacements: Replacement[],
+): void {
+	const declarator = node.childForFieldName('declarator');
+	const body = node.childForFieldName('body');
+	if (!declarator || !body) return;
+
+	const funcName = extractFunctionName(declarator);
+	const params = extractParameters(declarator);
+	const line = node.startPosition.row + 1;
+
+	// After opening brace of body
+	const openBrace = body.child(0);
+	if (!openBrace || openBrace.text !== '{') return;
+
+	let pushText = `\n\t__crow_push_scope("${funcName}", ${line});`;
+
+	// Declare parameters
+	for (const param of params) {
+		pushText += `\n\t__crow_decl("${param.name}", &${param.name}, sizeof(${param.name}), "${param.type}", ${line});`;
+	}
+	pushText += `\n\t__crow_step(${line});`;
+
+	insertions.push({
+		offset: openBrace.endIndex,
+		text: pushText,
+		priority: 10,
+	});
+
+	// Check if function has an explicit return at the end
+	const hasTrailingReturn = bodyHasTrailingReturn(body);
+	if (!hasTrailingReturn) {
+		// Add __crow_pop_scope() before closing brace
+		const closeBrace = body.child(body.childCount - 1);
+		if (closeBrace && closeBrace.text === '}') {
+			insertions.push({
+				offset: closeBrace.startIndex,
+				text: '\t__crow_pop_scope();\n',
+				priority: 0,
+			});
+		}
+	}
+
+	// Recurse into body statements (skip braces)
+	for (let i = 1; i < body.childCount - 1; i++) {
+		walkNode(body.child(i)!, insertions, replacements);
+	}
+}
+
+/**
+ * Instrument a declaration: int x = 5;
+ * → __crow_decl("x", &x, sizeof(x), "int", __LINE__); __crow_step(__LINE__);
+ */
+function instrumentDeclaration(node: SyntaxNode, insertions: Insertion[], replacements?: Replacement[]): void {
+	const typeNode = getDeclarationType(node);
+	if (!typeNode) return;
+
+	const typeStr = typeNode.trim();
+	const declarators = getDeclarators(node);
+	const line = node.startPosition.row + 1;
+
+	// Check for call rewrites in initializers (e.g., malloc, calloc, scanf)
+	if (replacements) {
+		findAndRewriteCalls(node, replacements);
+	}
+
+	let text = '';
+	for (const decl of declarators) {
+		text += `\n\t__crow_decl("${decl.name}", &${decl.name}, sizeof(${decl.name}), "${escapeType(typeStr, decl)}", ${line});`;
+	}
+	text += `\n\t__crow_step(${line});`;
+
+	insertions.push({
+		offset: node.endIndex,
+		text,
+		priority: 5,
+	});
+}
+
+/**
+ * Instrument an expression statement (assignments, function calls, increments).
+ */
+function instrumentExpressionStatement(
+	node: SyntaxNode,
+	insertions: Insertion[],
+	replacements: Replacement[],
+): void {
+	const expr = node.child(0);
+	if (!expr) return;
+
+	const line = node.startPosition.row + 1;
+
+	// Check for malloc/free/scanf calls first
+	if (expr.type === 'assignment_expression') {
+		// Look for call expressions in the RHS (may be inside cast_expression)
+		findAndRewriteCalls(expr, replacements);
+
+		// Track assigned variable
+		const lhs = expr.childForFieldName('left');
+		const setName = extractSetTarget(lhs);
+		if (setName) {
+			let text = `\n\t__crow_set("${setName.name}", ${setName.addrExpr}, ${line});`;
+			text += `\n\t__crow_step(${line});`;
+			insertions.push({ offset: node.endIndex, text, priority: 5 });
+			return;
+		}
+	} else if (expr.type === 'call_expression') {
+		rewriteCallIfNeeded(expr, replacements);
+		insertions.push({
+			offset: node.endIndex,
+			text: `\n\t__crow_step(${line});`,
+			priority: 5,
+		});
+		return;
+	} else if (expr.type === 'update_expression') {
+		// i++ or ++i
+		const operand = expr.childForFieldName('argument') ?? expr.child(0);
+		if (operand && operand.type !== 'update_expression') {
+			const actualOperand = expr.text.startsWith('++') || expr.text.startsWith('--')
+				? expr.child(1) : expr.child(0);
+			if (actualOperand) {
+				const name = actualOperand.text;
+				let text = `\n\t__crow_set("${name}", &${name}, ${line});`;
+				text += `\n\t__crow_step(${line});`;
+				insertions.push({ offset: node.endIndex, text, priority: 5 });
+				return;
+			}
+		}
+	} else if (expr.type === 'comma_expression') {
+		// Handle comma expressions — instrument after whole statement
+		insertions.push({
+			offset: node.endIndex,
+			text: `\n\t__crow_step(${line});`,
+			priority: 5,
+		});
+		return;
+	}
+
+	// Default: just add a step
+	insertions.push({
+		offset: node.endIndex,
+		text: `\n\t__crow_step(${line});`,
+		priority: 5,
+	});
+}
+
+/**
+ * Instrument a return statement: add __crow_pop_scope() before it.
+ */
+function instrumentReturn(node: SyntaxNode, insertions: Insertion[]): void {
+	insertions.push({
+		offset: node.startIndex,
+		text: '__crow_pop_scope();\n\t',
+		priority: 5,
+	});
+}
+
+/**
+ * Instrument a for loop.
+ */
+function instrumentFor(
+	node: SyntaxNode,
+	insertions: Insertion[],
+	replacements: Replacement[],
+): void {
+	const body = node.childForFieldName('body');
+	if (!body) return;
+
+	const initializer = node.childForFieldName('initializer');
+	const line = node.startPosition.row + 1;
+
+	// If the body is a compound_statement, instrument its contents
+	if (body.type === 'compound_statement') {
+		const openBrace = body.child(0);
+		if (openBrace && openBrace.text === '{') {
+			let text = '';
+
+			// If initializer is a declaration, add __crow_decl for the loop var
+			if (initializer && initializer.type === 'declaration') {
+				const typeStr = getDeclarationType(initializer)?.trim() ?? 'int';
+				const decls = getDeclarators(initializer);
+				for (const decl of decls) {
+					text += `\n\t__crow_decl("${decl.name}", &${decl.name}, sizeof(${decl.name}), "${escapeType(typeStr, decl)}", ${line});`;
+				}
+			}
+
+			text += `\n\t__crow_step(${line});`;
+			insertions.push({ offset: openBrace.endIndex, text, priority: 8 });
+		}
+
+		// Recurse into body statements
+		for (let i = 1; i < body.childCount - 1; i++) {
+			walkNode(body.child(i)!, insertions, replacements);
+		}
+
+		// Add update tracking before closing brace
+		const update = node.childForFieldName('update');
+		if (update) {
+			const closeBrace = body.child(body.childCount - 1);
+			if (closeBrace && closeBrace.text === '}') {
+				const updateVars = extractUpdateVars(update);
+				let updateText = '';
+				for (const v of updateVars) {
+					updateText += `\t__crow_set("${v}", &${v}, ${line});\n`;
+				}
+				insertions.push({
+					offset: closeBrace.startIndex,
+					text: updateText,
+					priority: 3,
+				});
+			}
+		}
+	} else {
+		// Single-statement body — recurse
+		walkNode(body, insertions, replacements);
+	}
+}
+
+/**
+ * Instrument while/do-while loops.
+ */
+function instrumentLoop(
+	node: SyntaxNode,
+	insertions: Insertion[],
+	replacements: Replacement[],
+): void {
+	const body = node.childForFieldName('body');
+	if (!body) return;
+
+	const line = node.startPosition.row + 1;
+
+	if (body.type === 'compound_statement') {
+		const openBrace = body.child(0);
+		if (openBrace && openBrace.text === '{') {
+			insertions.push({
+				offset: openBrace.endIndex,
+				text: `\n\t__crow_step(${line});`,
+				priority: 8,
+			});
+		}
+
+		for (let i = 1; i < body.childCount - 1; i++) {
+			walkNode(body.child(i)!, insertions, replacements);
+		}
+	} else {
+		walkNode(body, insertions, replacements);
+	}
+}
+
+/**
+ * Instrument if/else statements.
+ */
+function instrumentIf(
+	node: SyntaxNode,
+	insertions: Insertion[],
+	replacements: Replacement[],
+): void {
+	const consequence = node.childForFieldName('consequence');
+	const alternative = node.childForFieldName('alternative');
+	const line = node.startPosition.row + 1;
+
+	// Step for the condition evaluation
+	if (consequence) {
+		instrumentBlock(consequence, insertions, replacements, line);
+	}
+
+	if (alternative) {
+		// else clause — its child is the actual statement/block
+		if (alternative.type === 'else_clause') {
+			const elseBody = alternative.child(alternative.childCount - 1);
+			if (elseBody) {
+				if (elseBody.type === 'if_statement') {
+					// else if — recurse
+					instrumentIf(elseBody, insertions, replacements);
+				} else {
+					instrumentBlock(elseBody, insertions, replacements, alternative.startPosition.row + 1);
+				}
+			}
+		}
+	}
+}
+
+/**
+ * Instrument a switch statement.
+ */
+function instrumentSwitch(
+	node: SyntaxNode,
+	insertions: Insertion[],
+	replacements: Replacement[],
+): void {
+	const body = node.childForFieldName('body');
+	if (!body) return;
+
+	// Recurse into case statements
+	for (let i = 0; i < body.childCount; i++) {
+		const child = body.child(i)!;
+		if (child.type === 'case_statement') {
+			const line = child.startPosition.row + 1;
+			// Find the first statement after the case label
+			for (let j = 0; j < child.childCount; j++) {
+				const stmt = child.child(j)!;
+				if (stmt.type !== 'case_statement' && stmt.text !== ':' && !stmt.text.startsWith('case') && !stmt.text.startsWith('default')) {
+					walkNode(stmt, insertions, replacements);
+				}
+			}
+			// Add step after case label
+			const colon = child.children.find(c => c.text === ':');
+			if (colon) {
+				insertions.push({
+					offset: colon.endIndex,
+					text: `\n\t__crow_step(${line});`,
+					priority: 5,
+				});
+			}
+		}
+	}
+}
+
+/**
+ * Instrument a block (compound_statement) or single statement.
+ */
+function instrumentBlock(
+	node: SyntaxNode,
+	insertions: Insertion[],
+	replacements: Replacement[],
+	line: number,
+): void {
+	if (node.type === 'compound_statement') {
+		const openBrace = node.child(0);
+		if (openBrace && openBrace.text === '{') {
+			insertions.push({
+				offset: openBrace.endIndex,
+				text: `\n\t__crow_step(${line});`,
+				priority: 8,
+			});
+		}
+		for (let i = 1; i < node.childCount - 1; i++) {
+			walkNode(node.child(i)!, insertions, replacements);
+		}
+	} else {
+		walkNode(node, insertions, replacements);
+	}
+}
+
+// === Call rewriting (malloc, free, scanf) ===
+
+/**
+ * Recursively search a node tree for call_expression nodes that need rewriting
+ * (e.g., malloc/free/scanf inside cast expressions or nested expressions).
+ */
+function findAndRewriteCalls(node: SyntaxNode, replacements: Replacement[]): void {
+	if (node.type === 'call_expression') {
+		rewriteCallIfNeeded(node, replacements);
+		return;
+	}
+	for (let i = 0; i < node.childCount; i++) {
+		findAndRewriteCalls(node.child(i)!, replacements);
+	}
+}
+
+function rewriteCallIfNeeded(callNode: SyntaxNode, replacements: Replacement[]): void {
+	const funcNode = callNode.childForFieldName('function');
+	if (!funcNode) return;
+
+	const funcName = funcNode.text;
+
+	switch (funcName) {
+		case 'malloc':
+		case 'calloc':
+		case 'realloc':
+			rewriteAllocCall(callNode, funcNode, funcName, replacements);
+			break;
+		case 'free':
+			rewriteFreeCall(callNode, funcNode, replacements);
+			break;
+		case 'scanf':
+			rewriteScanfCall(callNode, replacements);
+			break;
+	}
+}
+
+function rewriteAllocCall(
+	callNode: SyntaxNode,
+	funcNode: SyntaxNode,
+	funcName: string,
+	replacements: Replacement[],
+): void {
+	const args = callNode.childForFieldName('arguments');
+	if (!args) return;
+
+	const line = callNode.startPosition.row + 1;
+	const argText = args.text.slice(1, -1); // strip parentheses
+
+	const crowName = `__crow_${funcName}`;
+	let newArgs: string;
+
+	if (funcName === 'malloc') {
+		newArgs = `(${argText}, ${line})`;
+	} else if (funcName === 'calloc') {
+		newArgs = `(${argText}, ${line})`;
+	} else {
+		// realloc
+		newArgs = `(${argText}, ${line})`;
+	}
+
+	replacements.push({
+		startOffset: funcNode.startIndex,
+		endOffset: args.endIndex,
+		text: `${crowName}${newArgs}`,
+	});
+}
+
+function rewriteFreeCall(
+	callNode: SyntaxNode,
+	funcNode: SyntaxNode,
+	replacements: Replacement[],
+): void {
+	const args = callNode.childForFieldName('arguments');
+	if (!args) return;
+
+	const line = callNode.startPosition.row + 1;
+	const argText = args.text.slice(1, -1);
+
+	replacements.push({
+		startOffset: funcNode.startIndex,
+		endOffset: args.endIndex,
+		text: `__crow_free(${argText}, ${line})`,
+	});
+}
+
+function rewriteScanfCall(
+	callNode: SyntaxNode,
+	replacements: Replacement[],
+): void {
+	const args = callNode.childForFieldName('arguments');
+	if (!args) return;
+
+	const line = callNode.startPosition.row + 1;
+
+	// Parse the format string
+	const argList = extractArgList(args);
+	if (argList.length < 2) return;
+
+	const formatStr = argList[0].trim();
+	// Strip quotes
+	const format = formatStr.slice(1, -1);
+	const specifiers = parseFormatSpecifiers(format);
+
+	if (specifiers.length === 0) return;
+
+	// Build replacement: one __crow_scanf_* call per specifier
+	const calls: string[] = [];
+	for (let i = 0; i < specifiers.length; i++) {
+		const arg = argList[i + 1]?.trim();
+		if (!arg) break;
+
+		const variant = scanfVariant(specifiers[i]);
+		if (variant) {
+			calls.push(`${variant}(${arg}, ${line})`);
+		}
+	}
+
+	if (calls.length > 0) {
+		replacements.push({
+			startOffset: callNode.startIndex,
+			endOffset: callNode.endIndex,
+			text: calls.join(';\n\t'),
+		});
+	}
+}
+
+function scanfVariant(specifier: string): string | null {
+	switch (specifier) {
+		case 'd': case 'i': case 'u': case 'x': case 'o':
+			return '__crow_scanf_int';
+		case 'f':
+			return '__crow_scanf_float';
+		case 'lf':
+			return '__crow_scanf_double';
+		case 'c':
+			return '__crow_scanf_char';
+		case 's':
+			return '__crow_scanf_string';
+		default:
+			return null;
+	}
+}
+
+function parseFormatSpecifiers(format: string): string[] {
+	const specifiers: string[] = [];
+	const re = /%(\*?)(\d*)(l?)([diouxXfFeEgGscpn%])/g;
+	let match;
+	while ((match = re.exec(format)) !== null) {
+		if (match[1] === '*') continue; // skip suppressed
+		if (match[4] === '%') continue; // literal %
+		const length = match[3];
+		const spec = match[4];
+		specifiers.push(length + spec);
+	}
+	return specifiers;
+}
+
+function extractArgList(argsNode: SyntaxNode): string[] {
+	// Arguments is '(' arg (',' arg)* ')'
+	const args: string[] = [];
+	let depth = 0;
+	let current = '';
+
+	const text = argsNode.text;
+	// Skip opening paren
+	for (let i = 1; i < text.length - 1; i++) {
+		const ch = text[i];
+		if (ch === '(' || ch === '[') depth++;
+		else if (ch === ')' || ch === ']') depth--;
+		else if (ch === ',' && depth === 0) {
+			args.push(current);
+			current = '';
+			continue;
+		}
+		current += ch;
+	}
+	if (current.trim()) args.push(current);
+	return args;
+}
+
+// === Helpers ===
+
+function isInFunctionBody(node: SyntaxNode): boolean {
+	let parent = node.parent;
+	while (parent) {
+		if (parent.type === 'function_definition') return true;
+		parent = parent.parent;
+	}
+	return false;
+}
+
+function extractFunctionName(declarator: SyntaxNode): string {
+	// Walk through pointer_declarator wrappers
+	let node = declarator;
+	while (node.type === 'pointer_declarator' || node.type === 'parenthesized_declarator') {
+		for (let i = 0; i < node.childCount; i++) {
+			const child = node.child(i)!;
+			if (child.type !== '*' && child.type !== '(' && child.type !== ')') {
+				node = child;
+				break;
+			}
+		}
+	}
+	if (node.type === 'function_declarator') {
+		const nameNode = node.childForFieldName('declarator');
+		return nameNode?.text ?? 'unknown';
+	}
+	return node.text ?? 'unknown';
+}
+
+type ParamInfo = { name: string; type: string };
+
+function extractParameters(declarator: SyntaxNode): ParamInfo[] {
+	// Find the function_declarator
+	let funcDecl = declarator;
+	while (funcDecl.type !== 'function_declarator' && funcDecl.childCount > 0) {
+		for (let i = 0; i < funcDecl.childCount; i++) {
+			const child = funcDecl.child(i)!;
+			if (child.type === 'function_declarator') {
+				funcDecl = child;
+				break;
+			}
+			if (i === funcDecl.childCount - 1) return [];
+		}
+		if (funcDecl.type !== 'function_declarator') break;
+	}
+	if (funcDecl.type !== 'function_declarator') return [];
+
+	const paramList = funcDecl.childForFieldName('parameters');
+	if (!paramList) return [];
+
+	const params: ParamInfo[] = [];
+	for (let i = 0; i < paramList.childCount; i++) {
+		const param = paramList.child(i)!;
+		if (param.type === 'parameter_declaration') {
+			const typeStr = extractParamType(param);
+			const name = extractParamName(param);
+			if (name && name !== 'void' && typeStr !== 'void') {
+				params.push({ name, type: typeStr });
+			}
+		}
+	}
+	return params;
+}
+
+function extractParamType(param: SyntaxNode): string {
+	const typeNode = param.childForFieldName('type');
+	return typeNode?.text ?? 'int';
+}
+
+function extractParamName(param: SyntaxNode): string | null {
+	const declarator = param.childForFieldName('declarator');
+	if (!declarator) return null;
+	// Unwrap pointer declarators
+	let node = declarator;
+	while (node.type === 'pointer_declarator') {
+		for (let i = 0; i < node.childCount; i++) {
+			const child = node.child(i)!;
+			if (child.type !== '*') {
+				node = child;
+				break;
+			}
+		}
+	}
+	if (node.type === 'array_declarator') {
+		const inner = node.child(0);
+		return inner?.text ?? null;
+	}
+	return node.text;
+}
+
+function getDeclarationType(node: SyntaxNode): string | null {
+	// Check for struct specifier
+	for (let i = 0; i < node.childCount; i++) {
+		const child = node.child(i)!;
+		if (child.type === 'struct_specifier') {
+			return `struct ${child.childForFieldName('name')?.text ?? ''}`;
+		}
+		if (child.type === 'primitive_type' || child.type === 'sized_type_specifier' || child.type === 'type_identifier') {
+			return child.text;
+		}
+	}
+	// Type qualifiers like const, unsigned
+	const typeNode = node.childForFieldName('type');
+	return typeNode?.text ?? null;
+}
+
+type DeclInfo = { name: string; isPointer: boolean; arraySize: string | null };
+
+function getDeclarators(node: SyntaxNode): DeclInfo[] {
+	const decls: DeclInfo[] = [];
+
+	for (let i = 0; i < node.childCount; i++) {
+		const child = node.child(i)!;
+		if (child.type === 'init_declarator') {
+			const declarator = child.childForFieldName('declarator');
+			if (declarator) {
+				decls.push(parseDeclName(declarator));
+			}
+		} else if (child.type === 'identifier') {
+			decls.push({ name: child.text, isPointer: false, arraySize: null });
+		} else if (child.type === 'pointer_declarator' || child.type === 'array_declarator') {
+			decls.push(parseDeclName(child));
+		}
+	}
+
+	return decls;
+}
+
+function parseDeclName(node: SyntaxNode): DeclInfo {
+	let isPointer = false;
+	let arraySize: string | null = null;
+	let current = node;
+
+	while (true) {
+		if (current.type === 'pointer_declarator') {
+			isPointer = true;
+			for (let i = 0; i < current.childCount; i++) {
+				const child = current.child(i)!;
+				if (child.type !== '*') {
+					current = child;
+					break;
+				}
+			}
+		} else if (current.type === 'array_declarator') {
+			// Extract array size
+			const sizeNode = current.child(2); // identifier [ SIZE ]
+			if (sizeNode && sizeNode.text !== ']') {
+				arraySize = sizeNode.text;
+			}
+			current = current.child(0)!;
+		} else {
+			break;
+		}
+	}
+
+	return { name: current.text, isPointer, arraySize };
+}
+
+function escapeType(baseType: string, decl: DeclInfo): string {
+	let type = baseType;
+	if (decl.isPointer) type += '*';
+	if (decl.arraySize) type += `[${decl.arraySize}]`;
+	return type;
+}
+
+function extractSetTarget(node: SyntaxNode | null): { name: string; addrExpr: string } | null {
+	if (!node) return null;
+
+	if (node.type === 'identifier') {
+		return { name: node.text, addrExpr: `&${node.text}` };
+	}
+
+	if (node.type === 'subscript_expression') {
+		// arr[i] = ... → track the array
+		const obj = node.childForFieldName('argument') ?? node.child(0);
+		if (obj) {
+			const name = obj.text;
+			return { name, addrExpr: `&${name}` };
+		}
+	}
+
+	if (node.type === 'field_expression') {
+		// p.x = ... or p->x = ... → track the parent struct
+		const obj = node.childForFieldName('argument') ?? node.child(0);
+		if (obj) {
+			const name = obj.text;
+			const isArrow = node.children.some(c => c.text === '->');
+			return {
+				name,
+				addrExpr: isArrow ? name : `&${name}`,
+			};
+		}
+	}
+
+	if (node.type === 'pointer_expression') {
+		// *p = ... → track p
+		const operand = node.child(1);
+		if (operand) {
+			return { name: operand.text, addrExpr: `&${operand.text}` };
+		}
+	}
+
+	return null;
+}
+
+function extractUpdateVars(update: SyntaxNode): string[] {
+	const vars: string[] = [];
+
+	if (update.type === 'update_expression') {
+		const operand = update.text.replace(/^\+\+|^\-\-|\+\+$|\-\-$/, '');
+		if (operand) vars.push(operand);
+	} else if (update.type === 'assignment_expression') {
+		const lhs = update.childForFieldName('left');
+		if (lhs) vars.push(lhs.text);
+	} else if (update.type === 'comma_expression') {
+		for (let i = 0; i < update.childCount; i++) {
+			vars.push(...extractUpdateVars(update.child(i)!));
+		}
+	}
+
+	return vars;
+}
+
+function bodyHasTrailingReturn(body: SyntaxNode): boolean {
+	// Check if the last statement in the body is a return
+	for (let i = body.childCount - 1; i >= 0; i--) {
+		const child = body.child(i)!;
+		if (child.type === '}') continue;
+		if (child.type === 'return_statement') return true;
+		return false;
+	}
+	return false;
+}
+
+// === Text transformation application ===
+
+/**
+ * Apply replacements first (in reverse order to preserve offsets).
+ */
+function applyReplacements(source: string, replacements: Replacement[]): string {
+	// Sort by startOffset descending
+	const sorted = [...replacements].sort((a, b) => b.startOffset - a.startOffset);
+
+	let result = source;
+	for (const r of sorted) {
+		result = result.slice(0, r.startOffset) + r.text + result.slice(r.endOffset);
+	}
+	return result;
+}
+
+/**
+ * Apply insertions (in reverse order to preserve offsets).
+ * Offsets are adjusted for any replacements that happened before them.
+ */
+function applyInsertions(
+	source: string,
+	insertions: Insertion[],
+	replacements: Replacement[],
+): string {
+	// Adjust insertion offsets for replacements
+	const adjustedInsertions = insertions.map(ins => {
+		let offset = ins.offset;
+		for (const r of replacements) {
+			if (r.startOffset < ins.offset) {
+				const origLen = r.endOffset - r.startOffset;
+				const newLen = r.text.length;
+				if (ins.offset >= r.endOffset) {
+					offset += newLen - origLen;
+				} else if (ins.offset > r.startOffset) {
+					// Inside a replacement — shift to end
+					offset = r.startOffset + newLen;
+				}
+			}
+		}
+		return { ...ins, offset };
+	});
+
+	// Sort by offset descending, then by priority descending
+	const sorted = adjustedInsertions.sort((a, b) => {
+		if (a.offset !== b.offset) return b.offset - a.offset;
+		return b.priority - a.priority;
+	});
+
+	let result = source;
+	for (const ins of sorted) {
+		result = result.slice(0, ins.offset) + ins.text + result.slice(ins.offset);
+	}
+	return result;
+}
