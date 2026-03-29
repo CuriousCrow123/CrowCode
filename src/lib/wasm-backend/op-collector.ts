@@ -95,6 +95,8 @@ export class OpCollector {
 		if (++this.stepCount > this.maxSteps) {
 			throw new StepLimitExceeded();
 		}
+		// Set currentLine FIRST so ops are attributed to the correct source line
+		this.currentLine = line;
 		if (this.currentOps.length > 0 || this.currentIoEvents.length > 0) {
 			this.steps.push({
 				location: { line: this.currentLine },
@@ -104,7 +106,6 @@ export class OpCollector {
 			this.currentOps = [];
 			this.currentIoEvents = [];
 		}
-		this.currentLine = line;
 	}
 
 	onPushScope(namePtr: number, line: number): void {
