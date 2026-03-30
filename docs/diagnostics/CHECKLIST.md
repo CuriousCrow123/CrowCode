@@ -18,7 +18,7 @@
 | p12.5 — Recursive Fibonacci | PASS | Frames stack. a=0, b=1, c=8. Dedup working. |
 | p1.2 — Char and Casting | PASS | c='A', x=66, d=44, big=100000, narrow=-96. |
 | p13.3 — Float Arithmetic | PASS | pi≈3.14, area≈78.54, truncated=78, half=0.5. |
-| p13.4 — Uninitialized Variable | NOTE | x=15, y=10, z=30 correct. Uninit `int x` shows 0 (WASM zero-init). |
+| p13.4 — Uninitialized Variable | PASS | Uninit `int x` shows "?". x=15, y=10, z=30 correct after assignment. |
 | p13.5 — Chained Assignment | PASS | All targets tracked: a=b=c=42 all show 42. a=b=c+8 → a=50, b=50, c=42. |
 | p3.1 — Array Init and Loop | PASS | arr=[99,20,30,40,119], sum=308. No redundant loop ops. |
 | p3.3 — Array Squared in Loop | PASS | data=[1,4,9,16], total=30. Clean loop tracking. |
@@ -47,16 +47,24 @@
 | p13.2 — String Literal | PASS | Pointer values correct. |
 | p13.6 — Function Pointer | PASS | Compiles. a=13, b=7. |
 | p13.8 — Array-to-Pointer Decay | PASS | Pointer arithmetic correct. |
-| p14.1 — Use-After-Free | PASS | *p=42 visible. Use-after-free detection deferred. |
+| p14.1 — Use-After-Free | PASS | *p=42 visible. Write-after-free emits setHeapStatus('use-after-free'). Read-after-free shows heap as 'freed'. |
 | p14.2 — String Functions | PASS | strcpy now tracked: heap shows copied string "hello". |
 | p14.3 — Math Functions | PASS | abs, sqrt, pow correct. |
-| p9.1 — sprintf Formats | NOTE | Steps visible but 0 ops. sprintf is variadic — tracking deferred. |
+| p9.1 — sprintf Formats | PASS | Buffer contents tracked via post-call __crow_set. Shows "x=42", "hex=ff", etc. |
 
 ## Summary
 
-**44 PASS, 2 NOTE, 0 BUGS** out of 47 programs (1 skipped).
+**46 PASS, 0 NOTE, 0 BUGS** out of 47 programs (1 skipped).
 
 ## Bug Fix History
+
+### Round 4 — Final limitations (sprintf, UAF, uninit)
+
+| Bug ID | Description | Fix |
+|--------|-------------|-----|
+| FIN-1 | sprintf buffer contents invisible | Add post-call __crow_set for buffer arg; existing pipeline reads result |
+| FIN-2 | Write-after-free not detected | Check heapBlock.status in onSet pointer path; emit setHeapStatus('use-after-free') |
+| FIN-3 | Uninitialized vars show 0 | Track hasInitializer in DeclInfo; pass flags to __crow_decl; show "?" |
 
 ### Round 3 — Remaining fixes (REM-1 through REM-5)
 
@@ -100,6 +108,5 @@
 
 | Issue | Reason | Status |
 |-------|--------|--------|
-| sprintf buffer tracking | Variadic function, xcc calling convention unclear | Deferred |
-| Use-after-free detection (SYS-15) | Would need runtime checking on every memory access | Deferred |
-| Uninitialized vars show 0 (INFO-1) | WASM zero-initializes stack | Won't fix |
+| Read-after-free detection | Only write-through-freed-pointer is detected; reads show heap as 'freed' | Accepted |
+| snprintf not tracked | Could be added similarly to sprintf | Low priority |

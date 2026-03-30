@@ -1,7 +1,7 @@
 ---
 title: Fix Final Snapshot Limitations (sprintf, use-after-free, uninitialized vars)
 type: fix
-status: active
+status: completed
 date: 2026-03-29
 ---
 

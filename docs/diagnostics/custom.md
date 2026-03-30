@@ -17,7 +17,7 @@ int main() {
 	__crow_push_scope("main", 1);
 	__crow_step(1);
     int x = 5;
-	__crow_decl("x", &x, sizeof(x), "int", 2);
+	__crow_decl("x", &x, sizeof(x), "int", 2, 0);
 	__crow_step(2);
     x = 10;
 	__crow_set("x", &x, 3);
