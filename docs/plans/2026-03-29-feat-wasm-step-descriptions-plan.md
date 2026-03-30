@@ -13,267 +13,361 @@ The interpreter produces human-readable step descriptions like "Declare int x" (
 
 ## Design
 
-### Where to generate descriptions
-
-The **transformer** already walks the entire CST and knows every statement type, variable name, type string, and expression text. It can generate a description for each instrumented line as a side output — a `Map<number, StepDescription>` keyed by source line number.
-
-After WASM execution, descriptions are attached to steps by matching `step.location.line` → description map.
-
-**Why not at runtime:** The op-collector sees raw memory addresses and string pointers — it would need to reconstruct statement semantics from low-level callbacks, which is fragile and duplicates the transformer's work.
-
-**Why not post-processing with a second parse:** The transformer already parses. Adding another pass is wasteful.
-
-### Description format
-
-Match the interpreter's conventions exactly:
-
-| Statement | description | evaluation |
-|-----------|------------|------------|
-| `int x = 5;` | `Declare int x` | `= 5` (from runtime value) |
-| `int x;` | `Declare int x` | `= ?` (uninitialized) |
-| `x = 42;` | `Set x = 42` | (none, or `→ 42` for compound ops) |
-| `x += 5;` | `Set x += 5` | |
-| `*p = 42;` | `Set *p = 42` | |
-| `p->x = 10;` | `Set p->x = 10` | |
-| `arr[i] = val;` | `Set arr[i] = val` | |
-| `a = b = c = 42;` | `Set a = b = c = 42` | |
-| `return 0;` | `return 0` | |
-| `return x + 1;` | `return x + 1` | |
-| `printf("...", x);` | `printf("...", x)` | (eval from IO events) |
-| `scanf(...)` | `scanf(...)` | |
-| `malloc(size)` | `malloc(size)` | |
-| `free(p)` | `free(p)` | |
-| `i++` / `++i` | `Set i++` / `Set ++i` | |
-| `if (cond)` | `if (cond)` | |
-| `while (cond)` | `while (cond)` | |
-| `for (init; cond; update)` | `for (init; cond; update)` | |
-| function entry | `Enter funcName(args)` | |
-| scope cleanup | `Leave funcName` | |
-
-### Runtime evaluation strings
-
-Static descriptions come from the transformer. **Runtime evaluations** (the green `= 5` part) come from the step's ops at attachment time:
-
-- For declarations: find the `addEntry` op → use its `value` field
-- For assignments: find the `setValue` op → use its `value` field
-- For function calls with IO: find `ioEvents` → use `text` for printf output
-- For returns: read the return expression's evaluated value from the removal step
-
-This is a post-processing pass over the finished Program.
+The **transformer** already walks the entire CST and knows every statement type. It generates a `Map<number, StepDescription>` keyed by source line. After WASM execution, `finish()` attaches descriptions to steps by line, then derives runtime evaluations from ops.
 
 ---
 
-## Files
+## Step 1: Add types and thread descriptionMap through transformer
 
-### Modify
+### Part A: New types and extended TransformResult
 
-| File | What changes | Why |
-|------|-------------|-----|
-| `src/lib/wasm-backend/transformer.ts` | Generate `descriptionMap` as part of `TransformResult` | Source of descriptions |
-| `src/lib/wasm-backend/op-collector.ts` | Accept `descriptionMap`, attach to steps in `finish()` | Connect descriptions to steps |
-| `src/lib/wasm-backend/runtime.ts` | Pass `descriptionMap` through | Plumbing |
-| `src/lib/wasm-backend/service.ts` | Pass `descriptionMap` through | Plumbing |
-| `src/lib/wasm-backend/integration.test.ts` | Update pipeline, add description assertions | Verify descriptions |
-| `src/lib/wasm-backend/diagnostic.test.ts` | Update pipeline | Plumbing |
+**File:** `transformer.ts` line 11–18
 
----
-
-## Steps
-
-### Step 1: Description generation in transformer
-
-**What:** As the transformer walks the CST, build a `Map<number, { description: string; evaluation?: string }>` with one entry per instrumented line. Add this to `TransformResult`.
-
-**New type:**
+**Current:**
 ```typescript
-export type StepDescription = { description: string; evaluation?: string };
-```
+export type StructField = { name: string; type: string };
+export type StructRegistry = Map<string, StructField[]>;
 
-**Extended TransformResult:**
-```typescript
 export type TransformResult = {
-    instrumented: string;
-    errors: string[];
-    structRegistry: StructRegistry;
-    descriptionMap: Map<number, StepDescription>;
+	instrumented: string;
+	errors: string[];
+	structRegistry: StructRegistry;
 };
 ```
 
-**Generate descriptions in each instrument* function:**
-
-In `instrumentFunction`:
+**Change to:**
 ```typescript
-const line = node.startPosition.row + 1;
-descriptionMap.set(line, { description: `Enter ${funcName}(${params.map(p => p.name).join(', ')})` });
+export type StructField = { name: string; type: string };
+export type StructRegistry = Map<string, StructField[]>;
+export type StepDescription = { description: string };
+
+export type TransformResult = {
+	instrumented: string;
+	errors: string[];
+	structRegistry: StructRegistry;
+	descriptionMap: Map<number, StepDescription>;
+};
 ```
 
-In `instrumentDeclaration`:
+### Part B: Thread descriptionMap through walkNode and all instrument* functions
+
+**File:** `transformer.ts`
+
+Every `instrument*` function currently takes `(node, insertions, replacements)`. Add a `descriptionMap: Map<number, StepDescription>` parameter to each:
+
+- `walkNode(node, insertions, replacements)` → `walkNode(node, insertions, replacements, descriptionMap)`
+- `instrumentFunction(node, insertions, replacements)` → `instrumentFunction(node, insertions, replacements, descriptionMap)`
+- `instrumentDeclaration(node, insertions, replacements)` → `instrumentDeclaration(node, insertions, replacements, descriptionMap)`
+- `instrumentExpressionStatement(node, insertions, replacements)` → `instrumentExpressionStatement(node, insertions, replacements, descriptionMap)`
+- `instrumentReturn(node, insertions)` → `instrumentReturn(node, insertions, descriptionMap)`
+- `instrumentFor(node, insertions, replacements)` → `instrumentFor(node, insertions, replacements, descriptionMap)`
+- `instrumentLoop(node, insertions, replacements)` → `instrumentLoop(node, insertions, replacements, descriptionMap)`
+- `instrumentIf(node, insertions, replacements)` → `instrumentIf(node, insertions, replacements, descriptionMap)`
+- `instrumentSwitch(node, insertions, replacements)` → `instrumentSwitch(node, insertions, replacements, descriptionMap)`
+- `instrumentBlock(node, insertions, replacements, line)` → `instrumentBlock(node, insertions, replacements, line, descriptionMap)`
+
+### Part C: Create and populate descriptionMap in transformSource
+
+**File:** `transformer.ts` — `transformSource` (line 38–67)
+
+**Current:**
+```typescript
+const insertions: Insertion[] = [];
+const replacements: Replacement[] = [];
+
+// Extract struct definitions for the type registry
+const structRegistry = extractStructDefinitions(tree.rootNode);
+
+// Walk the CST and collect instrumentation points
+walkNode(tree.rootNode, insertions, replacements);
+```
+
+**Change to:**
+```typescript
+const insertions: Insertion[] = [];
+const replacements: Replacement[] = [];
+const descriptionMap = new Map<number, StepDescription>();
+
+// Extract struct definitions for the type registry
+const structRegistry = extractStructDefinitions(tree.rootNode);
+
+// Walk the CST and collect instrumentation points + descriptions
+walkNode(tree.rootNode, insertions, replacements, descriptionMap);
+```
+
+**Also update the return statements** (3 places) to include `descriptionMap`:
+```typescript
+return { instrumented: result, errors: [], structRegistry, descriptionMap };
+```
+
+And the error returns:
+```typescript
+return { instrumented: source, errors: [...], structRegistry: new Map(), descriptionMap: new Map() };
+```
+
+---
+
+## Step 2: Generate descriptions in each instrument* function
+
+### instrumentFunction — `Enter funcName(params)`
+
+**Add after `const line = node.startPosition.row + 1;` (line 180):**
+```typescript
+const paramStr = params.map(p => p.name).join(', ');
+descriptionMap.set(line, { description: `Enter ${funcName}(${paramStr})` });
+```
+
+### instrumentDeclaration — `Declare type name`
+
+**Add after `const line = node.startPosition.row + 1;` (line 231):**
 ```typescript
 const names = declarators.map(d => d.name).join(', ');
 descriptionMap.set(line, { description: `Declare ${typeStr} ${names}` });
 ```
 
-In `instrumentExpressionStatement` (assignment branch):
+### instrumentExpressionStatement — `Set ...` / call text / `Set i++`
+
+**Add description generation for each branch:**
+
+Assignment branch (after `findAndRewriteCalls`):
 ```typescript
-// For x = expr:
-descriptionMap.set(line, { description: `Set ${node.child(0)!.text}` });
+const stmtText = expr.text.replace(/;$/, '');
+descriptionMap.set(line, { description: `Set ${stmtText}` });
 ```
 
-Actually — the simplest robust approach: use the **trimmed source line** as the description base, then classify it:
-
+sprintf branch:
 ```typescript
-function generateDescription(node: SyntaxNode, source: string): StepDescription {
-    const line = node.startPosition.row + 1;
-    const lineText = source.split('\n')[line - 1]?.trim() ?? '';
+descriptionMap.set(line, { description: expr.text.replace(/;$/, '') });
+```
 
-    // Classify by statement type
-    if (node.type === 'declaration') {
-        const typeStr = getDeclarationType(node)?.trim() ?? '';
-        const names = getDeclarators(node).map(d => d.name).join(', ');
-        return { description: `Declare ${typeStr} ${names}` };
-    }
-    if (node.type === 'return_statement') {
-        return { description: lineText };  // "return 0" or "return x + 1"
-    }
-    if (node.type === 'expression_statement') {
-        const expr = node.child(0);
-        if (expr?.type === 'assignment_expression') {
-            return { description: `Set ${lineText.replace(/;$/, '')}` };
-        }
-        if (expr?.type === 'call_expression') {
-            return { description: lineText.replace(/;$/, '') };
-        }
-        if (expr?.type === 'update_expression') {
-            return { description: `Set ${lineText.replace(/;$/, '')}` };
-        }
-    }
-    // Fallback: use the source line itself
-    return { description: lineText.replace(/;$/, '') };
+Call expression branch (after `rewriteCallIfNeeded`):
+```typescript
+descriptionMap.set(line, { description: expr.text.replace(/;$/, '') });
+```
+
+Update expression branch (`i++`/`++i`):
+```typescript
+descriptionMap.set(line, { description: `Set ${expr.text}` });
+```
+
+Comma expression branch:
+```typescript
+descriptionMap.set(line, { description: expr.text.replace(/;$/, '') });
+```
+
+Default branch:
+```typescript
+descriptionMap.set(line, { description: expr.text.replace(/;$/, '') });
+```
+
+### instrumentReturn — `return expr`
+
+**Add after `const line = ...`:**
+```typescript
+// Get the return expression text (skip "return " and ";")
+const retExpr = node.text.replace(/^return\s*/, '').replace(/;$/, '').trim();
+descriptionMap.set(line, { description: retExpr ? `return ${retExpr}` : 'return' });
+```
+
+### instrumentFor — loop header
+
+**Add after `const line = ...` (line 377):**
+```typescript
+const condNode = node.childForFieldName('condition');
+const updateNode = node.childForFieldName('update');
+const initText = initializer?.text ?? '';
+const condText = condNode?.text ?? '';
+const updateText = updateNode?.text ?? '';
+descriptionMap.set(line, { description: `for (${initText} ${condText}; ${updateText})` });
+```
+
+### instrumentLoop — `while (cond)` / `do { } while (cond)`
+
+**Add after `const line = ...` (line 421):**
+```typescript
+const condNode = node.childForFieldName('condition');
+if (node.type === 'while_statement') {
+	descriptionMap.set(line, { description: `while (${condNode?.text ?? ''})` });
+} else {
+	descriptionMap.set(line, { description: `do...while (${condNode?.text ?? ''})` });
 }
 ```
 
-For control flow lines (if, while, for), the description is the condition/header:
+### instrumentIf — `if (cond)` / `else`
 
+**Add after `const line = ...` (line 451):**
 ```typescript
-// instrumentIf / instrumentLoop / instrumentFor add the line to descriptionMap
-descriptionMap.set(line, { description: lineText.replace(/\s*\{?\s*$/, '') });
-// e.g., "if (x > 5)" or "while (n > 0)" or "for (int i = 0; i < 10; i++)"
+const condNode = node.childForFieldName('condition');
+descriptionMap.set(line, { description: `if (${condNode?.text ?? ''})` });
 ```
 
-**Files:** `transformer.ts`
-**Depends on:** nothing
-**Verification:** Unit test: transform a simple program, check descriptionMap has correct entries.
+For else clauses, add in the alternative handling:
+```typescript
+if (alternative) {
+	const elseLine = alternative.startPosition.row + 1;
+	descriptionMap.set(elseLine, { description: 'else' });
+```
 
-### Step 2: Pass descriptionMap through pipeline
+### instrumentSwitch — `case N:`
 
-**What:** Add `descriptionMap` to `TransformResult`, pass it through `executeWasm` → `OpCollector` → `finish()`.
+**Add in the case_statement loop:**
+```typescript
+descriptionMap.set(line, { description: child.text.split(':')[0].trim() });
+// e.g., "case 3" or "default"
+```
 
-In `OpCollector`:
+---
+
+## Step 3: Pass descriptionMap through pipeline to OpCollector
+
+### op-collector.ts — constructor and field
+
+**Add field (after structRegistry):**
+```typescript
+private descriptionMap: Map<number, StepDescription>;
+```
+
+**Change constructor:**
 ```typescript
 constructor(maxSteps: number, structRegistry?: StructRegistry, descriptionMap?: Map<number, StepDescription>) {
-    this.descriptionMap = descriptionMap ?? new Map();
+	this.maxSteps = maxSteps;
+	this.structRegistry = structRegistry ?? new Map();
+	this.descriptionMap = descriptionMap ?? new Map();
 }
 ```
 
-In `finish()`, after building all steps, attach descriptions:
+**Add import:**
 ```typescript
-for (const step of this.steps) {
-    const desc = this.descriptionMap.get(step.location.line);
-    if (desc) {
-        step.description = desc.description;
-        // Don't set evaluation yet — that comes from runtime values
-    }
+import type { StructRegistry, StepDescription } from './transformer';
+```
+
+### op-collector.ts — attach in finish()
+
+**Add before `return { name, source, steps: this.steps };` in finish():**
+```typescript
+// Attach descriptions from transformer
+this.attachDescriptions();
+```
+
+**New method:**
+```typescript
+private attachDescriptions(): void {
+	for (const step of this.steps) {
+		const desc = this.descriptionMap.get(step.location.line);
+		if (desc) {
+			step.description = desc.description;
+		}
+
+		// Derive runtime evaluation from ops
+		if (step.description?.startsWith('Declare ')) {
+			const addOp = step.ops.find(op => op.op === 'addEntry' && op.parentId !== null);
+			if (addOp && addOp.op === 'addEntry') {
+				const val = addOp.entry.value;
+				if (val === '?') {
+					step.evaluation = '= ? (uninitialized)';
+				} else if (val === '' || addOp.entry.children) {
+					step.evaluation = '= {...}';
+				} else {
+					step.evaluation = `= ${val}`;
+				}
+			}
+		}
+
+		if (step.description?.startsWith('Set ')) {
+			// Find the first setValue op (the primary target variable)
+			const setOp = step.ops.find(op => op.op === 'setValue');
+			if (setOp && setOp.op === 'setValue' && setOp.value) {
+				step.evaluation = `→ ${setOp.value}`;
+			}
+		}
+
+		if (step.ioEvents?.length) {
+			const writes = step.ioEvents.filter(e => e.kind === 'write');
+			if (writes.length > 0) {
+				const output = writes.map(e => e.text).join('');
+				const escaped = output.replace(/\n/g, '\\n');
+				step.evaluation = `→ "${escaped}"`;
+			}
+		}
+	}
 }
 ```
 
-**Files:** `op-collector.ts`, `runtime.ts`, `service.ts`, `integration.test.ts`, `diagnostic.test.ts`
-**Depends on:** Step 1
-**Verification:** Integration test: run a program, check steps have descriptions.
+### runtime.ts — pass descriptionMap
 
-### Step 3: Runtime evaluation strings
-
-**What:** After attaching static descriptions, derive evaluation strings from ops:
-
+**Change constructor call (line ~33):**
 ```typescript
-for (const step of this.steps) {
-    if (!step.description) continue;
-
-    // Declarations: find addEntry op, use its value
-    if (step.description.startsWith('Declare ')) {
-        const addOp = step.ops.find(op => op.op === 'addEntry' && op.parentId !== null);
-        if (addOp && addOp.op === 'addEntry') {
-            const val = addOp.entry.value;
-            if (val === '?') {
-                step.evaluation = '= ? (uninitialized)';
-            } else if (val === '' || addOp.entry.children) {
-                step.evaluation = '= {...}';
-            } else {
-                step.evaluation = `= ${val}`;
-            }
-        }
-    }
-
-    // Assignments: find setValue op for the target variable
-    if (step.description.startsWith('Set ')) {
-        const setOp = step.ops.find(op => op.op === 'setValue');
-        if (setOp && setOp.op === 'setValue' && setOp.value) {
-            step.evaluation = `→ ${setOp.value}`;
-        }
-    }
-
-    // IO: format output from ioEvents
-    if (step.ioEvents?.length) {
-        const writes = step.ioEvents.filter(e => e.kind === 'write');
-        if (writes.length > 0) {
-            const output = writes.map(e => e.text).join('');
-            step.evaluation = `→ "${output.replace(/\n$/, '\\n')}"`;
-        }
-    }
-}
+const collector = new OpCollector(maxSteps, structRegistry, descriptionMap);
 ```
 
-**Files:** `op-collector.ts`
-**Depends on:** Step 2
-**Verification:** Integration test: check evaluation strings match expected values.
-
-### Step 4: Scope entry/exit descriptions
-
-**What:** Add descriptions for function scope push/pop:
-- `onPushScope`: record `Enter funcName` for the step's line
-- `onPopScope`: record `Leave funcName` for the step's line
-
-Since scope push/pop are ops within a step (not their own steps), we handle this differently. The scope push happens in the same step as the function entry. The description from Step 1 (`Enter funcName(...)`) already covers this.
-
-For `return` statements, the transformer generates `return expr` description. The scope pop is part of the same step and doesn't need its own description.
-
-**Files:** `transformer.ts` (already handled in Step 1)
-**Depends on:** Step 1
-
-### Step 5: Tests and verification
-
-**What:**
-1. Add description assertions to key integration tests
-2. Run diagnostic suite to verify descriptions appear in dumps
-3. Manual browser verification
-
-**Verification assertions:**
+**Add parameter to executeWasm:**
 ```typescript
-// Basic declaration
-expect(step.description).toBe('Declare int x');
-expect(step.evaluation).toBe('= 5');
-
-// Assignment
-expect(step.description).toBe('Set x = 10');
-
-// Function entry
-expect(step.description).toBe('Enter main()');
-
-// Return
-expect(step.description).toBe('return 0');
+export async function executeWasm(
+	binary: Uint8Array,
+	name: string,
+	source: string,
+	maxSteps: number,
+	stdin?: string,
+	structRegistry?: StructRegistry,
+	descriptionMap?: Map<number, StepDescription>,
+): Promise<ExecuteResult> {
 ```
 
-**Files:** `integration.test.ts`
-**Depends on:** Steps 1-4
+**Add import:**
+```typescript
+import type { StructRegistry, StepDescription } from './transformer';
+```
+
+### service.ts — pass descriptionMap
+
+**In both `interpretSource` and `interpretSourceInteractive`:**
+
+Destructure `descriptionMap` from `transformSource`:
+```typescript
+const { instrumented, errors: transformErrors, structRegistry, descriptionMap } = transformSource(parser, source);
+```
+
+Pass through to `executeWasm`:
+```typescript
+const { program, errors: runtimeErrors } = await executeWasm(
+	wasm, 'user_program', source, MAX_STEPS, stdin, structRegistry, descriptionMap,
+);
+```
+
+### integration.test.ts and diagnostic.test.ts — update runPipeline
+
+Destructure `descriptionMap` and pass to `OpCollector`:
+```typescript
+const { instrumented, errors: tErrors, structRegistry, descriptionMap } = transformSource(parser, source);
+// ...
+const collector = new OpCollector(500, structRegistry, descriptionMap);
+```
+
+---
+
+## Step 4: Tests
+
+Add description assertions to 3 existing integration tests:
+
+**Minimal scalar test:**
+```typescript
+expect(r.program.steps[0].description).toBe('Enter main()');
+expect(r.program.steps[1].description).toBe('Declare int x');
+expect(r.program.steps[1].evaluation).toBe('= 5');
+```
+
+**Assignment test:**
+```typescript
+const setStep = r.program.steps.find(s => s.description?.startsWith('Set '));
+expect(setStep).toBeDefined();
+expect(setStep!.evaluation).toMatch(/→ /);
+```
+
+**Return test:**
+```typescript
+const retStep = r.program.steps.find(s => s.description?.startsWith('return'));
+expect(retStep).toBeDefined();
+```
 
 ---
 
@@ -281,12 +375,13 @@ expect(step.description).toBe('return 0');
 
 | Case | Expected behavior | How handled |
 |------|-------------------|-------------|
-| Empty steps (condition check only) | Description from control flow header | `instrumentIf/Loop/For` adds description |
-| Multiple steps at same line | All share same description | Map lookup by line; ok to share |
-| Steps from instrumented code (not in original source) | No description | descriptionMap only has original source lines |
-| Sub-steps (loop increment, condition re-check) | Description of the loop header | Same line → same description |
-| Multi-line statements | Description from first line | `node.startPosition.row + 1` |
-| Macro-expanded or generated code | Fallback to source text | Source line trim as fallback |
+| Empty steps (condition only) | Description from if/while/for header | instrument* sets description for the control flow line |
+| Multiple steps at same line | All share same description from map | Map lookup by line; duplicates are fine |
+| `for` loop re-check on each iteration | Same description each time | Same line → same map entry |
+| `else if` chains | Each `if` gets its own description | instrumentIf recurses, each gets own line |
+| `switch/case` | "case 3" / "default" | child.text split on `:` |
+| Steps with no original source line | No description | descriptionMap only covers instrumented lines |
+| `expr.text` includes braces from compact if | Trim trailing `{` | `.replace(/\s*\{?\s*$/, '')` for control flow |
 
 ## Verification Checklist
 
@@ -298,10 +393,10 @@ expect(step.description).toBe('return 0');
 - [ ] Returns show "return 0" or "return x + 1"
 - [ ] Control flow shows "if (x > 5)", "while (n > 0)", "for (...)"
 - [ ] printf shows call text with eval "→ output"
-- [ ] malloc/free show call text
 - [ ] Uninitialized vars show eval "= ? (uninitialized)"
 - [ ] Structs/arrays show eval "= {...}"
 - [ ] Empty steps (conditions) have descriptions
+- [ ] Browser: step descriptions visible in description panel
 
 ## References
 
