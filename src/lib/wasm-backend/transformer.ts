@@ -31,6 +31,9 @@ type Insertion = {
 // Module-scoped struct registry for use during transformation
 let currentStructRegistry: StructRegistry = new Map();
 
+// Module-scoped function registry: maps user-defined function names to return types
+let currentFuncRegistry: Map<string, string> = new Map();
+
 type Replacement = {
 	startOffset: number;
 	endOffset: number;
@@ -60,6 +63,11 @@ export function transformSource(parser: ParserType, source: string): TransformRe
 	// Extract struct definitions for the type registry
 	const structRegistry = extractStructDefinitions(tree.rootNode);
 	currentStructRegistry = structRegistry;
+
+	// Build function registry for call decomposition
+	currentFuncRegistry = extractFunctionRegistry(tree.rootNode);
+	callTempCounter = 0;
+	loopFlagCounter = 0;
 
 	// Walk the CST and collect instrumentation points + descriptions
 	walkNode(tree.rootNode, insertions, replacements, descriptionMap);
@@ -250,8 +258,45 @@ function instrumentDeclaration(node: SyntaxNode, insertions: Insertion[], replac
 		findAndRewriteCalls(node, replacements);
 	}
 
+	// Check if any initializer contains user function calls → decompose
+	if (replacements && declarators.length === 1 && declarators[0].hasInitializer) {
+		const initNode = findInitializerNode(node);
+		if (initNode && containsUserCall(initNode)) {
+			const userCalls = collectUserCalls(initNode);
+			if (userCalls.length >= 1) {
+				// Decompose: extract user calls into temps, rewrite declaration
+				const decomposed = decomposeUserCalls(initNode.text, initNode, line);
+				if (decomposed) {
+					const decl = declarators[0];
+					const derefVars = findPointerDerefsInNode(node);
+					// Pre-call step highlighting the first function call
+					const fc = decomposed.firstCall;
+					let fullText = `__crow_step_col(${line}, ${fc.startPosition.column}, ${fc.endPosition.column});\n\t`;
+					fullText += decomposed.preamble;
+					fullText += `${node.text.slice(0, initNode.startIndex - node.startIndex)}${decomposed.rewrittenText};`;
+					// Add deref tracking
+					for (const v of derefVars) {
+						fullText += `\n\t__crow_set("${v}", &${v}, ${line});`;
+					}
+					const flags = decl.hasInitializer ? 0 : 1;
+					fullText += `\n\t__crow_decl("${decl.name}", &${decl.name}, sizeof(${decl.name}), "${escapeType(typeStr, decl)}", ${line}, ${flags});`;
+					fullText += `\n\t__crow_step(${line});`;
+					replacements.push({
+						startOffset: node.startIndex,
+						endOffset: node.endIndex,
+						text: fullText,
+					});
+					return;
+				}
+			}
+		}
+	}
+
 	// Scan initializers for pointer dereferences to enable use-after-free detection on reads
 	const derefVars = findPointerDerefsInNode(node);
+
+	// If the declaration contains a user function call, add pre-call step
+	const hasUserCall = containsUserCall(node);
 
 	let text = '';
 	for (const v of derefVars) {
@@ -268,6 +313,18 @@ function instrumentDeclaration(node: SyntaxNode, insertions: Insertion[], replac
 		text,
 		priority: 5,
 	});
+
+	// Pre-call step: land on the calling line before entering the function
+	if (hasUserCall) {
+		const firstCall = collectUserCalls(node)[0];
+		if (firstCall) {
+			insertions.push({
+				offset: node.startIndex,
+				text: `__crow_step_col(${line}, ${firstCall.startPosition.column}, ${firstCall.endPosition.column});\n\t`,
+				priority: 5,
+			});
+		}
+	}
 }
 
 /**
@@ -293,11 +350,45 @@ function instrumentExpressionStatement(
 		// Look for call expressions in the RHS (may be inside cast_expression)
 		findAndRewriteCalls(expr, replacements);
 
+		// Check for user calls in RHS — decompose if multiple
+		const rhs = expr.childForFieldName('right');
+		if (rhs && containsUserCall(rhs)) {
+			const userCalls = collectUserCalls(rhs);
+			if (userCalls.length >= 2) {
+				// Decompose multiple user calls into temporaries
+				const decomposed = decomposeUserCalls(rhs.text, rhs, line);
+				if (decomposed) {
+					const targets = collectChainedTargets(expr);
+					const fc = decomposed.firstCall;
+					let fullText = `__crow_step_col(${line}, ${fc.startPosition.column}, ${fc.endPosition.column});\n\t`; // pre-call step
+					fullText += decomposed.preamble;
+					// Reconstruct: LHS = rewrittenRHS;
+					fullText += `${lhsText} = ${decomposed.rewrittenText};`;
+					// Track assigned variables
+					for (const target of targets.reverse()) {
+						fullText += `\n\t__crow_set("${target.name}", ${target.addrExpr}, ${line});`;
+					}
+					if (!containsAllocCall(expr)) {
+						const evalType = resolveExprType(lhs);
+						if (evalType !== '' && !evalType.startsWith('struct ')) {
+							fullText += `\n\t__crow_eval(&(${lhsText}), sizeof(${lhsText}), "${evalType}");`;
+						}
+					}
+					fullText += `\n\t__crow_step(${line});`;
+					replacements.push({
+						startOffset: node.startIndex,
+						endOffset: node.endIndex,
+						text: fullText,
+					});
+					return;
+				}
+			}
+		}
+
 		// Track all assigned variables (handles chained: a = b = c = 42)
 		const targets = collectChainedTargets(expr);
 		if (targets.length > 0) {
 			// Scan RHS for pointer dereferences (enables read-after-free detection)
-			const rhs = expr.childForFieldName('right');
 			const derefVars = rhs ? findPointerDerefsInNode(rhs) : [];
 
 			let text = '';
@@ -317,6 +408,18 @@ function instrumentExpressionStatement(
 			}
 			text += `\n\t__crow_step(${line});`;
 			insertions.push({ offset: node.endIndex, text, priority: 5 });
+
+			// Pre-call step for single user call in assignment
+			if (containsUserCall(expr)) {
+				const firstCall = collectUserCalls(expr)[0];
+				if (firstCall) {
+					insertions.push({
+						offset: node.startIndex,
+						text: `__crow_step_col(${line}, ${firstCall.startPosition.column}, ${firstCall.endPosition.column});\n\t`,
+						priority: 5,
+					});
+				}
+			}
 			return;
 		}
 	} else if (expr.type === 'call_expression') {
@@ -345,6 +448,15 @@ function instrumentExpressionStatement(
 			text: `\n\t__crow_step(${line});`,
 			priority: 5,
 		});
+
+		// Pre-call step for user function calls — highlight the call expression
+		if (funcName && currentFuncRegistry.has(funcName)) {
+			insertions.push({
+				offset: node.startIndex,
+				text: `__crow_step_col(${line}, ${expr.startPosition.column}, ${expr.endPosition.column});\n\t`,
+				priority: 5,
+			});
+		}
 		return;
 	} else if (expr.type === 'update_expression') {
 		descriptionMap.set(line, { description: `Set ${exprText}` });
@@ -435,6 +547,38 @@ function instrumentFor(
 	const updateText = updateNode?.text ?? '';
 	descriptionMap.set(line, { description: `for (${initText} ${condText}; ${updateText})` });
 
+	// Compute column ranges for condition and update highlighting
+	const condColStart = condNode ? condNode.startPosition.column : undefined;
+	const condColEnd = condNode ? condNode.endPosition.column : undefined;
+	const updateColStart = updateNode ? updateNode.startPosition.column : undefined;
+	const updateColEnd = updateNode ? updateNode.endPosition.column : undefined;
+
+	// Condition check is always a substep (hidden in line mode).
+	// The anchor for the for-line is provided by a first-iteration-only init step.
+	const condStepCall = condColStart !== undefined && condColEnd !== undefined
+		? `__crow_substep_col(${line}, ${condColStart}, ${condColEnd})`
+		: `__crow_substep(${line})`;
+
+	// Use a flag variable so the init/decl anchor step only fires on the first iteration.
+	// The flag is declared before the for-loop in a wrapper block.
+	const hasInitDecl = initializer && initializer.type === 'declaration';
+	let flagName: string | null = null;
+	if (hasInitDecl) {
+		flagName = `__cf${loopFlagCounter++}`;
+		// Insert flag declaration before the for statement
+		insertions.push({
+			offset: node.startIndex,
+			text: `{ int ${flagName} = 0;\n\t`,
+			priority: 10,
+		});
+		// Close the wrapper block after the for statement
+		insertions.push({
+			offset: node.endIndex,
+			text: `\n\t}`,
+			priority: 0,
+		});
+	}
+
 	// If the body is a compound_statement, instrument its contents
 	if (body.type === 'compound_statement') {
 		const openBrace = body.child(0);
@@ -442,20 +586,43 @@ function instrumentFor(
 			let text = '';
 
 			// If initializer is a declaration, add __crow_decl for the loop var
-			if (initializer && initializer.type === 'declaration') {
-				const typeStr = getDeclarationType(initializer)?.trim() ?? 'int';
-				const decls = getDeclarators(initializer);
+			if (hasInitDecl && flagName) {
+				const typeStr = getDeclarationType(initializer!)?.trim() ?? 'int';
+				const decls = getDeclarators(initializer!);
 				for (const decl of decls) {
 					const flags = decl.hasInitializer ? 0 : 1;
 					text += `\n\t__crow_decl("${decl.name}", &${decl.name}, sizeof(${decl.name}), "${escapeType(typeStr, decl)}", ${line}, ${flags});`;
 				}
+				// Anchor step only on first iteration
+				text += `\n\tif (!${flagName}) { __crow_step(${line}); ${flagName} = 1; }`;
 			}
 
 			if (condText && !hasSideEffects(condText)) {
 				text += `\n\t__crow_eval_int(${condText});`;
 			}
-			text += `\n\t__crow_step(${line});`;
+			text += `\n\t${condStepCall};`;
 			insertions.push({ offset: openBrace.endIndex, text, priority: 8 });
+
+			// Add update step at end of body (before closing brace) with column highlighting
+			if (updateNode && updateColStart !== undefined && updateColEnd !== undefined) {
+				const closeBrace = body.child(body.childCount - 1);
+				if (closeBrace && closeBrace.text === '}') {
+					let updateStepText = '';
+					// Re-declare loop var to capture updated value
+					if (initializer && initializer.type === 'declaration') {
+						const typeStr = getDeclarationType(initializer)?.trim() ?? 'int';
+						const decls = getDeclarators(initializer);
+						for (const decl of decls) {
+							updateStepText += `\t__crow_decl("${decl.name}", &${decl.name}, sizeof(${decl.name}), "${escapeType(typeStr, decl)}", ${line}, 0);\n`;
+						}
+					}
+					if (updateText && !hasSideEffects(updateText)) {
+						updateStepText += `\t__crow_eval_int(${updateText});\n`;
+					}
+					updateStepText += `\t__crow_substep_col(${line}, ${updateColStart}, ${updateColEnd});\n`;
+					insertions.push({ offset: closeBrace.startIndex, text: updateStepText, priority: 3 });
+				}
+			}
 		}
 
 		// Recurse into body statements
@@ -491,6 +658,13 @@ function instrumentLoop(
 	}
 
 	const condText = condNode?.text;
+	const condColStart = condNode ? condNode.startPosition.column : undefined;
+	const condColEnd = condNode ? condNode.endPosition.column : undefined;
+	// While/do-while condition is the anchor for its line (not a substep)
+	const condStepCall = condColStart !== undefined && condColEnd !== undefined
+		? `__crow_step_col(${line}, ${condColStart}, ${condColEnd})`
+		: `__crow_step(${line})`;
+
 	if (body.type === 'compound_statement') {
 		const openBrace = body.child(0);
 		if (openBrace && openBrace.text === '{') {
@@ -498,7 +672,7 @@ function instrumentLoop(
 			if (condText && !hasSideEffects(condText)) {
 				text += `\n\t__crow_eval_int(${condText});`;
 			}
-			text += `\n\t__crow_step(${line});`;
+			text += `\n\t${condStepCall};`;
 			insertions.push({
 				offset: openBrace.endIndex,
 				text,
@@ -530,10 +704,12 @@ function instrumentIf(
 
 	descriptionMap.set(line, { description: `if (${condNode?.text ?? ''})` });
 
-	// Step for the condition evaluation
+	// Step for the condition evaluation — highlight condition in editor
 	const condText = condNode?.text;
+	const condColStart = condNode ? condNode.startPosition.column : undefined;
+	const condColEnd = condNode ? condNode.endPosition.column : undefined;
 	if (consequence) {
-		instrumentBlock(consequence, insertions, replacements, line, descriptionMap, condText);
+		instrumentBlock(consequence, insertions, replacements, line, descriptionMap, condText, condColStart, condColEnd);
 	}
 
 	if (alternative) {
@@ -603,6 +779,8 @@ function instrumentBlock(
 	line: number,
 	descriptionMap: Map<number, StepDescription>,
 	conditionText?: string,
+	condColStart?: number,
+	condColEnd?: number,
 ): void {
 	if (node.type === 'compound_statement') {
 		const openBrace = node.child(0);
@@ -611,7 +789,12 @@ function instrumentBlock(
 			if (conditionText && !hasSideEffects(conditionText)) {
 				text += `\n\t__crow_eval_int(${conditionText});`;
 			}
-			text += `\n\t__crow_step(${line});`;
+			// Highlight the condition expression if column info provided
+			if (condColStart !== undefined && condColEnd !== undefined) {
+				text += `\n\t__crow_step_col(${line}, ${condColStart}, ${condColEnd});`;
+			} else {
+				text += `\n\t__crow_step(${line});`;
+			}
 			insertions.push({
 				offset: openBrace.endIndex,
 				text,
@@ -870,6 +1053,39 @@ function walkForStructs(node: SyntaxNode, registry: StructRegistry): void {
 	for (let i = 0; i < node.childCount; i++) {
 		walkForStructs(node.child(i)!, registry);
 	}
+}
+
+/**
+ * Build a registry of user-defined function names → return types.
+ * Used to identify user function calls for call decomposition.
+ */
+function extractFunctionRegistry(rootNode: SyntaxNode): Map<string, string> {
+	const registry = new Map<string, string>();
+	for (let i = 0; i < rootNode.childCount; i++) {
+		const child = rootNode.child(i)!;
+		if (child.type === 'function_definition') {
+			const typeNode = child.childForFieldName('type');
+			const declarator = child.childForFieldName('declarator');
+			if (!typeNode || !declarator) continue;
+			const name = extractFunctionName(declarator);
+			if (name === 'main') continue; // skip main
+			let retType = typeNode.text;
+			// Check for struct return type
+			for (let j = 0; j < child.childCount; j++) {
+				const fc = child.child(j)!;
+				if (fc.type === 'struct_specifier') {
+					retType = `struct ${fc.childForFieldName('name')?.text ?? ''}`;
+					break;
+				}
+			}
+			// Check for pointer return type
+			if (declarator.type === 'pointer_declarator') {
+				retType += '*';
+			}
+			registry.set(name, retType);
+		}
+	}
+	return registry;
 }
 
 function isInFunctionBody(node: SyntaxNode): boolean {
@@ -1272,12 +1488,150 @@ function containsAllocCall(node: SyntaxNode): boolean {
 	return false;
 }
 
+/**
+ * Find the initializer value node in a declaration like `int x = EXPR;`
+ * Returns the EXPR node (the value after '=').
+ */
+function findInitializerNode(declNode: SyntaxNode): SyntaxNode | null {
+	// Look for init_declarator → value field
+	for (let i = 0; i < declNode.childCount; i++) {
+		const child = declNode.child(i)!;
+		if (child.type === 'init_declarator') {
+			return child.childForFieldName('value');
+		}
+	}
+	return null;
+}
+
 function containsCallExpression(node: SyntaxNode): boolean {
 	if (node.type === 'call_expression') return true;
 	for (let i = 0; i < node.childCount; i++) {
 		if (containsCallExpression(node.child(i)!)) return true;
 	}
 	return false;
+}
+
+/**
+ * Check if an expression contains a call to a user-defined function.
+ */
+function containsUserCall(node: SyntaxNode): boolean {
+	if (node.type === 'call_expression') {
+		const fn = node.childForFieldName('function');
+		if (fn && currentFuncRegistry.has(fn.text)) return true;
+	}
+	for (let i = 0; i < node.childCount; i++) {
+		if (containsUserCall(node.child(i)!)) return true;
+	}
+	return false;
+}
+
+/**
+ * Collect all user-defined function call nodes in depth-first order (innermost first).
+ * Returns calls from leaves up, so nested calls like add(sub(1,2), 3) yield [sub, add].
+ */
+function collectUserCalls(node: SyntaxNode): SyntaxNode[] {
+	const calls: SyntaxNode[] = [];
+	collectUserCallsInner(node, calls);
+	return calls;
+}
+
+function collectUserCallsInner(node: SyntaxNode, calls: SyntaxNode[]): void {
+	// Recurse into children first (depth-first, innermost calls collected first)
+	for (let i = 0; i < node.childCount; i++) {
+		collectUserCallsInner(node.child(i)!, calls);
+	}
+	// Then check this node
+	if (node.type === 'call_expression') {
+		const fn = node.childForFieldName('function');
+		if (fn && currentFuncRegistry.has(fn.text)) {
+			calls.push(node);
+		}
+	}
+}
+
+let callTempCounter = 0;
+let loopFlagCounter = 0;
+
+/**
+ * Rebuild a node's text, replacing any inner call nodes that have been
+ * assigned temp names with those temp names.
+ */
+function rebuildTextWithTemps(node: SyntaxNode, tempMap: Map<SyntaxNode, string>): string {
+	let text = node.text;
+	// Find inner replacements (calls within this node that have temps)
+	const innerReplacements: { start: number; end: number; tempName: string }[] = [];
+	for (const [callNode, tempName] of tempMap) {
+		if (callNode === node) continue;
+		if (callNode.startIndex >= node.startIndex && callNode.endIndex <= node.endIndex) {
+			innerReplacements.push({
+				start: callNode.startIndex - node.startIndex,
+				end: callNode.endIndex - node.startIndex,
+				tempName,
+			});
+		}
+	}
+	// Apply in reverse offset order to preserve positions
+	innerReplacements.sort((a, b) => b.start - a.start);
+	for (const r of innerReplacements) {
+		text = text.slice(0, r.start) + r.tempName + text.slice(r.end);
+	}
+	return text;
+}
+
+/**
+ * Decompose user function calls in an expression into temporary variables.
+ * Returns { preamble, rewrittenText } where preamble contains temp declarations
+ * with __crow_step between each, and rewrittenText has calls replaced with temp names.
+ *
+ * Example: add(1,2) + add(3,4) →
+ *   preamble: "int __ct0 = add(1,2);\n\t__crow_step(LINE);\n\tint __ct1 = add(3,4);\n\t__crow_step(LINE);\n\t"
+ *   rewrittenText: "__ct0 + __ct1"
+ */
+function decomposeUserCalls(exprText: string, exprNode: SyntaxNode, line: number): { preamble: string; rewrittenText: string; firstCall: SyntaxNode } | null {
+	const calls = collectUserCalls(exprNode);
+	if (calls.length === 0) return null;
+
+	// Assign temp names to each call (innermost first via depth-first order)
+	// Filter to only top-level user calls (not nested inside other user calls)
+	const tempMap = new Map<SyntaxNode, string>();
+	const callList: { call: SyntaxNode; tempName: string; retType: string }[] = [];
+
+	for (const call of calls) {
+		const fn = call.childForFieldName('function');
+		if (!fn) continue;
+		const retType = currentFuncRegistry.get(fn.text);
+		if (!retType || retType === 'void') continue;
+
+		const tempName = `__ct${callTempCounter++}`;
+		tempMap.set(call, tempName);
+		callList.push({ call, tempName, retType });
+	}
+
+	if (callList.length === 0) return null;
+
+	let preamble = '';
+	for (let i = 0; i < callList.length; i++) {
+		const { call, tempName, retType } = callList[i];
+
+		// Build call text with inner calls already replaced by their temps
+		const callText = rebuildTextWithTemps(call, tempMap);
+		preamble += `${retType} ${tempName} = ${callText};\n\t`;
+
+		// After each call, step back on the calling line
+		// Highlight the NEXT call about to execute (if any), otherwise plain step
+		if (i + 1 < callList.length) {
+			const nextCall = callList[i + 1].call;
+			const colStart = nextCall.startPosition.column;
+			const colEnd = nextCall.endPosition.column;
+			preamble += `__crow_step_col(${line}, ${colStart}, ${colEnd});\n\t`;
+		} else {
+			preamble += `__crow_step(${line});\n\t`;
+		}
+	}
+
+	// Build final expression with all calls replaced
+	const rewrittenText = rebuildTextWithTemps(exprNode, tempMap);
+	return { preamble, rewrittenText, firstCall: callList[0].call };
 }
 
 function getEnclosingReturnType(node: SyntaxNode): string | null {

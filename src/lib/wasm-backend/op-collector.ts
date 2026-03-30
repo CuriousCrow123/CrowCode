@@ -162,6 +162,105 @@ export class OpCollector {
 		this.currentIoEvents = [];
 	}
 
+	onStepCol(line: number, colStart: number, colEnd: number): void {
+		if (++this.stepCount > this.maxSteps) {
+			throw new StepLimitExceeded();
+		}
+		this.currentLine = line;
+
+		const prev = this.steps[this.steps.length - 1];
+		if (
+			prev &&
+			prev.location.line === line &&
+			prev.location.colStart === colStart &&
+			prev.location.colEnd === colEnd &&
+			prev.ops.length === 0 &&
+			!prev.ioEvents &&
+			this.currentOps.length === 0 &&
+			this.currentIoEvents.length === 0
+		) {
+			return;
+		}
+
+		this.steps.push({
+			location: { line: this.currentLine, colStart, colEnd },
+			ops: this.currentOps,
+			ioEvents: this.currentIoEvents.length > 0 ? [...this.currentIoEvents] : undefined,
+		});
+		if (this.pendingEval !== null) {
+			this.steps[this.steps.length - 1].evaluation = `→ ${this.pendingEval}`;
+			this.pendingEval = null;
+		}
+		this.currentOps = [];
+		this.currentIoEvents = [];
+	}
+
+	onSubStep(line: number): void {
+		if (++this.stepCount > this.maxSteps) {
+			throw new StepLimitExceeded();
+		}
+		this.currentLine = line;
+
+		const prev = this.steps[this.steps.length - 1];
+		if (
+			prev &&
+			prev.location.line === line &&
+			prev.ops.length === 0 &&
+			!prev.ioEvents &&
+			this.currentOps.length === 0 &&
+			this.currentIoEvents.length === 0
+		) {
+			return;
+		}
+
+		this.steps.push({
+			location: { line: this.currentLine },
+			ops: this.currentOps,
+			ioEvents: this.currentIoEvents.length > 0 ? [...this.currentIoEvents] : undefined,
+			subStep: true,
+		});
+		if (this.pendingEval !== null) {
+			this.steps[this.steps.length - 1].evaluation = `→ ${this.pendingEval}`;
+			this.pendingEval = null;
+		}
+		this.currentOps = [];
+		this.currentIoEvents = [];
+	}
+
+	onSubStepCol(line: number, colStart: number, colEnd: number): void {
+		if (++this.stepCount > this.maxSteps) {
+			throw new StepLimitExceeded();
+		}
+		this.currentLine = line;
+
+		const prev = this.steps[this.steps.length - 1];
+		if (
+			prev &&
+			prev.location.line === line &&
+			prev.location.colStart === colStart &&
+			prev.location.colEnd === colEnd &&
+			prev.ops.length === 0 &&
+			!prev.ioEvents &&
+			this.currentOps.length === 0 &&
+			this.currentIoEvents.length === 0
+		) {
+			return;
+		}
+
+		this.steps.push({
+			location: { line: this.currentLine, colStart, colEnd },
+			ops: this.currentOps,
+			ioEvents: this.currentIoEvents.length > 0 ? [...this.currentIoEvents] : undefined,
+			subStep: true,
+		});
+		if (this.pendingEval !== null) {
+			this.steps[this.steps.length - 1].evaluation = `→ ${this.pendingEval}`;
+			this.pendingEval = null;
+		}
+		this.currentOps = [];
+		this.currentIoEvents = [];
+	}
+
 	onPushScope(namePtr: number, line: number): void {
 		this.refreshMemory();
 		const name = this.readCString(namePtr);

@@ -3,6 +3,9 @@
 
 // Step and scope tracking
 void __crow_step(int line);
+void __crow_step_col(int line, int colStart, int colEnd);
+void __crow_substep(int line);
+void __crow_substep_col(int line, int colStart, int colEnd);
 void __crow_push_scope(const char *name, int line);
 void __crow_pop_scope(void);
 

@@ -236,4 +236,94 @@ int main() {
 		expect(errors).toEqual([]);
 		expect(instrumented).toContain('__crow_calloc(');
 	});
+
+	it('adds pre-call step before declaration with user function call', () => {
+		const source = `int add(int a, int b) { return a + b; }
+int main() {
+	int x = add(1, 2);
+	return 0;
+}`;
+		const { instrumented, errors } = transformSource(parser, source);
+		expect(errors).toEqual([]);
+		// Pre-call step should appear before the declaration
+		const declIdx = instrumented.indexOf('int x = add(1, 2)');
+		const preStepIdx = instrumented.lastIndexOf('__crow_step(', declIdx);
+		expect(preStepIdx).toBeGreaterThanOrEqual(0);
+		expect(preStepIdx).toBeLessThan(declIdx);
+	});
+
+	it('adds pre-call step before bare user function call', () => {
+		const source = `void doWork(int x) { }
+int main() {
+	doWork(42);
+	return 0;
+}`;
+		const { instrumented, errors } = transformSource(parser, source);
+		expect(errors).toEqual([]);
+		// Pre-call step should appear before the call
+		const callIdx = instrumented.indexOf('doWork(42)');
+		expect(callIdx).toBeGreaterThan(0);
+		const preIdx = instrumented.lastIndexOf('__crow_step(', callIdx);
+		expect(preIdx).toBeGreaterThanOrEqual(0);
+		expect(preIdx).toBeLessThan(callIdx);
+	});
+
+	it('decomposes multiple user function calls in declaration', () => {
+		const source = `int add(int a, int b) { return a + b; }
+int main() {
+	int x = add(1, 2) + add(3, 4);
+	return 0;
+}`;
+		const { instrumented, errors } = transformSource(parser, source);
+		expect(errors).toEqual([]);
+		// Should create temp variables
+		expect(instrumented).toContain('int __ct');
+		expect(instrumented).toContain('= add(1, 2)');
+		expect(instrumented).toContain('= add(3, 4)');
+		// Should have steps between calls (with column highlighting)
+		const ct0Idx = instrumented.indexOf('__ct0 = add(');
+		const ct1Idx = instrumented.indexOf('__ct1 = add(');
+		const stepBetween = instrumented.indexOf('__crow_step_col(3,', ct0Idx);
+		expect(stepBetween).toBeGreaterThan(ct0Idx);
+		expect(stepBetween).toBeLessThan(ct1Idx);
+	});
+
+	it('decomposes nested user function calls', () => {
+		const source = `int add(int a, int b) { return a + b; }
+int sub(int a, int b) { return a - b; }
+int main() {
+	int x = add(sub(1, 2), 3);
+	return 0;
+}`;
+		const { instrumented, errors } = transformSource(parser, source);
+		expect(errors).toEqual([]);
+		// Inner call (sub) should be extracted first
+		expect(instrumented).toContain('__ct0 = sub(1, 2)');
+		expect(instrumented).toContain('__ct1 = add(__ct0, 3)');
+	});
+
+	it('does not decompose library function calls', () => {
+		const source = `int main() {
+	int x = strlen("hello") + strlen("world");
+	return 0;
+}`;
+		const { instrumented, errors } = transformSource(parser, source);
+		expect(errors).toEqual([]);
+		// No temp variables — strlen is not in the function registry
+		expect(instrumented).not.toContain('__ct');
+	});
+
+	it('decomposes multiple user calls in assignment RHS', () => {
+		const source = `int add(int a, int b) { return a + b; }
+int main() {
+	int x;
+	x = add(1, 2) + add(3, 4);
+	return 0;
+}`;
+		const { instrumented, errors } = transformSource(parser, source);
+		expect(errors).toEqual([]);
+		expect(instrumented).toContain('int __ct');
+		expect(instrumented).toContain('= add(1, 2)');
+		expect(instrumented).toContain('= add(3, 4)');
+	});
 });

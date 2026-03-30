@@ -139,6 +139,9 @@ async function runPipeline(source: string, stdin?: string): Promise<{
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const env: Record<string, (...args: any[]) => any> = {
 		__crow_step: (line: number) => collector.onStep(line),
+		__crow_step_col: (line: number, colStart: number, colEnd: number) => collector.onStepCol(line, colStart, colEnd),
+		__crow_substep: (line: number) => collector.onSubStep(line),
+		__crow_substep_col: (line: number, colStart: number, colEnd: number) => collector.onSubStepCol(line, colStart, colEnd),
 		__crow_push_scope: (namePtr: number, line: number) => collector.onPushScope(namePtr, line),
 		__crow_pop_scope: () => collector.onPopScope(),
 		__crow_decl: (namePtr: number, addr: number, size: number, typePtr: number, line: number, flags: number) =>
