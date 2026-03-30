@@ -154,7 +154,7 @@ export async function runWasmProgramInteractive(source: string, onProgress?: Pro
 				async resume(input: string): Promise<InteractiveSession> {
 					if (resumed || cancelled) throw new Error('Session already resumed or cancelled');
 					resumed = true;
-					accumulatedStdin += input + '\n';
+					accumulatedStdin += input;
 					return runWithStdin(accumulatedStdin);
 				},
 				async sendEof(): Promise<InteractiveSession> {
