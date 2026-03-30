@@ -7,7 +7,7 @@ void __crow_push_scope(const char *name, int line);
 void __crow_pop_scope(void);
 
 // Variable tracking
-void __crow_decl(const char *name, void *addr, int size, const char *type, int line);
+void __crow_decl(const char *name, void *addr, int size, const char *type, int line, int flags);
 void __crow_set(const char *name, void *addr, int line);
 
 // Heap tracking (replace malloc/calloc/realloc/free)

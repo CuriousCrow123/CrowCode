@@ -9,7 +9,7 @@ export type ScopeInfo = {
 
 export type HeapInfo = {
 	size: number;
-	status: 'allocated' | 'freed' | 'leaked';
+	status: 'allocated' | 'freed' | 'leaked' | 'use-after-free';
 	allocator?: string;
 	allocSite?: {
 		file: string;
@@ -48,7 +48,7 @@ export type SnapshotOp =
 	| { op: 'addEntry'; parentId: string | null; entry: MemoryEntry }
 	| { op: 'removeEntry'; id: string }
 	| { op: 'setValue'; id: string; value: string }
-	| { op: 'setHeapStatus'; id: string; status: 'allocated' | 'freed' | 'leaked' };
+	| { op: 'setHeapStatus'; id: string; status: 'allocated' | 'freed' | 'leaked' | 'use-after-free' };
 
 export type ProgramStep = {
 	location: SourceLocation;

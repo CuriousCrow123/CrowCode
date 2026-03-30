@@ -54,8 +54,8 @@ export async function executeWasm(
 		__crow_step: (line: number) => collector.onStep(line),
 		__crow_push_scope: (namePtr: number, line: number) => collector.onPushScope(namePtr, line),
 		__crow_pop_scope: () => collector.onPopScope(),
-		__crow_decl: (namePtr: number, addr: number, size: number, typePtr: number, line: number) =>
-			collector.onDecl(namePtr, addr, size, typePtr, line),
+		__crow_decl: (namePtr: number, addr: number, size: number, typePtr: number, line: number, flags: number) =>
+			collector.onDecl(namePtr, addr, size, typePtr, line, flags),
 		__crow_set: (namePtr: number, addr: number, line: number) =>
 			collector.onSet(namePtr, addr, line),
 

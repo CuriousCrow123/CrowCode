@@ -187,7 +187,7 @@ function instrumentFunction(
 
 	// Declare parameters
 	for (const param of params) {
-		pushText += `\n\t__crow_decl("${param.name}", &${param.name}, sizeof(${param.name}), "${param.type}", ${line});`;
+		pushText += `\n\t__crow_decl("${param.name}", &${param.name}, sizeof(${param.name}), "${param.type}", ${line}, 0);`;
 	}
 	pushText += `\n\t__crow_step(${line});`;
 
@@ -237,7 +237,8 @@ function instrumentDeclaration(node: SyntaxNode, insertions: Insertion[], replac
 
 	let text = '';
 	for (const decl of declarators) {
-		text += `\n\t__crow_decl("${decl.name}", &${decl.name}, sizeof(${decl.name}), "${escapeType(typeStr, decl)}", ${line});`;
+		const flags = decl.hasInitializer ? 0 : 1;
+		text += `\n\t__crow_decl("${decl.name}", &${decl.name}, sizeof(${decl.name}), "${escapeType(typeStr, decl)}", ${line}, ${flags});`;
 	}
 	text += `\n\t__crow_step(${line});`;
 
@@ -279,6 +280,24 @@ function instrumentExpressionStatement(
 			return;
 		}
 	} else if (expr.type === 'call_expression') {
+		const funcNode = expr.childForFieldName('function');
+		const funcName = funcNode?.text;
+
+		// sprintf/snprintf: let libc run it, then track the destination buffer
+		if (funcName === 'sprintf' || funcName === 'snprintf') {
+			const args = expr.childForFieldName('arguments');
+			if (args) {
+				const firstArg = args.child(1); // skip '('
+				if (firstArg && firstArg.type !== ')' && firstArg.type !== ',') {
+					const bufName = firstArg.text;
+					let text = `\n\t__crow_set("${bufName}", &${bufName}, ${line});`;
+					text += `\n\t__crow_step(${line});`;
+					insertions.push({ offset: node.endIndex, text, priority: 5 });
+					return;
+				}
+			}
+		}
+
 		rewriteCallIfNeeded(expr, replacements);
 		insertions.push({
 			offset: node.endIndex,
@@ -355,7 +374,8 @@ function instrumentFor(
 				const typeStr = getDeclarationType(initializer)?.trim() ?? 'int';
 				const decls = getDeclarators(initializer);
 				for (const decl of decls) {
-					text += `\n\t__crow_decl("${decl.name}", &${decl.name}, sizeof(${decl.name}), "${escapeType(typeStr, decl)}", ${line});`;
+					const flags = decl.hasInitializer ? 0 : 1;
+					text += `\n\t__crow_decl("${decl.name}", &${decl.name}, sizeof(${decl.name}), "${escapeType(typeStr, decl)}", ${line}, ${flags});`;
 				}
 			}
 
@@ -867,7 +887,7 @@ function getDeclarationType(node: SyntaxNode): string | null {
 	return typeNode?.text ?? null;
 }
 
-type DeclInfo = { name: string; isPointer: boolean; arraySize: string | null };
+type DeclInfo = { name: string; isPointer: boolean; arraySize: string | null; hasInitializer: boolean };
 
 function getDeclarators(node: SyntaxNode): DeclInfo[] {
 	const decls: DeclInfo[] = [];
@@ -877,12 +897,12 @@ function getDeclarators(node: SyntaxNode): DeclInfo[] {
 		if (child.type === 'init_declarator') {
 			const declarator = child.childForFieldName('declarator');
 			if (declarator) {
-				decls.push(parseDeclName(declarator));
+				decls.push({ ...parseDeclName(declarator), hasInitializer: true });
 			}
 		} else if (child.type === 'identifier') {
-			decls.push({ name: child.text, isPointer: false, arraySize: null });
+			decls.push({ name: child.text, isPointer: false, arraySize: null, hasInitializer: false });
 		} else if (child.type === 'pointer_declarator' || child.type === 'array_declarator') {
-			decls.push(parseDeclName(child));
+			decls.push({ ...parseDeclName(child), hasInitializer: false });
 		}
 	}
 
@@ -937,7 +957,7 @@ function parseDeclName(node: SyntaxNode): DeclInfo {
 		}
 	}
 
-	return { name: current.text, isPointer, arraySize };
+	return { name: current.text, isPointer, arraySize, hasInitializer: false };
 }
 
 function escapeType(baseType: string, decl: DeclInfo): string {

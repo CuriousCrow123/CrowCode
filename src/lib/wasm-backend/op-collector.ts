@@ -169,7 +169,7 @@ export class OpCollector {
 		this.currentOps.push({ op: 'removeEntry', id: scopeId });
 	}
 
-	onDecl(namePtr: number, addr: number, size: number, typePtr: number, _line: number): void {
+	onDecl(namePtr: number, addr: number, size: number, typePtr: number, _line: number, flags: number = 0): void {
 		this.refreshMemory();
 		const name = this.readCString(namePtr);
 		const typeStr = this.readCString(typePtr);
@@ -177,7 +177,8 @@ export class OpCollector {
 		const entryId = `${scopeId}::${name}`;
 		const hexAddr = '0x' + addr.toString(16).padStart(8, '0');
 
-		const value = this.readValue(addr, size, typeStr);
+		const isUninitialized = (flags & 1) !== 0;
+		const value = isUninitialized ? '?' : this.readValue(addr, size, typeStr);
 
 		// If variable already exists in this scope (e.g., loop var re-declared each iteration),
 		// emit a setValue instead of addEntry to avoid duplicate IDs.
@@ -223,15 +224,24 @@ export class OpCollector {
 		if (info.type.endsWith('*')) {
 			const ptrValue = this.memory.getUint32(addr, true);
 			const heapBlock = this.findHeapBlock(ptrValue);
-			if (heapBlock && heapBlock.status === 'allocated') {
-				const baseType = info.type.slice(0, -1).trim();
-				const blockAddr = this.findHeapBlockAddr(heapBlock);
+			if (heapBlock) {
+				if (heapBlock.status === 'allocated') {
+					const baseType = info.type.slice(0, -1).trim();
+					const blockAddr = this.findHeapBlockAddr(heapBlock);
 
-				// First dereference: infer type and build children
-				this.typeHeapBlock(heapBlock, blockAddr, baseType);
+					// First dereference: infer type and build children
+					this.typeHeapBlock(heapBlock, blockAddr, baseType);
 
-				// Update all children values
-				this.updateHeapBlockValues(heapBlock, blockAddr, baseType);
+					// Update all children values
+					this.updateHeapBlockValues(heapBlock, blockAddr, baseType);
+				} else if (heapBlock.status === 'freed') {
+					// Use-after-free detected
+					this.currentOps.push({
+						op: 'setHeapStatus',
+						id: heapBlock.entryId,
+						status: 'use-after-free',
+					});
+				}
 			}
 		}
 	}
