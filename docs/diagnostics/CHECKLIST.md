@@ -47,7 +47,7 @@
 | p13.2 — String Literal | PASS | Pointer values correct. |
 | p13.6 — Function Pointer | PASS | Compiles. a=13, b=7. |
 | p13.8 — Array-to-Pointer Decay | PASS | Pointer arithmetic correct. |
-| p14.1 — Use-After-Free | PASS | *p=42 visible. Write-after-free emits setHeapStatus('use-after-free'). Read-after-free shows heap as 'freed'. |
+| p14.1 — Use-After-Free | PASS | *p=42 visible. Both read and write after free emit setHeapStatus('use-after-free'). |
 | p14.2 — String Functions | PASS | strcpy now tracked: heap shows copied string "hello". |
 | p14.3 — Math Functions | PASS | abs, sqrt, pow correct. |
 | p9.1 — sprintf Formats | PASS | Buffer contents tracked via post-call __crow_set. Shows "x=42", "hex=ff", etc. |
@@ -108,5 +108,4 @@
 
 | Issue | Reason | Status |
 |-------|--------|--------|
-| Read-after-free detection | Only write-through-freed-pointer is detected; reads show heap as 'freed' | Accepted |
 | snprintf not tracked | Could be added similarly to sprintf | Low priority |
