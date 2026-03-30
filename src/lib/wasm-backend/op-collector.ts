@@ -606,8 +606,10 @@ export class OpCollector {
 			return String(mem.getBigInt64(addr, true));
 		if (typeStr === 'unsigned long long')
 			return String(mem.getBigUint64(addr, true));
-		if (typeStr.endsWith('*'))
-			return '0x' + mem.getUint32(addr, true).toString(16).padStart(8, '0');
+		if (typeStr.endsWith('*')) {
+			const ptrVal = mem.getUint32(addr, true);
+			return ptrVal === 0 ? 'UNSET' : '0x' + ptrVal.toString(16).padStart(8, '0');
+		}
 		if (typeStr.startsWith('struct '))
 			return '';  // structs show children
 		if (typeStr.includes('['))
