@@ -41,6 +41,9 @@ export async function executeWasm(
 
 	// Build a minimal WASI shim for the user program
 	const fs = new VirtualFS();
+	if (stdin) {
+		fs.writeFile('<stdin>', new TextEncoder().encode(stdin));
+	}
 	const wasi = new WasiShim({
 		args: ['program'],
 		fs,

@@ -6,6 +6,8 @@
  * 2. User Program WASI — minimal, I/O only (most functions handled via __crow_* imports)
  */
 
+import { StdinExhausted } from './op-collector';
+
 // WASI error codes
 const WASI_ERRNO_SUCCESS = 0;
 const WASI_ERRNO_BADF = 8;
@@ -255,6 +257,10 @@ export class WasiShim {
 
 		const file = this.fs.getFile(entry.path);
 		if (!file) {
+			// stdin (fd 0) with no data — signal stdin exhaustion for interactive mode
+			if (fd === 0) {
+				throw new StdinExhausted();
+			}
 			view.setUint32(nreadPtr, 0, true);
 			return WASI_ERRNO_SUCCESS;
 		}
@@ -271,6 +277,11 @@ export class WasiShim {
 				totalRead += toRead;
 			}
 			if (toRead < bufLen) break;
+		}
+
+		// stdin exhausted — signal for interactive mode
+		if (fd === 0 && totalRead === 0) {
+			throw new StdinExhausted();
 		}
 
 		view.setUint32(nreadPtr, totalRead, true);
