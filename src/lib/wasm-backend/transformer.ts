@@ -283,6 +283,8 @@ function instrumentExpressionStatement(
 
 	// Check for malloc/free/scanf calls first
 	if (expr.type === 'assignment_expression') {
+		const lhs = expr.childForFieldName('left');
+		const lhsText = lhs?.text ?? '';
 		descriptionMap.set(line, { description: `Set ${exprText}` });
 		// Look for call expressions in the RHS (may be inside cast_expression)
 		findAndRewriteCalls(expr, replacements);
@@ -302,6 +304,7 @@ function instrumentExpressionStatement(
 			for (const target of targets.reverse()) {
 				text += `\n\t__crow_set("${target.name}", ${target.addrExpr}, ${line});`;
 			}
+			text += `\n\t__crow_eval_int(${lhsText});`;
 			text += `\n\t__crow_step(${line});`;
 			insertions.push({ offset: node.endIndex, text, priority: 5 });
 			return;
@@ -343,6 +346,7 @@ function instrumentExpressionStatement(
 			if (actualOperand) {
 				const name = actualOperand.text;
 				let text = `\n\t__crow_set("${name}", &${name}, ${line});`;
+				text += `\n\t__crow_eval_int(${name});`;
 				text += `\n\t__crow_step(${line});`;
 				insertions.push({ offset: node.endIndex, text, priority: 5 });
 				return;

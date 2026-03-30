@@ -68,6 +68,9 @@ export class OpCollector {
 	private stdinOffset = 0;
 	private stdinEntryAdded = false;
 
+	// Evaluation capture
+	private pendingEval: string | null = null;
+
 	// Limits
 	private stepCount = 0;
 	private maxSteps: number;
@@ -150,6 +153,11 @@ export class OpCollector {
 			ops: this.currentOps,
 			ioEvents: this.currentIoEvents.length > 0 ? [...this.currentIoEvents] : undefined,
 		});
+		// Attach runtime evaluation captured by __crow_eval_int
+		if (this.pendingEval !== null) {
+			this.steps[this.steps.length - 1].evaluation = `→ ${this.pendingEval}`;
+			this.pendingEval = null;
+		}
 		this.currentOps = [];
 		this.currentIoEvents = [];
 	}
@@ -364,6 +372,12 @@ export class OpCollector {
 		}
 	}
 
+	// === Evaluation capture ===
+
+	onEvalInt(value: number): void {
+		this.pendingEval = String(value);
+	}
+
 	// === scanf callbacks ===
 
 	onScanfInt(ptr: number, _line: number): number {
@@ -532,12 +546,7 @@ export class OpCollector {
 				}
 			}
 
-			if (step.description?.startsWith('Set ')) {
-				const setOp = step.ops.find(op => op.op === 'setValue');
-				if (setOp && setOp.op === 'setValue' && setOp.value) {
-					step.evaluation = `→ ${setOp.value}`;
-				}
-			}
+			// "Set" evaluations come from __crow_eval_int at runtime (already attached in onStep)
 
 			if (step.ioEvents?.length) {
 				const writes = step.ioEvents.filter(e => e.kind === 'write');

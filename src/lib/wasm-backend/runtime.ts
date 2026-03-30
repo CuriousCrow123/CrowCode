@@ -65,6 +65,7 @@ export async function executeWasm(
 			collector.onDecl(namePtr, addr, size, typePtr, line, flags),
 		__crow_set: (namePtr: number, addr: number, line: number) =>
 			collector.onSet(namePtr, addr, line),
+		__crow_eval_int: (value: number) => collector.onEvalInt(value),
 
 		// Heap callbacks
 		__crow_malloc: (size: number, line: number) => collector.onMalloc(size, line),

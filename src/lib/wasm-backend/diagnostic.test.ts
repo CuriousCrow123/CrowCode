@@ -144,6 +144,7 @@ async function runPipeline(source: string, stdin?: string): Promise<{
 		__crow_decl: (namePtr: number, addr: number, size: number, typePtr: number, line: number, flags: number) =>
 			collector.onDecl(namePtr, addr, size, typePtr, line, flags),
 		__crow_set: (namePtr: number, addr: number, line: number) => collector.onSet(namePtr, addr, line),
+		__crow_eval_int: (value: number) => collector.onEvalInt(value),
 		__crow_malloc: (size: number, line: number) => collector.onMalloc(size, line),
 		__crow_calloc: (count: number, size: number, line: number) => collector.onCalloc(count, size, line),
 		__crow_realloc: (ptr: number, size: number, line: number) => collector.onRealloc(ptr, size, line),
