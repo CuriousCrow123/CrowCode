@@ -38,7 +38,7 @@
 
 	// Backend mode: interpreter (default) or compiled (WASM via xcc)
 	type BackendMode = 'interpreter' | 'compiled';
-	let backendMode = $state<BackendMode>('interpreter');
+	let backendMode = $state<BackendMode>('compiled');
 
 	// Editor resize
 	let editorHeight = $state(typeof window !== 'undefined' ? Math.round(window.innerHeight * 0.55) : 500);
@@ -481,17 +481,9 @@
 			if (!step?.description && !step?.evaluation) return [];
 			return [{ description: step.description, evaluation: step.evaluation }];
 		}
-		const pos = visiblePosition;
-		const startIdx = pos > 0 ? visibleIndices[pos - 1] + 1 : 0;
-		const endIdx = internalIndex;
-		const descs: Array<{ description?: string; evaluation?: string }> = [];
-		for (let i = startIdx; i <= endIdx; i++) {
-			const step = steps[i];
-			if (step?.description || step?.evaluation) {
-				descs.push({ description: step.description, evaluation: step.evaluation });
-			}
-		}
-		return descs;
+		const step = steps[internalIndex];
+		if (!step?.description && !step?.evaluation) return [];
+		return [{ description: step.description, evaluation: step.evaluation }];
 	});
 
 	function prev() {
