@@ -66,6 +66,7 @@ export class OpCollector {
 	// Stdin
 	private stdinBuffer = '';
 	private stdinOffset = 0;
+	private stdinEntryAdded = false;
 
 	// Limits
 	private stepCount = 0;
@@ -99,19 +100,25 @@ export class OpCollector {
 		this.stdinBuffer = stdin;
 		this.stdinOffset = 0;
 		if (stdin.length > 0) {
-			this.currentOps.push({
-				op: 'addEntry',
-				parentId: null,
-				entry: {
-					id: 'stdin',
-					name: 'stdin',
-					type: 'char[]',
-					value: this.formatStdinDisplay(0),
-					address: '',
-					kind: 'io',
-				},
-			});
+			this.ensureStdinEntry();
 		}
+	}
+
+	private ensureStdinEntry(): void {
+		if (this.stdinEntryAdded) return;
+		this.stdinEntryAdded = true;
+		this.currentOps.push({
+			op: 'addEntry',
+			parentId: null,
+			entry: {
+				id: 'stdin',
+				name: 'stdin',
+				type: 'char[]',
+				value: this.stdinBuffer.length > 0 ? this.formatStdinDisplay(0) : '(waiting for input)',
+				address: '',
+				kind: 'io',
+			},
+		});
 	}
 
 	// === Callback methods (called from WASM) ===
@@ -360,6 +367,7 @@ export class OpCollector {
 	// === scanf callbacks ===
 
 	onScanfInt(ptr: number, _line: number): number {
+		this.ensureStdinEntry();
 		const input = this.consumeNextToken();
 		if (input === null) throw new StdinExhausted();
 		const val = parseInt(input, 10);
@@ -373,6 +381,7 @@ export class OpCollector {
 	}
 
 	onScanfFloat(ptr: number, _line: number): number {
+		this.ensureStdinEntry();
 		const input = this.consumeNextToken();
 		if (input === null) throw new StdinExhausted();
 		const val = parseFloat(input);
@@ -386,6 +395,7 @@ export class OpCollector {
 	}
 
 	onScanfDouble(ptr: number, _line: number): number {
+		this.ensureStdinEntry();
 		const input = this.consumeNextToken();
 		if (input === null) throw new StdinExhausted();
 		const val = parseFloat(input);
@@ -399,6 +409,7 @@ export class OpCollector {
 	}
 
 	onScanfChar(ptr: number, _line: number): number {
+		this.ensureStdinEntry();
 		if (this.stdinOffset >= this.stdinBuffer.length) throw new StdinExhausted();
 		const ch = this.stdinBuffer[this.stdinOffset++];
 		this.refreshMemory();
@@ -410,6 +421,7 @@ export class OpCollector {
 	}
 
 	onScanfString(bufPtr: number, _bufSize: number, _line: number): number {
+		this.ensureStdinEntry();
 		const input = this.consumeNextToken();
 		if (input === null) throw new StdinExhausted();
 		this.refreshMemory();
@@ -425,6 +437,7 @@ export class OpCollector {
 	// === stdio input callbacks ===
 
 	onGetchar(): number {
+		this.ensureStdinEntry();
 		if (this.stdinOffset >= this.stdinBuffer.length) throw new StdinExhausted();
 		const ch = this.stdinBuffer[this.stdinOffset++];
 		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed: ch, cursorPos: this.stdinOffset });
@@ -435,6 +448,7 @@ export class OpCollector {
 	// === WASI stdin callback ===
 
 	onStdinRead(consumed: string, cursorPos: number): void {
+		this.ensureStdinEntry();
 		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed, cursorPos });
 		this.updateStdinDisplay(cursorPos);
 	}
