@@ -11,6 +11,8 @@
 	import StdinInput from '$lib/components/StdinInput.svelte';
 	import { buildSnapshots, buildConsoleOutputs, getVisibleIndices, nearestVisibleIndex } from '$lib/engine';
 	import FeatureSearch from '$lib/components/FeatureSearch.svelte';
+	import { features as interpreterFeatures } from '$lib/data/features';
+	import { compiledFeatures } from '$lib/data/features-compiled';
 
 	const store = createEditorTabStore();
 	initPersistence(store);
@@ -35,6 +37,11 @@
 	// I/O mode: pre-supplied or interactive
 	type IoMode = 'presupplied' | 'interactive';
 	let ioMode = $state<IoMode>('interactive');
+
+	// Backend mode: interpreter (default) or compiled (WASM via xcc)
+	type BackendMode = 'interpreter' | 'compiled';
+	let backendMode = $state<BackendMode>('compiled');
+	const activeFeatures = $derived(backendMode === 'compiled' ? compiledFeatures : interpreterFeatures);
 
 	// Editor resize
 	let editorHeight = $state(typeof window !== 'undefined' ? Math.round(window.innerHeight * 0.55) : 500);
@@ -69,6 +76,10 @@
 	let errors = $state<string[]>([]);
 	let warnings = $state<string[]>([]);
 
+	// Compilation progress (for compiled backend)
+	let runStatus = $state('');
+	let runProgress = $state(0);
+
 	// Interactive mode: history of user-submitted stdin with the step index they were entered at
 	let interactiveStdinEntries = $state<{ text: string; afterStep: number }[]>([]);
 
@@ -85,12 +96,19 @@
 	// Abort guard for stale runs
 	let runGeneration = 0;
 
+	function updateProgress(stage: string, pct: number) {
+		runStatus = stage;
+		runProgress = pct;
+	}
+
 	async function run() {
 		const thisRun = ++runGeneration;
 		mode = { state: 'running' };
 		errors = [];
 		warnings = [];
 		interactiveStdinEntries = [];
+		runStatus = backendMode === 'compiled' ? 'Starting...' : 'Running...';
+		runProgress = 0;
 
 		try {
 			if (ioMode === 'interactive') {
@@ -106,10 +124,16 @@
 	}
 
 	async function runPreSupplied(thisRun: number) {
-		const { runProgram } = await import('$lib/interpreter/service');
-		if (thisRun !== runGeneration) return;
-
-		const result = await runProgram(store.activeTab.source, stdinInput || undefined);
+		let result;
+		if (backendMode === 'compiled') {
+			const { runWasmProgram } = await import('$lib/wasm-backend');
+			if (thisRun !== runGeneration) return;
+			result = await runWasmProgram(store.activeTab.source, stdinInput || undefined, updateProgress);
+		} else {
+			const { runProgram } = await import('$lib/interpreter/service');
+			if (thisRun !== runGeneration) return;
+			result = await runProgram(store.activeTab.source, stdinInput || undefined);
+		}
 		if (thisRun !== runGeneration) return;
 
 		errors = result.errors;
@@ -141,10 +165,16 @@
 	}
 
 	async function runInteractive(thisRun: number) {
-		const { runProgramInteractive } = await import('$lib/interpreter/service');
-		if (thisRun !== runGeneration) return;
-
-		const session = await runProgramInteractive(store.activeTab.source);
+		let session;
+		if (backendMode === 'compiled') {
+			const { runWasmProgramInteractive } = await import('$lib/wasm-backend');
+			if (thisRun !== runGeneration) return;
+			session = await runWasmProgramInteractive(store.activeTab.source, updateProgress);
+		} else {
+			const { runProgramInteractive } = await import('$lib/interpreter/service');
+			if (thisRun !== runGeneration) return;
+			session = await runProgramInteractive(store.activeTab.source);
+		}
 		if (thisRun !== runGeneration) return;
 
 		handleInteractiveSession(session, thisRun);
@@ -454,17 +484,9 @@
 			if (!step?.description && !step?.evaluation) return [];
 			return [{ description: step.description, evaluation: step.evaluation }];
 		}
-		const pos = visiblePosition;
-		const startIdx = pos > 0 ? visibleIndices[pos - 1] + 1 : 0;
-		const endIdx = internalIndex;
-		const descs: Array<{ description?: string; evaluation?: string }> = [];
-		for (let i = startIdx; i <= endIdx; i++) {
-			const step = steps[i];
-			if (step?.description || step?.evaluation) {
-				descs.push({ description: step.description, evaluation: step.evaluation });
-			}
-		}
-		return descs;
+		const step = steps[internalIndex];
+		if (!step?.description && !step?.evaluation) return [];
+		return [{ description: step.description, evaluation: step.evaluation }];
 	});
 
 	function prev() {
@@ -614,6 +636,22 @@
 		</div>
 	</div>
 
+	<!-- Compilation progress -->
+	{#if mode.state === 'running' && backendMode === 'compiled'}
+		<div class="w-full max-w-7xl mb-3">
+			<div class="flex items-center gap-3 mb-1.5">
+				<div class="w-3.5 h-3.5 border-2 border-blue-400/60 border-t-blue-400 rounded-full animate-spin"></div>
+				<span class="text-sm font-mono text-zinc-300">{runStatus}</span>
+			</div>
+			<div class="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+				<div
+					class="h-full bg-blue-500/70 rounded-full transition-all duration-300 ease-out"
+					style="width: {runProgress}%"
+				></div>
+			</div>
+		</div>
+	{/if}
+
 	<!-- Errors / Warnings -->
 	{#if errors.length > 0}
 		<div class="w-full max-w-7xl mb-3 bg-red-500/10 border border-red-500/30 rounded p-3" role="alert">
@@ -651,20 +689,38 @@
 				<div class="w-8 h-0.5 rounded-full bg-zinc-700 group-hover:bg-zinc-500 group-active:bg-zinc-400 transition-colors"></div>
 			</div>
 			<div class="flex flex-col gap-3">
-				<!-- I/O mode toggle (visible when program uses stdin functions) -->
-				{#if needsStdin && mode.state === 'editing'}
-					<div class="flex items-center gap-2 shrink-0">
-						<span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">I/O Mode</span>
-						<button
-							onclick={() => ioMode = 'interactive'}
-							class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'interactive' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
-						>Interactive</button>
-						<button
-							onclick={() => ioMode = 'presupplied'}
-							class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'presupplied' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
-						>Pre-supplied</button>
-					</div>
-				{/if}
+				<div class="flex items-center gap-4 shrink-0 flex-wrap">
+					<!-- Backend mode toggle -->
+					{#if mode.state === 'editing'}
+						<div class="flex items-center gap-2">
+							<span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">Backend</span>
+							<button
+								onclick={() => { backendMode = 'interpreter'; runCache.clear(); }}
+								class="px-2.5 py-1 rounded text-xs font-mono transition-colors {backendMode === 'interpreter' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
+							>Interpreted</button>
+							<button
+								onclick={() => { backendMode = 'compiled'; runCache.clear(); }}
+								class="px-2.5 py-1 rounded text-xs font-mono transition-colors {backendMode === 'compiled' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-zinc-500 hover:text-zinc-300'}"
+							>Compiled</button>
+						</div>
+					{:else if backendMode === 'compiled'}
+						<span class="px-2 py-0.5 rounded text-xs font-mono bg-blue-500/15 text-blue-400 border border-blue-500/20">Compiled</span>
+					{/if}
+					<!-- I/O mode toggle (visible when program uses stdin functions) -->
+					{#if needsStdin && mode.state === 'editing'}
+						<div class="flex items-center gap-2">
+							<span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">I/O Mode</span>
+							<button
+								onclick={() => ioMode = 'interactive'}
+								class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'interactive' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
+							>Interactive</button>
+							<button
+								onclick={() => ioMode = 'presupplied'}
+								class="px-2.5 py-1 rounded text-xs font-mono transition-colors {ioMode === 'presupplied' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'}"
+							>Pre-supplied</button>
+						</div>
+					{/if}
+				</div>
 				<!-- Pre-supplied mode: StdinInput + ConsolePanel (output only) -->
 				{#if ioMode === 'presupplied'}
 					{#if needsStdin}
@@ -736,5 +792,5 @@
 </main>
 
 {#if showFeatures}
-	<FeatureSearch onclose={() => showFeatures = false} />
+	<FeatureSearch onclose={() => showFeatures = false} features={activeFeatures} />
 {/if}
