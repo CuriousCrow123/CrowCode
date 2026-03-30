@@ -235,7 +235,13 @@ function instrumentDeclaration(node: SyntaxNode, insertions: Insertion[], replac
 		findAndRewriteCalls(node, replacements);
 	}
 
+	// Scan initializers for pointer dereferences to enable use-after-free detection on reads
+	const derefVars = findPointerDerefsInNode(node);
+
 	let text = '';
+	for (const v of derefVars) {
+		text += `\n\t__crow_set("${v}", &${v}, ${line});`;
+	}
 	for (const decl of declarators) {
 		const flags = decl.hasInitializer ? 0 : 1;
 		text += `\n\t__crow_decl("${decl.name}", &${decl.name}, sizeof(${decl.name}), "${escapeType(typeStr, decl)}", ${line}, ${flags});`;
@@ -270,7 +276,14 @@ function instrumentExpressionStatement(
 		// Track all assigned variables (handles chained: a = b = c = 42)
 		const targets = collectChainedTargets(expr);
 		if (targets.length > 0) {
+			// Scan RHS for pointer dereferences (enables read-after-free detection)
+			const rhs = expr.childForFieldName('right');
+			const derefVars = rhs ? findPointerDerefsInNode(rhs) : [];
+
 			let text = '';
+			for (const v of derefVars) {
+				text += `\n\t__crow_set("${v}", &${v}, ${line});`;
+			}
 			// Emit __crow_set for each target (innermost first for correct eval order)
 			for (const target of targets.reverse()) {
 				text += `\n\t__crow_set("${target.name}", ${target.addrExpr}, ${line});`;
@@ -965,6 +978,42 @@ function escapeType(baseType: string, decl: DeclInfo): string {
 	if (decl.isPointer) type += '*';
 	if (decl.arraySize) type += `[${decl.arraySize}]`;
 	return type;
+}
+
+/**
+ * Find identifiers that are dereferenced via * or [] in an expression tree.
+ * Used to emit __crow_set for pointer vars read through dereference,
+ * enabling use-after-free detection on reads like `int x = *p;`.
+ */
+function findPointerDerefsInNode(node: SyntaxNode): string[] {
+	const names: string[] = [];
+	walkForPointerDerefs(node, names);
+	return [...new Set(names)]; // deduplicate
+}
+
+function walkForPointerDerefs(node: SyntaxNode, names: string[]): void {
+	if (node.type === 'pointer_expression') {
+		// *p or &p — only care about dereference (*)
+		const op = node.child(0);
+		if (op?.text === '*') {
+			const arg = node.child(1);
+			if (arg?.type === 'identifier') {
+				names.push(arg.text);
+			}
+		}
+		return; // don't recurse into children — we found the deref
+	}
+	if (node.type === 'subscript_expression') {
+		// p[i] — equivalent to *(p+i), the array base is being dereferenced
+		const obj = node.childForFieldName('argument') ?? node.child(0);
+		if (obj?.type === 'identifier') {
+			names.push(obj.text);
+		}
+		return;
+	}
+	for (let i = 0; i < node.childCount; i++) {
+		walkForPointerDerefs(node.child(i)!, names);
+	}
 }
 
 function collectChainedTargets(expr: SyntaxNode): { name: string; addrExpr: string }[] {
