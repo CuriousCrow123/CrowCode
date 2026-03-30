@@ -137,7 +137,8 @@ int main() {
 		const { instrumented, errors } = transformSource(parser, source);
 		expect(errors).toEqual([]);
 		expect(instrumented).toContain('__crow_decl("i", &i, sizeof(i), "int"');
-		expect(instrumented).toContain('__crow_set("i", &i,');
+		// Loop update var tracking was removed (SYS-5/SYS-7) — re-declaration path handles it
+		expect(instrumented).not.toContain('__crow_set("i", &i,');
 	});
 
 	it('instruments if/else', () => {

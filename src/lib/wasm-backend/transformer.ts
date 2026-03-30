@@ -8,9 +8,13 @@
 
 import type { Parser as ParserType, SyntaxNode } from 'web-tree-sitter';
 
+export type StructField = { name: string; type: string };
+export type StructRegistry = Map<string, StructField[]>;
+
 export type TransformResult = {
 	instrumented: string;
 	errors: string[];
+	structRegistry: StructRegistry;
 };
 
 type Insertion = {
@@ -34,18 +38,21 @@ type Replacement = {
 export function transformSource(parser: ParserType, source: string): TransformResult {
 	const tree = parser.parse(source);
 	if (!tree || !tree.rootNode) {
-		return { instrumented: source, errors: ['Failed to parse source'] };
+		return { instrumented: source, errors: ['Failed to parse source'], structRegistry: new Map() };
 	}
 
 	// Check for parse errors
 	const errors: string[] = [];
 	findErrors(tree.rootNode, errors);
 	if (errors.length > 0) {
-		return { instrumented: source, errors };
+		return { instrumented: source, errors, structRegistry: new Map() };
 	}
 
 	const insertions: Insertion[] = [];
 	const replacements: Replacement[] = [];
+
+	// Extract struct definitions for the type registry
+	const structRegistry = extractStructDefinitions(tree.rootNode);
 
 	// Walk the CST and collect instrumentation points
 	walkNode(tree.rootNode, insertions, replacements);
@@ -57,7 +64,7 @@ export function transformSource(parser: ParserType, source: string): TransformRe
 	// Prepend __crow.h include
 	result = '#include "__crow.h"\n' + result;
 
-	return { instrumented: result, errors: [] };
+	return { instrumented: result, errors: [], structRegistry };
 }
 
 function findErrors(node: SyntaxNode, errors: string[]): void {
@@ -118,6 +125,32 @@ function walkNode(
 		case 'switch_statement':
 			instrumentSwitch(node, insertions, replacements);
 			return;
+
+		case 'compound_statement':
+			// Anonymous block inside a function body — add scope push/pop for variable shadowing
+			if (isInFunctionBody(node) && node.parent?.type === 'compound_statement') {
+				const blockLine = node.startPosition.row + 1;
+				const openBrace = node.child(0);
+				const closeBrace = node.child(node.childCount - 1);
+				if (openBrace?.text === '{' && closeBrace?.text === '}') {
+					insertions.push({
+						offset: openBrace.endIndex,
+						text: `\n\t__crow_push_scope("block", ${blockLine});\n\t__crow_step(${blockLine});`,
+						priority: 8,
+					});
+					insertions.push({
+						offset: closeBrace.startIndex,
+						text: `\t__crow_pop_scope();\n`,
+						priority: 0,
+					});
+					// Recurse into body (skip braces)
+					for (let i = 1; i < node.childCount - 1; i++) {
+						walkNode(node.child(i)!, insertions, replacements);
+					}
+					return;
+				}
+			}
+			break;
 	}
 
 	// Default: recurse into children
@@ -167,12 +200,13 @@ function instrumentFunction(
 	// Check if function has an explicit return at the end
 	const hasTrailingReturn = bodyHasTrailingReturn(body);
 	if (!hasTrailingReturn) {
-		// Add __crow_pop_scope() before closing brace
+		// Add step + __crow_pop_scope() before closing brace
 		const closeBrace = body.child(body.childCount - 1);
 		if (closeBrace && closeBrace.text === '}') {
+			const closeLine = closeBrace.startPosition.row + 1;
 			insertions.push({
 				offset: closeBrace.startIndex,
-				text: '\t__crow_pop_scope();\n',
+				text: `\t__crow_step(${closeLine});\n\t__crow_pop_scope();\n`,
 				priority: 0,
 			});
 		}
@@ -232,11 +266,14 @@ function instrumentExpressionStatement(
 		// Look for call expressions in the RHS (may be inside cast_expression)
 		findAndRewriteCalls(expr, replacements);
 
-		// Track assigned variable
-		const lhs = expr.childForFieldName('left');
-		const setName = extractSetTarget(lhs);
-		if (setName) {
-			let text = `\n\t__crow_set("${setName.name}", ${setName.addrExpr}, ${line});`;
+		// Track all assigned variables (handles chained: a = b = c = 42)
+		const targets = collectChainedTargets(expr);
+		if (targets.length > 0) {
+			let text = '';
+			// Emit __crow_set for each target (innermost first for correct eval order)
+			for (const target of targets.reverse()) {
+				text += `\n\t__crow_set("${target.name}", ${target.addrExpr}, ${line});`;
+			}
 			text += `\n\t__crow_step(${line});`;
 			insertions.push({ offset: node.endIndex, text, priority: 5 });
 			return;
@@ -285,9 +322,10 @@ function instrumentExpressionStatement(
  * Instrument a return statement: add __crow_pop_scope() before it.
  */
 function instrumentReturn(node: SyntaxNode, insertions: Insertion[]): void {
+	const line = node.startPosition.row + 1;
 	insertions.push({
 		offset: node.startIndex,
-		text: '__crow_pop_scope();\n\t',
+		text: `__crow_step(${line});\n\t__crow_pop_scope();\n\t`,
 		priority: 5,
 	});
 }
@@ -330,23 +368,6 @@ function instrumentFor(
 			walkNode(body.child(i)!, insertions, replacements);
 		}
 
-		// Add update tracking before closing brace
-		const update = node.childForFieldName('update');
-		if (update) {
-			const closeBrace = body.child(body.childCount - 1);
-			if (closeBrace && closeBrace.text === '}') {
-				const updateVars = extractUpdateVars(update);
-				let updateText = '';
-				for (const v of updateVars) {
-					updateText += `\t__crow_set("${v}", &${v}, ${line});\n`;
-				}
-				insertions.push({
-					offset: closeBrace.startIndex,
-					text: updateText,
-					priority: 3,
-				});
-			}
-		}
 	} else {
 		// Single-statement body — recurse
 		walkNode(body, insertions, replacements);
@@ -662,6 +683,48 @@ function extractArgList(argsNode: SyntaxNode): string[] {
 
 // === Helpers ===
 
+// === Struct registry extraction ===
+
+function extractStructDefinitions(rootNode: SyntaxNode): StructRegistry {
+	const registry: StructRegistry = new Map();
+	walkForStructs(rootNode, registry);
+	return registry;
+}
+
+function walkForStructs(node: SyntaxNode, registry: StructRegistry): void {
+	if (node.type === 'struct_specifier') {
+		const nameNode = node.childForFieldName('name');
+		const body = node.childForFieldName('body');
+		if (nameNode && body) {
+			const fields: StructField[] = [];
+			for (let i = 0; i < body.childCount; i++) {
+				const child = body.child(i)!;
+				if (child.type === 'field_declaration') {
+					const typeNode = child.childForFieldName('type');
+					let typeStr = typeNode?.text ?? 'int';
+					// Check for struct specifier in field type
+					for (let j = 0; j < child.childCount; j++) {
+						const fc = child.child(j)!;
+						if (fc.type === 'struct_specifier') {
+							typeStr = `struct ${fc.childForFieldName('name')?.text ?? ''}`;
+							break;
+						}
+					}
+					const declarator = child.childForFieldName('declarator');
+					if (declarator) {
+						const info = parseDeclName(declarator);
+						fields.push({ name: info.name, type: escapeType(typeStr, info) });
+					}
+				}
+			}
+			registry.set(nameNode.text, fields);
+		}
+	}
+	for (let i = 0; i < node.childCount; i++) {
+		walkForStructs(node.child(i)!, registry);
+	}
+}
+
 function isInFunctionBody(node: SyntaxNode): boolean {
 	let parent = node.parent;
 	while (parent) {
@@ -821,12 +884,33 @@ function parseDeclName(node: SyntaxNode): DeclInfo {
 				}
 			}
 		} else if (current.type === 'array_declarator') {
-			// Extract array size
+			// Extract array size — accumulate dimensions for 2D+ arrays
 			const sizeNode = current.child(2); // identifier [ SIZE ]
 			if (sizeNode && sizeNode.text !== ']') {
-				arraySize = sizeNode.text;
+				arraySize = arraySize ? `${arraySize}][${sizeNode.text}` : sizeNode.text;
 			}
 			current = current.child(0)!;
+		} else if (current.type === 'function_declarator') {
+			// Function pointer: (*fp)(int, int)
+			isPointer = true;
+			const inner = current.childForFieldName('declarator');
+			if (inner) {
+				current = inner;
+			} else {
+				break;
+			}
+		} else if (current.type === 'parenthesized_declarator') {
+			// Unwrap: (*fp) → pointer_declarator → fp
+			let found = false;
+			for (let i = 0; i < current.childCount; i++) {
+				const child = current.child(i)!;
+				if (child.type !== '(' && child.type !== ')') {
+					current = child;
+					found = true;
+					break;
+				}
+			}
+			if (!found) break;
 		} else {
 			break;
 		}
@@ -840,6 +924,19 @@ function escapeType(baseType: string, decl: DeclInfo): string {
 	if (decl.isPointer) type += '*';
 	if (decl.arraySize) type += `[${decl.arraySize}]`;
 	return type;
+}
+
+function collectChainedTargets(expr: SyntaxNode): { name: string; addrExpr: string }[] {
+	const targets: { name: string; addrExpr: string }[] = [];
+	const lhs = expr.childForFieldName('left');
+	const target = extractSetTarget(lhs);
+	if (target) targets.push(target);
+
+	const rhs = expr.childForFieldName('right');
+	if (rhs && rhs.type === 'assignment_expression') {
+		targets.push(...collectChainedTargets(rhs));
+	}
+	return targets;
 }
 
 function extractSetTarget(node: SyntaxNode | null): { name: string; addrExpr: string } | null {
@@ -892,24 +989,6 @@ function extractFieldRoot(node: SyntaxNode): string | null {
 		return current.text;
 	}
 	return null;
-}
-
-function extractUpdateVars(update: SyntaxNode): string[] {
-	const vars: string[] = [];
-
-	if (update.type === 'update_expression') {
-		const operand = update.text.replace(/^\+\+|^\-\-|\+\+$|\-\-$/, '');
-		if (operand) vars.push(operand);
-	} else if (update.type === 'assignment_expression') {
-		const lhs = update.childForFieldName('left');
-		if (lhs) vars.push(lhs.text);
-	} else if (update.type === 'comma_expression') {
-		for (let i = 0; i < update.childCount; i++) {
-			vars.push(...extractUpdateVars(update.child(i)!));
-		}
-	}
-
-	return vars;
 }
 
 function bodyHasTrailingReturn(body: SyntaxNode): boolean {

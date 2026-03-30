@@ -6,6 +6,7 @@
 
 import type { Program } from '$lib/types';
 import { OpCollector, StepLimitExceeded, StdinExhausted } from './op-collector';
+import type { StructRegistry } from './transformer';
 import { WasiShim, VirtualFS, ProgramExit } from './wasi-shim';
 
 export type ExecuteResult = {
@@ -29,8 +30,9 @@ export async function executeWasm(
 	source: string,
 	maxSteps: number,
 	stdin?: string,
+	structRegistry?: StructRegistry,
 ): Promise<ExecuteResult> {
-	const collector = new OpCollector(maxSteps);
+	const collector = new OpCollector(maxSteps, structRegistry);
 	if (stdin) collector.setStdin(stdin);
 
 	let stdinExhausted = false;

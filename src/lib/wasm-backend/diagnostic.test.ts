@@ -114,7 +114,7 @@ async function runPipeline(source: string, stdin?: string): Promise<{
 	errors: string[];
 	compileErrors: string[];
 }> {
-	const { instrumented, errors: tErrors } = transformSource(parser, source);
+	const { instrumented, errors: tErrors, structRegistry } = transformSource(parser, source);
 	if (tErrors.length > 0) {
 		return { instrumented, program: { name: '', source, steps: [] }, snapshots: [], errors: tErrors, compileErrors: [] };
 	}
@@ -124,7 +124,7 @@ async function runPipeline(source: string, stdin?: string): Promise<{
 		return { instrumented, program: { name: '', source, steps: [] }, snapshots: [], errors: [], compileErrors: result };
 	}
 
-	const collector = new OpCollector(500);
+	const collector = new OpCollector(500, structRegistry);
 	if (stdin) collector.setStdin(stdin);
 	const runtimeErrors: string[] = [];
 

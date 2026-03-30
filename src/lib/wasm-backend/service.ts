@@ -46,7 +46,7 @@ export async function runWasmProgram(source: string, stdin?: string, onProgress?
 
 	onProgress?.('Instrumenting source...', 15);
 	const { transformSource } = await import('./transformer');
-	const { instrumented, errors: transformErrors } = transformSource(parser, source);
+	const { instrumented, errors: transformErrors, structRegistry } = transformSource(parser, source);
 	const tTransform = performance.now();
 
 	if (transformErrors.length > 0) {
@@ -73,7 +73,7 @@ export async function runWasmProgram(source: string, stdin?: string, onProgress?
 	await new Promise((resolve) => requestAnimationFrame(resolve));
 
 	const { program, errors: runtimeErrors } = await executeWasm(
-		wasm, 'user_program', source, MAX_STEPS, stdin,
+		wasm, 'user_program', source, MAX_STEPS, stdin, structRegistry,
 	);
 	const tExec = performance.now();
 
@@ -105,7 +105,7 @@ export async function runWasmProgramInteractive(source: string, onProgress?: Pro
 
 	onProgress?.('Instrumenting source...', 15);
 	const { transformSource } = await import('./transformer');
-	const { instrumented, errors: transformErrors } = transformSource(parser, source);
+	const { instrumented, errors: transformErrors, structRegistry } = transformSource(parser, source);
 
 	if (transformErrors.length > 0) {
 		return {
@@ -136,7 +136,7 @@ export async function runWasmProgramInteractive(source: string, onProgress?: Pro
 	async function runWithStdin(stdin: string): Promise<InteractiveSession> {
 		const { executeWasm } = await import('./runtime');
 		const { program, errors, stdinExhausted } = await executeWasm(
-			wasm!, 'user_program', source, MAX_STEPS, stdin,
+			wasm!, 'user_program', source, MAX_STEPS, stdin, structRegistry,
 		);
 
 		const warnings: string[] = [];
@@ -162,7 +162,7 @@ export async function runWasmProgramInteractive(source: string, onProgress?: Pro
 					resumed = true;
 					// Re-run with EOF flag — no more input
 					const result = await executeWasm(
-						wasm!, 'user_program', source, MAX_STEPS, accumulatedStdin,
+						wasm!, 'user_program', source, MAX_STEPS, accumulatedStdin, structRegistry,
 					);
 					const w: string[] = [];
 					if (result.program.steps.length >= MAX_STEPS) {
