@@ -403,6 +403,15 @@ export class OpCollector {
 		return 1;
 	}
 
+	// === stdio input callbacks ===
+
+	onGetchar(): number {
+		if (this.stdinOffset >= this.stdinBuffer.length) throw new StdinExhausted();
+		const ch = this.stdinBuffer[this.stdinOffset++];
+		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed: ch, cursorPos: this.stdinOffset });
+		return ch.charCodeAt(0);
+	}
+
 	// === string function callbacks ===
 
 	onStrcpy(destPtr: number, srcPtr: number, _line: number): number {

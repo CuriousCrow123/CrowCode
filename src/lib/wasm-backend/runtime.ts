@@ -92,8 +92,7 @@ export async function executeWasm(
 			return ch;
 		},
 		getchar: () => {
-			// Simple getchar from stdin
-			throw new StdinExhausted();
+			return collector.onGetchar();
 		},
 	};
 

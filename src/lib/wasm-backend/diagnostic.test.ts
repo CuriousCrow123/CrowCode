@@ -158,7 +158,7 @@ async function runPipeline(source: string, stdin?: string): Promise<{
 		puts: (strPtr: number) => { collector.onPrintf(collector.readCString(strPtr) + '\n'); return 0; },
 		putchar: (ch: number) => { collector.onPrintf(String.fromCharCode(ch)); return ch; },
 		printf: () => {},
-		getchar: () => { throw new StdinExhausted(); },
+		getchar: () => collector.onGetchar(),
 	};
 
 	try {
