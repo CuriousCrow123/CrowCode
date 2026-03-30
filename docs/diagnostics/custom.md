@@ -33,22 +33,22 @@ int main() {
 
 ## Steps (6 total)
 
-### Step 0 | Line 1 | 2 ops
+### Step 0 | Line 1 — Enter main() | 2 ops
 - addEntry(parent=null, id=main, name=main, type=, val=, kind=scope, addr=, children=0)
 - addEntry(parent=null, id=heap, name=Heap, type=, val=, kind=heap, addr=, children=0)
 
-### Step 1 | Line 2 | 1 ops
+### Step 1 | Line 2 — Declare int x = 5 | 1 ops
 - addEntry(parent=main, id=main::x, name=x, type=int, val=5, kind=, addr=0x00001ff0, children=0)
 
-### Step 2 | Line 3 | 1 ops
+### Step 2 | Line 3 — Set x = 10 → 10 | 1 ops
 - setValue(id=main::x, val=10)
 
-### Step 3 | Line 4 | 1 ops
+### Step 3 | Line 4 — Set x = x + 1 → 11 | 1 ops
 - setValue(id=main::x, val=11)
 
-### Step 4 | Line 5 | 0 ops
+### Step 4 | Line 5 — return 0 | 0 ops
 
-### Step 5 | Line 5 | 1 ops
+### Step 5 | Line 5 — return 0 | 1 ops
 - removeEntry(id=main)
 
 ## Snapshots (6 total)
