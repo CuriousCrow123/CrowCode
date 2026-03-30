@@ -25,3 +25,7 @@ vite.config.ts.timestamp-*
 
 # Generated
 src/lib/data/features.ts
+src/lib/data/features-compiled.ts
+
+# Diagnostic dumps (large, regenerated on demand)
+docs/diagnostics/
