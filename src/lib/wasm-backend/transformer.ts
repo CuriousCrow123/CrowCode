@@ -304,7 +304,10 @@ function instrumentExpressionStatement(
 			for (const target of targets.reverse()) {
 				text += `\n\t__crow_set("${target.name}", ${target.addrExpr}, ${line});`;
 			}
-			text += `\n\t__crow_eval_int(${lhsText});`;
+			// Skip eval for alloc assignments — pointer addresses as ints are meaningless
+			if (!containsAllocCall(expr)) {
+				text += `\n\t__crow_eval_int(${lhsText});`;
+			}
 			text += `\n\t__crow_step(${line});`;
 			insertions.push({ offset: node.endIndex, text, priority: 5 });
 			return;
@@ -1154,6 +1157,19 @@ function extractFieldRoot(node: SyntaxNode): string | null {
 		return current.text;
 	}
 	return null;
+}
+
+const ALLOC_FUNCTIONS = new Set(['malloc', 'calloc', 'realloc', 'free']);
+
+function containsAllocCall(node: SyntaxNode): boolean {
+	if (node.type === 'call_expression') {
+		const fn = node.childForFieldName('function');
+		if (fn && ALLOC_FUNCTIONS.has(fn.text)) return true;
+	}
+	for (let i = 0; i < node.childCount; i++) {
+		if (containsAllocCall(node.child(i)!)) return true;
+	}
+	return false;
 }
 
 function containsCallExpression(node: SyntaxNode): boolean {
