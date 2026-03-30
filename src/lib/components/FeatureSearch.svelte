@@ -1,19 +1,19 @@
 <script lang="ts">
 	import fuzzysort from 'fuzzysort';
-	import { features, type Feature } from '$lib/data/features';
+	import type { Feature } from '$lib/data/features';
 
-	let { onclose }: { onclose: () => void } = $props();
+	let { onclose, features }: { onclose: () => void; features: Feature[] } = $props();
 
 	let query = $state('');
 	let hoveredIndex = $state<number | null>(null);
 	let tooltipAbove = $state(false);
 
-	// Prepare fuzzysort targets once
-	const prepared = features.map((f) => ({
+	// Prepare fuzzysort targets — recompute when features change
+	const prepared = $derived(features.map((f) => ({
 		feature: f,
 		preparedName: fuzzysort.prepare(f.name),
 		preparedCategory: fuzzysort.prepare(f.category),
-	}));
+	})));
 
 	const filtered = $derived.by((): Feature[] => {
 		if (!query.trim()) return features;

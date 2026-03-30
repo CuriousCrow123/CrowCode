@@ -11,6 +11,8 @@
 	import StdinInput from '$lib/components/StdinInput.svelte';
 	import { buildSnapshots, buildConsoleOutputs, getVisibleIndices, nearestVisibleIndex } from '$lib/engine';
 	import FeatureSearch from '$lib/components/FeatureSearch.svelte';
+	import { features as interpreterFeatures } from '$lib/data/features';
+	import { compiledFeatures } from '$lib/data/features-compiled';
 
 	const store = createEditorTabStore();
 	initPersistence(store);
@@ -39,6 +41,7 @@
 	// Backend mode: interpreter (default) or compiled (WASM via xcc)
 	type BackendMode = 'interpreter' | 'compiled';
 	let backendMode = $state<BackendMode>('compiled');
+	const activeFeatures = $derived(backendMode === 'compiled' ? compiledFeatures : interpreterFeatures);
 
 	// Editor resize
 	let editorHeight = $state(typeof window !== 'undefined' ? Math.round(window.innerHeight * 0.55) : 500);
@@ -789,5 +792,5 @@
 </main>
 
 {#if showFeatures}
-	<FeatureSearch onclose={() => showFeatures = false} />
+	<FeatureSearch onclose={() => showFeatures = false} features={activeFeatures} />
 {/if}
