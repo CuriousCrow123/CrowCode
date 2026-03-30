@@ -114,7 +114,7 @@ async function runPipeline(source: string, stdin?: string): Promise<{
 	errors: string[];
 	compileErrors: string[];
 }> {
-	const { instrumented, errors: tErrors, structRegistry } = transformSource(parser, source);
+	const { instrumented, errors: tErrors, structRegistry, descriptionMap } = transformSource(parser, source);
 	if (tErrors.length > 0) {
 		return { instrumented, program: { name: '', source, steps: [] }, snapshots: [], errors: tErrors, compileErrors: [] };
 	}
@@ -124,7 +124,7 @@ async function runPipeline(source: string, stdin?: string): Promise<{
 		return { instrumented, program: { name: '', source, steps: [] }, snapshots: [], errors: [], compileErrors: result };
 	}
 
-	const collector = new OpCollector(500, structRegistry);
+	const collector = new OpCollector(500, structRegistry, descriptionMap);
 	if (stdin) collector.setStdin(stdin);
 	const runtimeErrors: string[] = [];
 
@@ -265,7 +265,9 @@ function writeDump(
 	lines.push('');
 	for (let i = 0; i < program.steps.length; i++) {
 		const step = program.steps[i];
-		lines.push(`### Step ${i} | Line ${step.location.line} | ${step.ops.length} ops`);
+		const descPart = step.description ? ` — ${step.description}` : '';
+		const evalPart = step.evaluation ? ` ${step.evaluation}` : '';
+		lines.push(`### Step ${i} | Line ${step.location.line}${descPart}${evalPart} | ${step.ops.length} ops`);
 		for (const op of step.ops) {
 			lines.push(`- ${formatOp(op)}`);
 		}

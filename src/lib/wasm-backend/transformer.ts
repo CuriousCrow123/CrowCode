@@ -10,11 +10,13 @@ import type { Parser as ParserType, SyntaxNode } from 'web-tree-sitter';
 
 export type StructField = { name: string; type: string };
 export type StructRegistry = Map<string, StructField[]>;
+export type StepDescription = { description: string };
 
 export type TransformResult = {
 	instrumented: string;
 	errors: string[];
 	structRegistry: StructRegistry;
+	descriptionMap: Map<number, StepDescription>;
 };
 
 type Insertion = {
@@ -38,24 +40,25 @@ type Replacement = {
 export function transformSource(parser: ParserType, source: string): TransformResult {
 	const tree = parser.parse(source);
 	if (!tree || !tree.rootNode) {
-		return { instrumented: source, errors: ['Failed to parse source'], structRegistry: new Map() };
+		return { instrumented: source, errors: ['Failed to parse source'], structRegistry: new Map(), descriptionMap: new Map() };
 	}
 
 	// Check for parse errors
 	const errors: string[] = [];
 	findErrors(tree.rootNode, errors);
 	if (errors.length > 0) {
-		return { instrumented: source, errors, structRegistry: new Map() };
+		return { instrumented: source, errors, structRegistry: new Map(), descriptionMap: new Map() };
 	}
 
 	const insertions: Insertion[] = [];
 	const replacements: Replacement[] = [];
+	const descriptionMap = new Map<number, StepDescription>();
 
 	// Extract struct definitions for the type registry
 	const structRegistry = extractStructDefinitions(tree.rootNode);
 
-	// Walk the CST and collect instrumentation points
-	walkNode(tree.rootNode, insertions, replacements);
+	// Walk the CST and collect instrumentation points + descriptions
+	walkNode(tree.rootNode, insertions, replacements, descriptionMap);
 
 	// Apply transformations
 	let result = applyReplacements(source, replacements);
@@ -64,7 +67,7 @@ export function transformSource(parser: ParserType, source: string): TransformRe
 	// Prepend __crow.h include
 	result = '#include "__crow.h"\n' + result;
 
-	return { instrumented: result, errors: [], structRegistry };
+	return { instrumented: result, errors: [], structRegistry, descriptionMap };
 }
 
 function findErrors(node: SyntaxNode, errors: string[]): void {
@@ -84,46 +87,47 @@ function walkNode(
 	node: SyntaxNode,
 	insertions: Insertion[],
 	replacements: Replacement[],
+	descriptionMap: Map<number, StepDescription>,
 ): void {
 	switch (node.type) {
 		case 'function_definition':
-			instrumentFunction(node, insertions, replacements);
+			instrumentFunction(node, insertions, replacements, descriptionMap);
 			return; // Don't recurse — instrumentFunction handles children
 
 		case 'declaration':
 			// Only instrument top-level declarations inside function bodies
 			if (isInFunctionBody(node)) {
-				instrumentDeclaration(node, insertions, replacements);
+				instrumentDeclaration(node, insertions, replacements, descriptionMap);
 			}
 			break;
 
 		case 'expression_statement':
 			if (isInFunctionBody(node)) {
-				instrumentExpressionStatement(node, insertions, replacements);
+				instrumentExpressionStatement(node, insertions, replacements, descriptionMap);
 			}
 			break;
 
 		case 'return_statement':
 			if (isInFunctionBody(node)) {
-				instrumentReturn(node, insertions);
+				instrumentReturn(node, insertions, descriptionMap);
 			}
 			break;
 
 		case 'for_statement':
-			instrumentFor(node, insertions, replacements);
+			instrumentFor(node, insertions, replacements, descriptionMap);
 			return;
 
 		case 'while_statement':
 		case 'do_statement':
-			instrumentLoop(node, insertions, replacements);
+			instrumentLoop(node, insertions, replacements, descriptionMap);
 			return;
 
 		case 'if_statement':
-			instrumentIf(node, insertions, replacements);
+			instrumentIf(node, insertions, replacements, descriptionMap);
 			return;
 
 		case 'switch_statement':
-			instrumentSwitch(node, insertions, replacements);
+			instrumentSwitch(node, insertions, replacements, descriptionMap);
 			return;
 
 		case 'compound_statement':
@@ -145,7 +149,7 @@ function walkNode(
 					});
 					// Recurse into body (skip braces)
 					for (let i = 1; i < node.childCount - 1; i++) {
-						walkNode(node.child(i)!, insertions, replacements);
+						walkNode(node.child(i)!, insertions, replacements, descriptionMap);
 					}
 					return;
 				}
@@ -155,7 +159,7 @@ function walkNode(
 
 	// Default: recurse into children
 	for (let i = 0; i < node.childCount; i++) {
-		walkNode(node.child(i)!, insertions, replacements);
+		walkNode(node.child(i)!, insertions, replacements, descriptionMap);
 	}
 }
 
@@ -170,6 +174,7 @@ function instrumentFunction(
 	node: SyntaxNode,
 	insertions: Insertion[],
 	replacements: Replacement[],
+	descriptionMap: Map<number, StepDescription>,
 ): void {
 	const declarator = node.childForFieldName('declarator');
 	const body = node.childForFieldName('body');
@@ -178,6 +183,9 @@ function instrumentFunction(
 	const funcName = extractFunctionName(declarator);
 	const params = extractParameters(declarator);
 	const line = node.startPosition.row + 1;
+
+	const paramStr = params.map(p => p.name).join(', ');
+	descriptionMap.set(line, { description: `Enter ${funcName}(${paramStr})` });
 
 	// After opening brace of body
 	const openBrace = body.child(0);
@@ -214,7 +222,7 @@ function instrumentFunction(
 
 	// Recurse into body statements (skip braces)
 	for (let i = 1; i < body.childCount - 1; i++) {
-		walkNode(body.child(i)!, insertions, replacements);
+		walkNode(body.child(i)!, insertions, replacements, descriptionMap);
 	}
 }
 
@@ -222,13 +230,16 @@ function instrumentFunction(
  * Instrument a declaration: int x = 5;
  * → __crow_decl("x", &x, sizeof(x), "int", __LINE__); __crow_step(__LINE__);
  */
-function instrumentDeclaration(node: SyntaxNode, insertions: Insertion[], replacements?: Replacement[]): void {
+function instrumentDeclaration(node: SyntaxNode, insertions: Insertion[], replacements: Replacement[] | undefined, descriptionMap: Map<number, StepDescription>): void {
 	const typeNode = getDeclarationType(node);
 	if (!typeNode) return;
 
 	const typeStr = typeNode.trim();
 	const declarators = getDeclarators(node);
 	const line = node.startPosition.row + 1;
+
+	const names = declarators.map(d => d.name).join(', ');
+	descriptionMap.set(line, { description: `Declare ${typeStr} ${names}` });
 
 	// Check for call rewrites in initializers (e.g., malloc, calloc, scanf)
 	if (replacements) {
@@ -262,14 +273,17 @@ function instrumentExpressionStatement(
 	node: SyntaxNode,
 	insertions: Insertion[],
 	replacements: Replacement[],
+	descriptionMap: Map<number, StepDescription>,
 ): void {
 	const expr = node.child(0);
 	if (!expr) return;
 
 	const line = node.startPosition.row + 1;
+	const exprText = expr.text.replace(/;$/, '');
 
 	// Check for malloc/free/scanf calls first
 	if (expr.type === 'assignment_expression') {
+		descriptionMap.set(line, { description: `Set ${exprText}` });
 		// Look for call expressions in the RHS (may be inside cast_expression)
 		findAndRewriteCalls(expr, replacements);
 
@@ -296,6 +310,7 @@ function instrumentExpressionStatement(
 		const funcNode = expr.childForFieldName('function');
 		const funcName = funcNode?.text;
 
+		descriptionMap.set(line, { description: exprText });
 		// sprintf/snprintf: let libc run it, then track the destination buffer
 		if (funcName === 'sprintf' || funcName === 'snprintf') {
 			const args = expr.childForFieldName('arguments');
@@ -319,6 +334,7 @@ function instrumentExpressionStatement(
 		});
 		return;
 	} else if (expr.type === 'update_expression') {
+		descriptionMap.set(line, { description: `Set ${exprText}` });
 		// i++ or ++i
 		const operand = expr.childForFieldName('argument') ?? expr.child(0);
 		if (operand && operand.type !== 'update_expression') {
@@ -333,6 +349,7 @@ function instrumentExpressionStatement(
 			}
 		}
 	} else if (expr.type === 'comma_expression') {
+		descriptionMap.set(line, { description: exprText });
 		// Handle comma expressions — instrument after whole statement
 		insertions.push({
 			offset: node.endIndex,
@@ -343,6 +360,9 @@ function instrumentExpressionStatement(
 	}
 
 	// Default: just add a step
+	if (!descriptionMap.has(line)) {
+		descriptionMap.set(line, { description: exprText });
+	}
 	insertions.push({
 		offset: node.endIndex,
 		text: `\n\t__crow_step(${line});`,
@@ -353,8 +373,10 @@ function instrumentExpressionStatement(
 /**
  * Instrument a return statement: add __crow_pop_scope() before it.
  */
-function instrumentReturn(node: SyntaxNode, insertions: Insertion[]): void {
+function instrumentReturn(node: SyntaxNode, insertions: Insertion[], descriptionMap: Map<number, StepDescription>): void {
 	const line = node.startPosition.row + 1;
+	const retText = node.text.replace(/^return\s*/, '').replace(/;$/, '').trim();
+	descriptionMap.set(line, { description: retText ? `return ${retText}` : 'return' });
 	insertions.push({
 		offset: node.startIndex,
 		text: `__crow_step(${line});\n\t__crow_pop_scope();\n\t`,
@@ -369,12 +391,20 @@ function instrumentFor(
 	node: SyntaxNode,
 	insertions: Insertion[],
 	replacements: Replacement[],
+	descriptionMap: Map<number, StepDescription>,
 ): void {
 	const body = node.childForFieldName('body');
 	if (!body) return;
 
 	const initializer = node.childForFieldName('initializer');
+	const condNode = node.childForFieldName('condition');
+	const updateNode = node.childForFieldName('update');
 	const line = node.startPosition.row + 1;
+
+	const initText = initializer?.text ?? '';
+	const condText = condNode?.text ?? '';
+	const updateText = updateNode?.text ?? '';
+	descriptionMap.set(line, { description: `for (${initText} ${condText}; ${updateText})` });
 
 	// If the body is a compound_statement, instrument its contents
 	if (body.type === 'compound_statement') {
@@ -398,12 +428,12 @@ function instrumentFor(
 
 		// Recurse into body statements
 		for (let i = 1; i < body.childCount - 1; i++) {
-			walkNode(body.child(i)!, insertions, replacements);
+			walkNode(body.child(i)!, insertions, replacements, descriptionMap);
 		}
 
 	} else {
 		// Single-statement body — recurse
-		walkNode(body, insertions, replacements);
+		walkNode(body, insertions, replacements, descriptionMap);
 	}
 }
 
@@ -414,11 +444,19 @@ function instrumentLoop(
 	node: SyntaxNode,
 	insertions: Insertion[],
 	replacements: Replacement[],
+	descriptionMap: Map<number, StepDescription>,
 ): void {
 	const body = node.childForFieldName('body');
 	if (!body) return;
 
+	const condNode = node.childForFieldName('condition');
 	const line = node.startPosition.row + 1;
+
+	if (node.type === 'while_statement') {
+		descriptionMap.set(line, { description: `while (${condNode?.text ?? ''})` });
+	} else {
+		descriptionMap.set(line, { description: `do...while (${condNode?.text ?? ''})` });
+	}
 
 	if (body.type === 'compound_statement') {
 		const openBrace = body.child(0);
@@ -431,10 +469,10 @@ function instrumentLoop(
 		}
 
 		for (let i = 1; i < body.childCount - 1; i++) {
-			walkNode(body.child(i)!, insertions, replacements);
+			walkNode(body.child(i)!, insertions, replacements, descriptionMap);
 		}
 	} else {
-		walkNode(body, insertions, replacements);
+		walkNode(body, insertions, replacements, descriptionMap);
 	}
 }
 
@@ -445,26 +483,32 @@ function instrumentIf(
 	node: SyntaxNode,
 	insertions: Insertion[],
 	replacements: Replacement[],
+	descriptionMap: Map<number, StepDescription>,
 ): void {
 	const consequence = node.childForFieldName('consequence');
 	const alternative = node.childForFieldName('alternative');
+	const condNode = node.childForFieldName('condition');
 	const line = node.startPosition.row + 1;
+
+	descriptionMap.set(line, { description: `if (${condNode?.text ?? ''})` });
 
 	// Step for the condition evaluation
 	if (consequence) {
-		instrumentBlock(consequence, insertions, replacements, line);
+		instrumentBlock(consequence, insertions, replacements, line, descriptionMap);
 	}
 
 	if (alternative) {
 		// else clause — its child is the actual statement/block
+		const elseLine = alternative.startPosition.row + 1;
+		descriptionMap.set(elseLine, { description: 'else' });
 		if (alternative.type === 'else_clause') {
 			const elseBody = alternative.child(alternative.childCount - 1);
 			if (elseBody) {
 				if (elseBody.type === 'if_statement') {
 					// else if — recurse
-					instrumentIf(elseBody, insertions, replacements);
+					instrumentIf(elseBody, insertions, replacements, descriptionMap);
 				} else {
-					instrumentBlock(elseBody, insertions, replacements, alternative.startPosition.row + 1);
+					instrumentBlock(elseBody, insertions, replacements, alternative.startPosition.row + 1, descriptionMap);
 				}
 			}
 		}
@@ -478,6 +522,7 @@ function instrumentSwitch(
 	node: SyntaxNode,
 	insertions: Insertion[],
 	replacements: Replacement[],
+	descriptionMap: Map<number, StepDescription>,
 ): void {
 	const body = node.childForFieldName('body');
 	if (!body) return;
@@ -487,11 +532,13 @@ function instrumentSwitch(
 		const child = body.child(i)!;
 		if (child.type === 'case_statement') {
 			const line = child.startPosition.row + 1;
+			const caseLabel = child.text.split(':')[0].trim();
+			descriptionMap.set(line, { description: caseLabel });
 			// Find the first statement after the case label
 			for (let j = 0; j < child.childCount; j++) {
 				const stmt = child.child(j)!;
 				if (stmt.type !== 'case_statement' && stmt.text !== ':' && !stmt.text.startsWith('case') && !stmt.text.startsWith('default')) {
-					walkNode(stmt, insertions, replacements);
+					walkNode(stmt, insertions, replacements, descriptionMap);
 				}
 			}
 			// Add step after case label
@@ -515,6 +562,7 @@ function instrumentBlock(
 	insertions: Insertion[],
 	replacements: Replacement[],
 	line: number,
+	descriptionMap: Map<number, StepDescription>,
 ): void {
 	if (node.type === 'compound_statement') {
 		const openBrace = node.child(0);
@@ -526,10 +574,10 @@ function instrumentBlock(
 			});
 		}
 		for (let i = 1; i < node.childCount - 1; i++) {
-			walkNode(node.child(i)!, insertions, replacements);
+			walkNode(node.child(i)!, insertions, replacements, descriptionMap);
 		}
 	} else {
-		walkNode(node, insertions, replacements);
+		walkNode(node, insertions, replacements, descriptionMap);
 	}
 }
 

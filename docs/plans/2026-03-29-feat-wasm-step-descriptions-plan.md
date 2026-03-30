@@ -1,7 +1,7 @@
 ---
 title: Step Descriptions for WASM Backend
 type: feat
-status: active
+status: completed
 date: 2026-03-29
 ---
 

@@ -8,7 +8,7 @@
  */
 
 import type { MemoryEntry, SnapshotOp, ProgramStep, IoEvent, Program } from '$lib/types';
-import type { StructRegistry } from './transformer';
+import type { StructRegistry, StepDescription } from './transformer';
 
 export class StepLimitExceeded extends Error {
 	constructor() {
@@ -74,12 +74,16 @@ export class OpCollector {
 	// Struct type registry
 	private structRegistry: StructRegistry;
 
+	// Step descriptions from transformer
+	private descriptionMap: Map<number, StepDescription>;
+
 	// WASM exports (set during execution)
 	private wasmExports: { malloc: (size: number) => number; free: (ptr: number) => void; memory: WebAssembly.Memory } | null = null;
 
-	constructor(maxSteps: number, structRegistry?: StructRegistry) {
+	constructor(maxSteps: number, structRegistry?: StructRegistry, descriptionMap?: Map<number, StepDescription>) {
 		this.maxSteps = maxSteps;
 		this.structRegistry = structRegistry ?? new Map();
+		this.descriptionMap = descriptionMap ?? new Map();
 	}
 
 	setMemory(memory: WebAssembly.Memory): void {
@@ -450,7 +454,50 @@ export class OpCollector {
 			}
 		}
 
+		// Attach descriptions from transformer + derive runtime evaluations
+		this.attachDescriptions();
+
 		return { name, source, steps: this.steps };
+	}
+
+	private attachDescriptions(): void {
+		for (const step of this.steps) {
+			const desc = this.descriptionMap.get(step.location.line);
+			if (desc) {
+				step.description = desc.description;
+			}
+
+			// Derive runtime evaluation from ops
+			if (step.description?.startsWith('Declare ')) {
+				const addOp = step.ops.find(op => op.op === 'addEntry' && op.parentId !== null);
+				if (addOp && addOp.op === 'addEntry') {
+					const val = addOp.entry.value;
+					if (val === '?') {
+						step.evaluation = '= ? (uninitialized)';
+					} else if (val === '' || addOp.entry.children) {
+						step.evaluation = '= {...}';
+					} else {
+						step.evaluation = `= ${val}`;
+					}
+				}
+			}
+
+			if (step.description?.startsWith('Set ')) {
+				const setOp = step.ops.find(op => op.op === 'setValue');
+				if (setOp && setOp.op === 'setValue' && setOp.value) {
+					step.evaluation = `→ ${setOp.value}`;
+				}
+			}
+
+			if (step.ioEvents?.length) {
+				const writes = step.ioEvents.filter(e => e.kind === 'write');
+				if (writes.length > 0) {
+					const output = writes.map(e => e.text).join('');
+					const escaped = output.replace(/\n/g, '\\n');
+					step.evaluation = `→ "${escaped}"`;
+				}
+			}
+		}
 	}
 
 	// === Internal helpers ===
