@@ -109,7 +109,7 @@ function walkNode(
 
 		case 'return_statement':
 			if (isInFunctionBody(node)) {
-				instrumentReturn(node, insertions, descriptionMap);
+				instrumentReturn(node, insertions, replacements, descriptionMap);
 			}
 			break;
 
@@ -377,10 +377,25 @@ function instrumentExpressionStatement(
 /**
  * Instrument a return statement: add __crow_pop_scope() before it.
  */
-function instrumentReturn(node: SyntaxNode, insertions: Insertion[], descriptionMap: Map<number, StepDescription>): void {
+function instrumentReturn(node: SyntaxNode, insertions: Insertion[], replacements: Replacement[], descriptionMap: Map<number, StepDescription>): void {
 	const line = node.startPosition.row + 1;
 	const retText = node.text.replace(/^return\s*/, '').replace(/;$/, '').trim();
 	descriptionMap.set(line, { description: retText ? `return ${retText}` : 'return' });
+
+	// If return expression contains a function call, use a temp variable
+	// so the call executes (and recursive frames stack) BEFORE the scope pops
+	if (retText && containsCallExpression(node)) {
+		const retType = getEnclosingReturnType(node);
+		if (retType) {
+			replacements.push({
+				startOffset: node.startIndex,
+				endOffset: node.endIndex,
+				text: `{ ${retType} __crow_ret = ${retText}; __crow_eval_int(__crow_ret); __crow_step(${line}); __crow_pop_scope(); return __crow_ret; }`,
+			});
+			return;
+		}
+	}
+
 	insertions.push({
 		offset: node.startIndex,
 		text: `__crow_step(${line});\n\t__crow_pop_scope();\n\t`,
@@ -1139,6 +1154,42 @@ function extractFieldRoot(node: SyntaxNode): string | null {
 		return current.text;
 	}
 	return null;
+}
+
+function containsCallExpression(node: SyntaxNode): boolean {
+	if (node.type === 'call_expression') return true;
+	for (let i = 0; i < node.childCount; i++) {
+		if (containsCallExpression(node.child(i)!)) return true;
+	}
+	return false;
+}
+
+function getEnclosingReturnType(node: SyntaxNode): string | null {
+	let current = node.parent;
+	while (current) {
+		if (current.type === 'function_definition') {
+			const typeNode = current.childForFieldName('type');
+			if (!typeNode) return null;
+			let type = typeNode.text;
+			if (type === 'void') return null;
+			// Check for struct specifier
+			for (let i = 0; i < current.childCount; i++) {
+				const child = current.child(i)!;
+				if (child.type === 'struct_specifier') {
+					type = `struct ${child.childForFieldName('name')?.text ?? ''}`;
+					break;
+				}
+			}
+			// Check for pointer return type
+			const decl = current.childForFieldName('declarator');
+			if (decl?.type === 'pointer_declarator') {
+				type += '*';
+			}
+			return type;
+		}
+		current = current.parent;
+	}
+	return 'int';
 }
 
 function bodyHasTrailingReturn(body: SyntaxNode): boolean {
