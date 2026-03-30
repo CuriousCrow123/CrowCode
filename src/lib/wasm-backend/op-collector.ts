@@ -618,6 +618,17 @@ export class OpCollector {
 			if (field.type.startsWith('struct ')) {
 				this.updateStructFieldValues(fieldAddr, field.type, childId);
 			}
+			// Follow pointer fields into heap blocks (e.g., p->scores points to calloc'd array)
+			if (field.type.endsWith('*')) {
+				const ptrValue = this.memory.getUint32(fieldAddr, true);
+				const heapBlock = this.findHeapBlock(ptrValue);
+				if (heapBlock && heapBlock.status === 'allocated') {
+					const baseType = field.type.slice(0, -1).trim();
+					const blockAddr = this.findHeapBlockAddr(heapBlock);
+					this.typeHeapBlock(heapBlock, blockAddr, baseType);
+					this.updateHeapBlockValues(heapBlock, blockAddr, baseType);
+				}
+			}
 			offset += fieldSize;
 		}
 	}

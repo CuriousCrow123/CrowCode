@@ -1040,6 +1040,14 @@ function extractSetTarget(node: SyntaxNode | null): { name: string; addrExpr: st
 		// arr[i] = ... → track the array
 		const obj = node.childForFieldName('argument') ?? node.child(0);
 		if (obj) {
+			// If the base is a field expression (e.g., p->scores[i]),
+			// walk to the root variable so onSet can update the struct
+			if (obj.type === 'field_expression') {
+				const root = extractFieldRoot(obj);
+				if (root) {
+					return { name: root, addrExpr: `&${root}` };
+				}
+			}
 			const name = obj.text;
 			return { name, addrExpr: `&${name}` };
 		}
