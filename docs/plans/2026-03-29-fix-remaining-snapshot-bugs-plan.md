@@ -1,7 +1,7 @@
 ---
 title: Fix Remaining WASM Snapshot Bugs (REM-1 through REM-5)
 type: fix
-status: active
+status: completed
 date: 2026-03-29
 ---
 
