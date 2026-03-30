@@ -534,6 +534,9 @@ function rewriteCallIfNeeded(callNode: SyntaxNode, replacements: Replacement[]):
 		case 'scanf':
 			rewriteScanfCall(callNode, replacements);
 			break;
+		case 'strcpy':
+			rewriteStrcpyCall(callNode, funcNode, replacements);
+			break;
 	}
 }
 
@@ -583,6 +586,24 @@ function rewriteFreeCall(
 		startOffset: funcNode.startIndex,
 		endOffset: args.endIndex,
 		text: `__crow_free(${argText}, ${line})`,
+	});
+}
+
+function rewriteStrcpyCall(
+	callNode: SyntaxNode,
+	funcNode: SyntaxNode,
+	replacements: Replacement[],
+): void {
+	const args = callNode.childForFieldName('arguments');
+	if (!args) return;
+
+	const line = callNode.startPosition.row + 1;
+	const argText = args.text.slice(1, -1);
+
+	replacements.push({
+		startOffset: funcNode.startIndex,
+		endOffset: args.endIndex,
+		text: `__crow_strcpy(${argText}, ${line})`,
 	});
 }
 

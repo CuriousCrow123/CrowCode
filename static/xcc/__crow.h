@@ -16,6 +16,9 @@ void *__crow_calloc(int count, int size, int line);
 void *__crow_realloc(void *ptr, int size, int line);
 void __crow_free(void *ptr, int line);
 
+// String functions
+char *__crow_strcpy(char *dest, const char *src, int line);
+
 // I/O (replace scanf)
 int __crow_scanf_int(int *ptr, int line);
 int __crow_scanf_float(float *ptr, int line);

@@ -150,6 +150,7 @@ async function runPipeline(source: string, stdin?: string): Promise<PipelineResu
 		__crow_scanf_char: (ptr: number, line: number) => collector.onScanfChar(ptr, line),
 		__crow_scanf_string: (bufPtr: number, bufSize: number, line: number) =>
 			collector.onScanfString(bufPtr, bufSize, line),
+		__crow_strcpy: (dest: number, src: number, line: number) => collector.onStrcpy(dest, src, line),
 		puts: (strPtr: number) => { collector.onPrintf(collector.readCString(strPtr) + '\n'); return 0; },
 		putchar: (ch: number) => { collector.onPrintf(String.fromCharCode(ch)); return ch; },
 		printf: () => {},

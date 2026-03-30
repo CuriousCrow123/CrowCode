@@ -73,6 +73,9 @@ export async function executeWasm(
 		__crow_scanf_string: (bufPtr: number, bufSize: number, line: number) =>
 			collector.onScanfString(bufPtr, bufSize, line),
 
+		// String function callbacks
+		__crow_strcpy: (dest: number, src: number, line: number) => collector.onStrcpy(dest, src, line),
+
 		// stdio functions implemented in JS
 		printf: () => {
 			// printf with format string is complex — we handle it via fd_write in WASI

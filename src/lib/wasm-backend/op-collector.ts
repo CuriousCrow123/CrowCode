@@ -37,6 +37,8 @@ type HeapBlock = {
 	size: number;
 	line: number;
 	status: 'allocated' | 'freed';
+	baseType?: string;
+	childrenBuilt: boolean;
 };
 
 export class OpCollector {
@@ -102,6 +104,21 @@ export class OpCollector {
 		}
 		// Set currentLine FIRST so ops are attributed to the correct source line
 		this.currentLine = line;
+
+		// Merge consecutive empty steps at the same line (avoids duplicate
+		// condition+return steps for compact `if (x) { return y; }`)
+		const prev = this.steps[this.steps.length - 1];
+		if (
+			prev &&
+			prev.location.line === line &&
+			prev.ops.length === 0 &&
+			!prev.ioEvents &&
+			this.currentOps.length === 0 &&
+			this.currentIoEvents.length === 0
+		) {
+			return;
+		}
+
 		// Always push a step — empty steps mark the current line for the UI
 		this.steps.push({
 			location: { line: this.currentLine },
@@ -208,9 +225,13 @@ export class OpCollector {
 			const heapBlock = this.findHeapBlock(ptrValue);
 			if (heapBlock && heapBlock.status === 'allocated') {
 				const baseType = info.type.slice(0, -1).trim();
-				const elemSize = this.sizeOfType(baseType);
-				const heapValue = this.readValue(ptrValue, elemSize, baseType);
-				this.currentOps.push({ op: 'setValue', id: heapBlock.entryId, value: heapValue });
+				const blockAddr = this.findHeapBlockAddr(heapBlock);
+
+				// First dereference: infer type and build children
+				this.typeHeapBlock(heapBlock, blockAddr, baseType);
+
+				// Update all children values
+				this.updateHeapBlockValues(heapBlock, blockAddr, baseType);
 			}
 		}
 	}
@@ -222,7 +243,7 @@ export class OpCollector {
 
 		this.refreshMemory();
 		const entryId = `heap_${this.heapCounter++}`;
-		this.heapBlocks.set(addr, { entryId, size, line, status: 'allocated' });
+		this.heapBlocks.set(addr, { entryId, size, line, status: 'allocated', childrenBuilt: false });
 
 		const hexAddr = '0x' + addr.toString(16).padStart(8, '0');
 		const entry: MemoryEntry = {
@@ -366,6 +387,28 @@ export class OpCollector {
 		this.emitSetValueForAddr(bufPtr);
 		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed: input, cursorPos: this.stdinOffset });
 		return 1;
+	}
+
+	// === string function callbacks ===
+
+	onStrcpy(destPtr: number, srcPtr: number, _line: number): number {
+		this.refreshMemory();
+		// Copy bytes from src to dest until null terminator
+		let i = 0;
+		while (this.memoryBuffer[srcPtr + i] !== 0 && srcPtr + i < this.memoryBuffer.length) {
+			this.memoryBuffer[destPtr + i] = this.memoryBuffer[srcPtr + i];
+			i++;
+		}
+		this.memoryBuffer[destPtr + i] = 0; // null terminate
+
+		// Emit setValue for stack variable or heap block at destination
+		this.emitSetValueForAddr(destPtr);
+		const heapBlock = this.findHeapBlock(destPtr);
+		if (heapBlock && heapBlock.status === 'allocated') {
+			const str = this.readCString(destPtr);
+			this.currentOps.push({ op: 'setValue', id: heapBlock.entryId, value: str });
+		}
+		return destPtr;
 	}
 
 	// === stdio callbacks ===
@@ -541,22 +584,31 @@ export class OpCollector {
 		}
 
 		if (info.type.startsWith('struct ')) {
-			const structName = info.type.slice(7).trim();
-			const fields = this.structRegistry.get(structName);
-			if (fields) {
-				let offset = 0;
-				for (const field of fields) {
-					const fieldSize = this.sizeOfType(field.type);
-					const align = Math.min(fieldSize, 4);
-					offset = Math.ceil(offset / align) * align;
+			this.updateStructFieldValues(info.addr, info.type, info.entryId);
+		}
+	}
 
-					const fieldAddr = info.addr + offset;
-					const childId = `${info.entryId}.${field.name}`;
-					const value = this.readValue(fieldAddr, fieldSize, field.type);
-					this.currentOps.push({ op: 'setValue', id: childId, value });
-					offset += fieldSize;
-				}
+	private updateStructFieldValues(addr: number, typeStr: string, parentId: string): void {
+		const structName = typeStr.slice(7).trim();
+		const fields = this.structRegistry.get(structName);
+		if (!fields) return;
+
+		let offset = 0;
+		for (const field of fields) {
+			const fieldSize = this.sizeOfType(field.type);
+			const align = Math.min(fieldSize, 4);
+			offset = Math.ceil(offset / align) * align;
+
+			const fieldAddr = addr + offset;
+			const childId = `${parentId}.${field.name}`;
+			const value = this.readValue(fieldAddr, fieldSize, field.type);
+			this.currentOps.push({ op: 'setValue', id: childId, value });
+
+			// Recurse into nested structs
+			if (field.type.startsWith('struct ')) {
+				this.updateStructFieldValues(fieldAddr, field.type, childId);
 			}
+			offset += fieldSize;
 		}
 	}
 
@@ -594,6 +646,74 @@ export class OpCollector {
 			}
 		}
 		return undefined;
+	}
+
+	private findHeapBlockAddr(block: HeapBlock): number {
+		for (const [addr, b] of this.heapBlocks) {
+			if (b === block) return addr;
+		}
+		return 0;
+	}
+
+	private typeHeapBlock(block: HeapBlock, blockAddr: number, baseType: string): void {
+		if (block.childrenBuilt) return;
+		block.baseType = baseType;
+		block.childrenBuilt = true;
+
+		const elemSize = this.sizeOfType(baseType);
+		const elemCount = Math.floor(block.size / elemSize);
+
+		if (baseType.startsWith('struct ') && elemCount === 1) {
+			// Single struct — build struct field children
+			const children = this.buildChildren(blockAddr, block.size, baseType, block.entryId);
+			for (const child of children) {
+				this.currentOps.push({ op: 'addEntry', parentId: block.entryId, entry: child });
+			}
+		} else if (elemCount > 1) {
+			// Array — build indexed children
+			for (let i = 0; i < elemCount; i++) {
+				const elemAddr = blockAddr + i * elemSize;
+				const hexAddr = '0x' + elemAddr.toString(16).padStart(8, '0');
+				const childId = `${block.entryId}[${i}]`;
+				const value = this.readValue(elemAddr, elemSize, baseType);
+				const nestedChildren = this.buildChildren(elemAddr, elemSize, baseType, childId);
+				this.currentOps.push({
+					op: 'addEntry',
+					parentId: block.entryId,
+					entry: {
+						id: childId,
+						name: `[${i}]`,
+						type: baseType,
+						value,
+						address: hexAddr,
+						children: nestedChildren.length > 0 ? nestedChildren : undefined,
+					},
+				});
+			}
+		} else {
+			// Single scalar — just update the value
+			const value = this.readValue(blockAddr, elemSize, baseType);
+			this.currentOps.push({ op: 'setValue', id: block.entryId, value });
+		}
+	}
+
+	private updateHeapBlockValues(block: HeapBlock, blockAddr: number, baseType: string): void {
+		const elemSize = this.sizeOfType(baseType);
+		const elemCount = Math.floor(block.size / elemSize);
+
+		if (baseType.startsWith('struct ') && elemCount === 1) {
+			this.updateStructFieldValues(blockAddr, baseType, block.entryId);
+		} else if (elemCount > 1) {
+			for (let i = 0; i < elemCount; i++) {
+				const elemAddr = blockAddr + i * elemSize;
+				const childId = `${block.entryId}[${i}]`;
+				const value = this.readValue(elemAddr, elemSize, baseType);
+				this.currentOps.push({ op: 'setValue', id: childId, value });
+			}
+		} else {
+			const value = this.readValue(blockAddr, elemSize, baseType);
+			this.currentOps.push({ op: 'setValue', id: block.entryId, value });
+		}
 	}
 
 	private findVarByAddr(addr: number): VarInfo | undefined {
