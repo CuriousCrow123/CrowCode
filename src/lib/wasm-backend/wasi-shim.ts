@@ -96,6 +96,7 @@ export type WasiOptions = {
 	stdout?: (text: string) => void;
 	stderr?: (text: string) => void;
 	onExit?: (code: number) => void;
+	onStdinRead?: (consumed: string, cursorPos: number) => void;
 };
 
 export class WasiShim {
@@ -107,6 +108,7 @@ export class WasiShim {
 	private stdout: (text: string) => void;
 	private stderr: (text: string) => void;
 	private onExit: (code: number) => void;
+	private onStdinRead: ((consumed: string, cursorPos: number) => void) | null;
 	private preopenDirs = ['/'];
 	private decoder = new TextDecoder();
 	private stdinEof = false;
@@ -117,6 +119,7 @@ export class WasiShim {
 		this.stdout = options.stdout ?? (() => {});
 		this.stderr = options.stderr ?? (() => {});
 		this.onExit = options.onExit ?? ((code) => { throw new CompilationComplete(code); });
+		this.onStdinRead = options.onStdinRead ?? null;
 
 		// Pre-open fd 0 (stdin), 1 (stdout), 2 (stderr)
 		this.fds.set(0, { path: '<stdin>', offset: 0, isDir: false });
@@ -282,6 +285,12 @@ export class WasiShim {
 				totalRead += toRead;
 			}
 			if (toRead < bufLen) break;
+		}
+
+		// Emit stdin read event for buffer visualization
+		if (fd === 0 && totalRead > 0 && this.onStdinRead) {
+			const consumed = this.decoder.decode(file.content.subarray(entry.offset - totalRead, entry.offset));
+			this.onStdinRead(consumed, entry.offset);
 		}
 
 		// stdin exhausted — pause for interactive input or return EOF

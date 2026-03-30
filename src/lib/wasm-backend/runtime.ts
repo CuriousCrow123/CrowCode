@@ -51,6 +51,7 @@ export async function executeWasm(
 		stdout: (text) => collector.onPrintf(text),
 		stderr: (text) => errors.push(text),
 		onExit: (code) => { throw new ProgramExit(code); },
+		onStdinRead: (consumed, cursorPos) => collector.onStdinRead(consumed, cursorPos),
 	});
 	if (stdinEof) wasi.signalStdinEof();
 

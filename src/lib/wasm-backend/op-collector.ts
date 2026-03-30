@@ -412,6 +412,12 @@ export class OpCollector {
 		return ch.charCodeAt(0);
 	}
 
+	// === WASI stdin callback ===
+
+	onStdinRead(consumed: string, cursorPos: number): void {
+		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed, cursorPos });
+	}
+
 	// === string function callbacks ===
 
 	onStrcpy(destPtr: number, srcPtr: number, _line: number): number {
