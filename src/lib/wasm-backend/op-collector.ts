@@ -98,6 +98,20 @@ export class OpCollector {
 	setStdin(stdin: string): void {
 		this.stdinBuffer = stdin;
 		this.stdinOffset = 0;
+		if (stdin.length > 0) {
+			this.currentOps.push({
+				op: 'addEntry',
+				parentId: null,
+				entry: {
+					id: 'stdin',
+					name: 'stdin',
+					type: 'char[]',
+					value: this.formatStdinDisplay(0),
+					address: '',
+					kind: 'io',
+				},
+			});
+		}
 	}
 
 	// === Callback methods (called from WASM) ===
@@ -354,6 +368,7 @@ export class OpCollector {
 		this.memory.setInt32(ptr, val, true);
 		this.emitSetValueForAddr(ptr);
 		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed: input, cursorPos: this.stdinOffset });
+		this.updateStdinDisplay(this.stdinOffset);
 		return 1;
 	}
 
@@ -366,6 +381,7 @@ export class OpCollector {
 		this.memory.setFloat32(ptr, val, true);
 		this.emitSetValueForAddr(ptr);
 		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed: input, cursorPos: this.stdinOffset });
+		this.updateStdinDisplay(this.stdinOffset);
 		return 1;
 	}
 
@@ -378,6 +394,7 @@ export class OpCollector {
 		this.memory.setFloat64(ptr, val, true);
 		this.emitSetValueForAddr(ptr);
 		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed: input, cursorPos: this.stdinOffset });
+		this.updateStdinDisplay(this.stdinOffset);
 		return 1;
 	}
 
@@ -388,6 +405,7 @@ export class OpCollector {
 		this.memory.setInt8(ptr, ch.charCodeAt(0));
 		this.emitSetValueForAddr(ptr);
 		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed: ch, cursorPos: this.stdinOffset });
+		this.updateStdinDisplay(this.stdinOffset);
 		return 1;
 	}
 
@@ -400,6 +418,7 @@ export class OpCollector {
 		this.memoryBuffer[bufPtr + encoded.length] = 0;
 		this.emitSetValueForAddr(bufPtr);
 		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed: input, cursorPos: this.stdinOffset });
+		this.updateStdinDisplay(this.stdinOffset);
 		return 1;
 	}
 
@@ -409,6 +428,7 @@ export class OpCollector {
 		if (this.stdinOffset >= this.stdinBuffer.length) throw new StdinExhausted();
 		const ch = this.stdinBuffer[this.stdinOffset++];
 		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed: ch, cursorPos: this.stdinOffset });
+		this.updateStdinDisplay(this.stdinOffset);
 		return ch.charCodeAt(0);
 	}
 
@@ -416,6 +436,7 @@ export class OpCollector {
 
 	onStdinRead(consumed: string, cursorPos: number): void {
 		this.currentIoEvents.push({ kind: 'read', source: 'stdin', consumed, cursorPos });
+		this.updateStdinDisplay(cursorPos);
 	}
 
 	// === string function callbacks ===
@@ -812,6 +833,19 @@ export class OpCollector {
 			const value = this.readValue(addr, varInfo.size, varInfo.type);
 			this.currentOps.push({ op: 'setValue', id: varInfo.entryId, value });
 		}
+	}
+
+	private formatStdinDisplay(cursorPos: number): string {
+		const consumed = this.stdinBuffer.slice(0, cursorPos).replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+		const remaining = this.stdinBuffer.slice(cursorPos).replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+		if (cursorPos === 0) return remaining;
+		if (cursorPos >= this.stdinBuffer.length) return consumed + ' (exhausted)';
+		return consumed + '|' + remaining;
+	}
+
+	private updateStdinDisplay(cursorPos: number): void {
+		if (this.stdinBuffer.length === 0) return;
+		this.currentOps.push({ op: 'setValue', id: 'stdin', value: this.formatStdinDisplay(cursorPos) });
 	}
 
 	private consumeNextToken(): string | null {
