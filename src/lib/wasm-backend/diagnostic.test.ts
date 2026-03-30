@@ -796,3 +796,295 @@ int main() {
 		writeDump('p15.1.md', 'p15.1 — Entity System', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
 	}, 30000);
 });
+
+// === Round 11: stdio ===
+
+describe('Round 11: stdio', () => {
+	it('p16.1 — Basic printf', async () => {
+		const source = `#include <stdio.h>
+int main() {
+    int x = 42;
+    int y = -7;
+    printf("x = %d\\n", x);
+    printf("y = %d, hex = %x\\n", y, y);
+    printf("sum = %d\\n", x + y);
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p16.1.md', 'p16.1 — Basic printf', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p16.2 — puts and putchar', async () => {
+		const source = `#include <stdio.h>
+int main() {
+    puts("Hello, World!");
+    putchar('A');
+    putchar('\\n');
+    puts("Done.");
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p16.2.md', 'p16.2 — puts and putchar', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p16.3 — getchar Loop', async () => {
+		const source = `#include <stdio.h>
+int main() {
+    int c;
+    int count = 0;
+    c = getchar();
+    while (c != -1) {
+        count++;
+        c = getchar();
+    }
+    return 0;
+}`;
+		const r = await runPipeline(source, 'ABC');
+		writeDump('p16.3.md', 'p16.3 — getchar Loop', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p16.4 — scanf + printf', async () => {
+		const source = `#include <stdio.h>
+int main() {
+    int x;
+    int y;
+    printf("Enter two numbers:\\n");
+    scanf("%d", &x);
+    scanf("%d", &y);
+    printf("Sum = %d\\n", x + y);
+    return 0;
+}`;
+		const r = await runPipeline(source, '10 20');
+		writeDump('p16.4.md', 'p16.4 — scanf + printf', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p16.5 — scanf \\n Residue', async () => {
+		const source = `#include <stdio.h>
+int main() {
+    int num;
+    char ch;
+    scanf("%d", &num);
+    scanf("%c", &ch);
+    return 0;
+}`;
+		const r = await runPipeline(source, '42\nA');
+		writeDump('p16.5.md', 'p16.5 — scanf newline Residue', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p16.6 — printf Format Specifiers', async () => {
+		const source = `#include <stdio.h>
+int main() {
+    int i = 255;
+    printf("decimal: %d\\n", i);
+    printf("hex:     %x\\n", i);
+    printf("HEX:     %X\\n", i);
+    printf("char:    %c\\n", 65);
+    printf("padded:  %05d\\n", 42);
+    printf("left:    %-10d|\\n", 42);
+    printf("percent: 100%%\\n");
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p16.6.md', 'p16.6 — printf Format Specifiers', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p16.7 — Grade Calculator', async () => {
+		const source = `#include <stdio.h>
+int main() {
+    int score;
+    int total = 0;
+    int count = 0;
+    int highest = 0;
+    printf("Enter scores (-1 to finish):\\n");
+    while (1) {
+        scanf("%d", &score);
+        if (score == -1) { break; }
+        if (score < 0 || score > 100) {
+            printf("Invalid! Use 0-100.\\n");
+        } else {
+            total = total + score;
+            count = count + 1;
+            if (score > highest) { highest = score; }
+            printf("  Score #%d: %d\\n", count, score);
+        }
+    }
+    printf("Scores entered: %d\\n", count);
+    printf("Total: %d\\n", total);
+    printf("Highest: %d\\n", highest);
+    if (count > 0) {
+        int avg = total / count;
+        printf("Average: %d\\n", avg);
+    }
+    return 0;
+}`;
+		const r = await runPipeline(source, '85 92 78 -1');
+		writeDump('p16.7.md', 'p16.7 — Grade Calculator', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+});
+
+// === Round 12: Edge cases ===
+
+describe('Round 12: edge cases', () => {
+	it('p13.2 — String Literal', async () => {
+		const source = `#include <stdio.h>
+#include <stdlib.h>
+int main() {
+    char *greeting = "hello";
+    char *name = "world";
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p13.2.md', 'p13.2 — String Literal', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p13.6 — Function Pointer', async () => {
+		const source = `int add(int a, int b) { return a + b; }
+int sub(int a, int b) { return a - b; }
+int main() {
+    int (*fp)(int, int) = add;
+    int a = fp(10, 3);
+    fp = sub;
+    int b = fp(10, 3);
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p13.6.md', 'p13.6 — Function Pointer', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p13.7 — 2D Array', async () => {
+		const source = `int main() {
+    int m[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    int trace = 0;
+    for (int i = 0; i < 3; i++) {
+        trace += m[i][i];
+    }
+    m[1][2] = 5;
+    m[2][0] = 7;
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p13.7.md', 'p13.7 — 2D Array', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p13.8 — Array-to-Pointer Decay', async () => {
+		const source = `int main() {
+    int arr[4] = {10, 20, 30, 40};
+    int *p = arr;
+    int first = *p;
+    int third = *(p + 2);
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p13.8.md', 'p13.8 — Array-to-Pointer Decay', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p14.1 — Use-After-Free', async () => {
+		const source = `#include <stdlib.h>
+int main() {
+    int *p = (int*)malloc(sizeof(int));
+    *p = 42;
+    free(p);
+    int x = *p;
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p14.1.md', 'p14.1 — Use-After-Free', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p14.2 — String Functions', async () => {
+		const source = `#include <string.h>
+#include <stdlib.h>
+int main() {
+    char *s = "hello";
+    int len = strlen(s);
+    char *a = "abc";
+    char *b = "abd";
+    int cmp = strcmp(a, b);
+    char *dst = (char*)malloc(8);
+    strcpy(dst, s);
+    int len2 = strlen(dst);
+    free(dst);
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p14.2.md', 'p14.2 — String Functions', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p14.3 — Math Functions', async () => {
+		const source = `#include <math.h>
+#include <stdlib.h>
+int main() {
+    int a = abs(-7);
+    float s = sqrt(25.0);
+    float p = pow(2.0, 10.0);
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p14.3.md', 'p14.3 — Math Functions', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p9.1 — sprintf Formats', async () => {
+		const source = `#include <stdio.h>
+#include <stdlib.h>
+int main() {
+    char *buf = (char*)malloc(128);
+    sprintf(buf, "hello world");
+    sprintf(buf, "x=%d", 42);
+    sprintf(buf, "hex=%x", 255);
+    sprintf(buf, "char=%c", 65);
+    sprintf(buf, "100%%");
+    sprintf(buf, "%d+%d=%d", 1, 2, 3);
+    free(buf);
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p9.1.md', 'p9.1 — sprintf Formats', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p5.3 — Full Memory Basics', async () => {
+		const source = `#include <stdlib.h>
+struct Point { int x; int y; };
+struct Player { int id; struct Point pos; int *scores; };
+int distance(struct Point a, struct Point b) {
+    int dx = a.x - b.x;
+    int dy = a.y - b.y;
+    return dx * dx + dy * dy;
+}
+int main() {
+    struct Point origin = {0, 0};
+    struct Player *p = (struct Player*)malloc(sizeof(struct Player));
+    p->id = 1;
+    p->pos.x = 3;
+    p->pos.y = 4;
+    p->scores = (int*)calloc(3, sizeof(int));
+    p->scores[0] = 100;
+    p->scores[1] = 200;
+    p->scores[2] = 300;
+    int d = distance(origin, p->pos);
+    free(p->scores);
+    free(p);
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p5.3.md', 'p5.3 — Full Memory Basics', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+
+	it('p11.2 — Matrix Identity', async () => {
+		const source = `#include <stdlib.h>
+int main() {
+    int rows = 3;
+    int *matrix = (int*)calloc(rows * rows, sizeof(int));
+    for (int i = 0; i < rows; i++) {
+        matrix[i * rows + i] = 1;
+    }
+    int sum = 0;
+    for (int i = 0; i < rows * rows; i++) {
+        sum += matrix[i];
+    }
+    free(matrix);
+    return 0;
+}`;
+		const r = await runPipeline(source);
+		writeDump('p11.2.md', 'p11.2 — Matrix Identity', source, r.instrumented, r.program, r.snapshots, r.errors, r.compileErrors);
+	}, 30000);
+});

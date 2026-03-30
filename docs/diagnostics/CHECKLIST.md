@@ -23,7 +23,7 @@
 | p3.1 — Array Init and Loop | BUGS | arr=[99,20,30,40,119], sum=308 correct. Loop exit var not captured. |
 | p3.3 — Array Squared in Loop | BUGS | data=[1,4,9,16], total=30 correct. Loop exit var not captured. |
 | p12.1 — Bubble Sort | BUGS | arr=[1,2,3,4,5] correct. Loop exit vars not captured. |
-| p13.7 — 2D Array | NOT STARTED | |
+| p13.7 — 2D Array | BUGS | Type shows `int[3]` not `int[3][3]`; flat children; subscript assigns invisible. |
 | p2.1 — Simple Struct | BUGS | Struct has no children (no type registry). |
 | p2.2 — Nested Structs | BUGS | Same: struct no children. |
 | p4.1 — malloc / free Lifecycle | BUGS | Heap entry stays val= empty; *p=42 not visible in heap. Free works. |
@@ -31,26 +31,27 @@
 | p4.4 — Heap Array with Loop | BUGS | Heap values invisible. n=5 correct. |
 | p10.3 — Memory Leak Detection | PASS | Leak correctly detected. Heap values invisible. |
 | p5.1 — Heap Struct via Pointer | BUGS | Pointer value correct (fixed). Heap value invisible. Struct no children. |
-| p5.3 — Full Memory Basics | NOT STARTED | |
+| p5.3 — Full Memory Basics | BUGS | Struct no children; arrow assigns re-report pointer; scores[] invisible. |
 | p8.2 — Variable Shadowing | BUGS | Inner x overwrites display of outer x. y=10 correct (runtime ok). |
 | p13.1 — Switch / Case | PASS | day=3, type=1. |
-| p11.2 — Matrix Identity | NOT STARTED | |
+| p11.2 — Matrix Identity | BUGS | Heap writes invisible; calloc labeled as malloc. |
 | p11.5 — Fibonacci Array | PASS | fib=[0,1,1,2,3,5,8,13,21,34]. |
 | p15.1 — Entity System | BUGS | Arrow+nested+param fixed. Struct no children. Heap values invisible. |
-| p16.1 — Basic printf | NOT STARTED | |
-| p16.2 — puts and putchar | NOT STARTED | |
-| p16.3 — getchar Loop | NOT STARTED | |
-| p16.4 — scanf + printf | NOT STARTED | |
-| p16.6 — printf Format Specifiers | NOT STARTED | |
-| p13.2 — String Literal | NOT STARTED | |
-| p13.6 — Function Pointer | NOT STARTED | |
-| p13.8 — Array-to-Pointer Decay | NOT STARTED | |
-| p14.1 — Use-After-Free | NOT STARTED | |
-| p14.2 — String Functions | NOT STARTED | |
-| p14.3 — Math Functions | NOT STARTED | |
-| p9.1 — sprintf Formats | NOT STARTED | |
-| p16.5 — scanf \n Residue | NOT STARTED | |
-| p16.7 — Grade Calculator | NOT STARTED | |
+| p16.1 — Basic printf | PASS | printf output correct, values correct. |
+| p16.2 — puts and putchar | BUGS | putchar line mismatch; one putchar step missing. |
+| p16.3 — getchar Loop | BUGS | Cleanup step wrong line; no IO read event for getchar. |
+| p16.4 — scanf + printf | BUGS | scanf reads values but no setValue emitted — x,y stay 0 in snapshots. |
+| p16.5 — scanf \n Residue | BUGS | scanf values not shown; char scanf IO event shows empty. |
+| p16.6 — printf Format Specifiers | PASS | All format specifiers produce correct output. |
+| p16.7 — Grade Calculator | BUGS | scanf values never shown in snapshots (score stays 0). |
+| p13.2 — String Literal | PASS | Pointer values correct. |
+| p13.6 — Function Pointer | BUGS | Compile failure: `&(*fp)(int, int)` invalid. Declarator syntax not handled. |
+| p13.7 — 2D Array | BUGS | (see above) |
+| p13.8 — Array-to-Pointer Decay | PASS | Pointer arithmetic, dereference values correct. |
+| p14.1 — Use-After-Free | BUGS | `*p=42` doesn't update heap; use-after-free not detected. |
+| p14.2 — String Functions | BUGS | strcpy step collapsed (zero-op). |
+| p14.3 — Math Functions | PASS | abs, sqrt, pow correct. |
+| p9.1 — sprintf Formats | BUGS | All 6 sprintf calls produce no visible steps (zero-op collapsed). |
 
 ## Bug Summary
 
@@ -67,8 +68,8 @@
 
 | Bug ID | Description | Root Cause | Component | Programs Affected |
 |--------|-------------|------------|-----------|-------------------|
-| SYS-1 | Struct fields invisible | buildChildren has no struct type registry | op-collector | p2.1, p2.2, p5.1, p15.1 |
-| SYS-2 | Heap dereference values invisible | `*p=42` records setValue on pointer, not heap entry | op-collector | p4.1, p4.2, p4.4, p5.1, p10.3, p15.1 |
+| SYS-1 | Struct fields invisible | buildChildren has no struct type registry | op-collector | p2.1, p2.2, p5.1, p5.3, p15.1 |
+| SYS-2 | Heap dereference values invisible | `*p=42` records setValue on pointer, not heap entry | op-collector | p4.1, p4.2, p4.4, p5.1, p5.3, p10.3, p11.2, p14.1, p15.1 |
 | SYS-3 | Recursive frames not stacked | `__crow_pop_scope()` before `return` destroys caller frame before callee enters | transformer | p6.4, p12.2, p12.5 |
 | SYS-4 | Return line not shown | pop_scope injected before return; no __crow_step for return line | transformer | All programs |
 | SYS-5 | For-loop exit increment not captured | `__crow_set` fires before C i++; exit increment never recorded | transformer | p3.1, p3.3, p7.3, p12.1 |
@@ -76,7 +77,12 @@
 | SYS-7 | Redundant setValue on loop increment | Explicit `__crow_set` + auto-detected re-decl both fire | transformer | p7.3, p7.4 |
 | SYS-8 | Variable shadowing not modeled | No push/pop scope for anonymous blocks | transformer | p8.2 |
 | SYS-9 | Chained assignment only tracks outermost | extractSetTarget only emits `__crow_set` for LHS | transformer | p13.5 |
-| SYS-10 | calloc shown as malloc | onCalloc delegates to onMalloc | op-collector | p4.2 |
+| SYS-10 | calloc shown as malloc | onCalloc delegates to onMalloc | op-collector | p4.2, p11.2 |
+| SYS-11 | scanf values not shown in snapshots | `__crow_scanf_*` writes to memory but emits no setValue op | op-collector | p16.4, p16.5, p16.7 |
+| SYS-12 | sprintf/strcpy steps collapsed | Zero-op steps silently omitted | op-collector | p9.1, p14.2 |
+| SYS-13 | Function pointer declarator not handled | Instrumenter emits `&(*fp)(int, int)` — invalid C | transformer | p13.6 |
+| SYS-14 | 2D array type/children wrong | Type shows `int[3]` not `int[3][3]`; flat children | op-collector | p13.7 |
+| SYS-15 | Use-after-free not detected | No runtime check after free | op-collector | p14.1 |
 
 ### Open — Minor / Informational
 
@@ -84,3 +90,5 @@
 |--------|-------------|-----------|----------|
 | INFO-1 | Uninitialized vars show 0 (WASM zero-init) | Runtime | p13.4 |
 | INFO-2 | Base case branch decisions invisible in recursive functions | transformer | p6.4, p12.5 |
+| INFO-3 | putchar step line mismatch / missing step | transformer | p16.2 |
+| INFO-4 | getchar has no IO read event | op-collector | p16.3 |
