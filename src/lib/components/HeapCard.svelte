@@ -86,7 +86,7 @@
 								{block.address}
 							{/if}
 						</td>
-						<td class="px-4 py-2.5 font-mono text-zinc-400">{block.type}</td>
+						<td class="px-4 py-2.5 font-mono text-zinc-400">{block.value?.startsWith('struct ') || block.value?.match(/^\w+\[\d+\]$/) ? block.value : block.type}</td>
 						<td class="px-4 py-2.5 font-mono text-zinc-500">
 							{#if block.heap?.size}
 								{block.heap.size}B
