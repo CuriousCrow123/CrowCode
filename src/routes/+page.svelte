@@ -219,7 +219,8 @@
 
 		const program = JSON.parse(JSON.stringify(session.program));
 		if (!preserveIndex) {
-			internalIndex = 0;
+			// Auto-advance to last step so the input prompt shows immediately
+			internalIndex = Math.max(0, program.steps.length - 1);
 			subStepMode = false;
 		}
 
