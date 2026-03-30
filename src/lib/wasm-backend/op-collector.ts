@@ -784,13 +784,15 @@ export class OpCollector {
 		const elemCount = Math.floor(block.size / elemSize);
 
 		if (baseType.startsWith('struct ') && elemCount === 1) {
-			// Single struct — build struct field children
+			// Single struct — build struct field children and update type display
+			this.currentOps.push({ op: 'setValue', id: block.entryId, value: baseType });
 			const children = this.buildChildren(blockAddr, block.size, baseType, block.entryId);
 			for (const child of children) {
 				this.currentOps.push({ op: 'addEntry', parentId: block.entryId, entry: child });
 			}
 		} else if (elemCount > 1) {
-			// Array — build indexed children
+			// Array — update type display and build indexed children
+			this.currentOps.push({ op: 'setValue', id: block.entryId, value: `${baseType}[${elemCount}]` });
 			for (let i = 0; i < elemCount; i++) {
 				const elemAddr = blockAddr + i * elemSize;
 				const hexAddr = '0x' + elemAddr.toString(16).padStart(8, '0');
