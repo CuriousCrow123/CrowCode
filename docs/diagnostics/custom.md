@@ -21,9 +21,11 @@ int main() {
 	__crow_step(2);
     x = 10;
 	__crow_set("x", &x, 3);
+	__crow_eval(&(x), sizeof(x), "int");
 	__crow_step(3);
     x = x + 1;
 	__crow_set("x", &x, 4);
+	__crow_eval(&(x), sizeof(x), "int");
 	__crow_step(4);
     __crow_step(5);
 	__crow_pop_scope();
