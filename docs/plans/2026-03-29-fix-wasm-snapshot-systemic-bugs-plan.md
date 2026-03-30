@@ -1,7 +1,7 @@
 ---
 title: Fix WASM Backend Systemic Snapshot Bugs
 type: fix
-status: active
+status: completed
 date: 2026-03-29
 ---
 

@@ -25,12 +25,13 @@ int main() {
     x = x + 1;
 	__crow_set("x", &x, 4);
 	__crow_step(4);
-    __crow_pop_scope();
+    __crow_step(5);
+	__crow_pop_scope();
 	return 0;
 }
 ```
 
-## Steps (5 total)
+## Steps (6 total)
 
 ### Step 0 | Line 1 | 2 ops
 - addEntry(parent=null, id=main, name=main, type=, val=, kind=scope, addr=, children=0)
@@ -45,10 +46,12 @@ int main() {
 ### Step 3 | Line 4 | 1 ops
 - setValue(id=main::x, val=11)
 
-### Step 4 | Line 4 | 1 ops
+### Step 4 | Line 5 | 0 ops
+
+### Step 5 | Line 5 | 1 ops
 - removeEntry(id=main)
 
-## Snapshots (5 total)
+## Snapshots (6 total)
 
 ### Snapshot 0 (after step 0)
 - main | name=main | type= | val= | addr= | kind=scope | heap=
@@ -70,4 +73,9 @@ int main() {
 - heap | name=Heap | type= | val= | addr= | kind=heap | heap=
 
 ### Snapshot 4 (after step 4)
+- main | name=main | type= | val= | addr= | kind=scope | heap=
+  - main::x | name=x | type=int | val=11 | addr=0x00001ff0 | kind= | heap=
+- heap | name=Heap | type= | val= | addr= | kind=heap | heap=
+
+### Snapshot 5 (after step 5)
 - heap | name=Heap | type= | val= | addr= | kind=heap | heap=

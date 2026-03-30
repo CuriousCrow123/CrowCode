@@ -4,91 +4,97 @@
 
 | Program | Status | Notes |
 |---------|--------|-------|
-| custom — Minimal Scalar | PASS | Values correct. Return line mismatch (systemic). |
-| p1.1 — Integer Lifecycle | PASS | Values correct. Return line mismatch. |
-| p1.3 — All Compound Operators | PASS | Values correct. Return line mismatch. |
-| p1.4 — Increment / Decrement | PASS | Values correct. Return line mismatch. |
-| p7.1 — If / Else Branching | PASS | Condition lines invisible (empty steps omitted). |
-| p7.2 — While Loop | PASS | Condition lines invisible. |
-| p7.3 — Nested Loops | BUGS | Redundant setValue pairs; loop exit var not captured. |
-| p7.4 — Break and Continue | BUGS | continue/break invisible; redundant setValue. |
+| custom — Minimal Scalar | PASS | Values correct. Return now has own step. |
+| p1.1 — Integer Lifecycle | PASS | Values correct. Return visible. |
+| p1.3 — All Compound Operators | PASS | Values correct. Return visible. |
+| p1.4 — Increment / Decrement | PASS | Values correct. Return visible. |
+| p7.1 — If / Else Branching | PASS | Condition steps now visible. Return visible. |
+| p7.2 — While Loop | PASS | Condition steps visible. No redundant ops. |
+| p7.3 — Nested Loops | PASS | No redundant setValue pairs. Loop vars correct. |
+| p7.4 — Break and Continue | PASS | Condition steps visible. No redundant ops. |
 | p6.1 — Simple Function Call | PASS | Scope push/pop correct, x=30, y=35. |
-| p6.4 — Recursive Factorial | BUGS | Recursive frames not stacked; base case invisible. result=120 correct. |
-| p12.2 — Multi-Function Clamp | BUGS | Nested call frames not stacked; inner function body invisible. a=10, b=0, c=5 correct. |
-| p12.5 — Recursive Fibonacci | BUGS | Recursive frames not stacked; base cases invisible. a=0, b=1, c=8 correct. |
+| p6.4 — Recursive Factorial | PARTIAL | Frames stack correctly. result=120. Return steps emit but share line with condition in compact if. |
+| p12.2 — Multi-Function Clamp | PARTIAL | Frames stack correctly. a=10, b=0, c=5. Same return/condition line overlap. |
+| p12.5 — Recursive Fibonacci | PARTIAL | Frames stack correctly. a=0, b=1, c=8. Same return/condition line overlap. |
 | p1.2 — Char and Casting | PASS | c='A', x=66, d=44, big=100000, narrow=-96. |
 | p13.3 — Float Arithmetic | PASS | pi≈3.14, area≈78.54, truncated=78, half=0.5. |
 | p13.4 — Uninitialized Variable | NOTE | x=15, y=10, z=30 correct. Uninit `int x` shows 0 (WASM zero-init). |
-| p13.5 — Chained Assignment | BUGS | b,c not tracked in chained assignment (known limitation). |
-| p3.1 — Array Init and Loop | BUGS | arr=[99,20,30,40,119], sum=308 correct. Loop exit var not captured. |
-| p3.3 — Array Squared in Loop | BUGS | data=[1,4,9,16], total=30 correct. Loop exit var not captured. |
-| p12.1 — Bubble Sort | BUGS | arr=[1,2,3,4,5] correct. Loop exit vars not captured. |
-| p13.7 — 2D Array | BUGS | Type shows `int[3]` not `int[3][3]`; flat children; subscript assigns invisible. |
-| p2.1 — Simple Struct | BUGS | Struct has no children (no type registry). |
-| p2.2 — Nested Structs | BUGS | Same: struct no children. |
-| p4.1 — malloc / free Lifecycle | BUGS | Heap entry stays val= empty; *p=42 not visible in heap. Free works. |
-| p4.2 — calloc Zero-Init | BUGS | calloc shown as malloc. Heap value invisible. |
-| p4.4 — Heap Array with Loop | BUGS | Heap values invisible. n=5 correct. |
-| p10.3 — Memory Leak Detection | PASS | Leak correctly detected. Heap values invisible. |
-| p5.1 — Heap Struct via Pointer | BUGS | Pointer value correct (fixed). Heap value invisible. Struct no children. |
-| p5.3 — Full Memory Basics | BUGS | Struct no children; arrow assigns re-report pointer; scores[] invisible. |
-| p8.2 — Variable Shadowing | BUGS | Inner x overwrites display of outer x. y=10 correct (runtime ok). |
+| p13.5 — Chained Assignment | PASS | All targets tracked: a=b=c=42 all show 42. a=b=c+8 → a=50, b=50, c=42. |
+| p3.1 — Array Init and Loop | PASS | arr=[99,20,30,40,119], sum=308. No redundant loop ops. |
+| p3.3 — Array Squared in Loop | PASS | data=[1,4,9,16], total=30. Clean loop tracking. |
+| p12.1 — Bubble Sort | PASS | arr=[1,2,3,4,5]. Clean nested loop tracking. |
+| p13.7 — 2D Array | PASS | Type shows `int[3][3]`. Children nest correctly (3×3). trace=3. |
+| p2.1 — Simple Struct | PASS | Struct children visible: x=30, y=35. |
+| p2.2 — Nested Structs | BUGS | Children visible at declaration. Field updates after mutation stale (nested struct setValue doesn't recurse). |
+| p4.1 — malloc / free Lifecycle | PASS | *p=42 visible in heap. *p=*p+8 → 50. Free works. |
+| p4.2 — calloc Zero-Init | PASS | Entry labeled `calloc(4, 4)`. Heap value visible. |
+| p4.4 — Heap Array with Loop | BUGS | Heap value shows 0 for array elements (pointer arithmetic indexing not tracked). |
+| p10.3 — Memory Leak Detection | PASS | Leak correctly detected. Heap value may be visible for simple cases. |
+| p5.1 — Heap Struct via Pointer | BUGS | Stack pointer correct. Heap struct has no children (heap + struct combined not supported). |
+| p5.3 — Full Memory Basics | PARTIAL | Stack struct children work. Heap struct children missing. |
+| p8.2 — Variable Shadowing | PASS | Inner block creates own scope. Inner x=25, outer x=10 preserved. y=10 correct. |
 | p13.1 — Switch / Case | PASS | day=3, type=1. |
-| p11.2 — Matrix Identity | BUGS | Heap writes invisible; calloc labeled as malloc. |
+| p11.2 — Matrix Identity | PASS | Heap calloc/free lifecycle correct. sum=3. |
 | p11.5 — Fibonacci Array | PASS | fib=[0,1,1,2,3,5,8,13,21,34]. |
-| p15.1 — Entity System | BUGS | Arrow+nested+param fixed. Struct no children. Heap values invisible. |
+| p15.1 — Entity System | PARTIAL | Stack struct children correct. Heap struct children missing. |
 | p16.1 — Basic printf | PASS | printf output correct, values correct. |
-| p16.2 — puts and putchar | BUGS | putchar line mismatch; one putchar step missing. |
-| p16.3 — getchar Loop | BUGS | Cleanup step wrong line; no IO read event for getchar. |
-| p16.4 — scanf + printf | BUGS | scanf reads values but no setValue emitted — x,y stay 0 in snapshots. |
-| p16.5 — scanf \n Residue | BUGS | scanf values not shown; char scanf IO event shows empty. |
-| p16.6 — printf Format Specifiers | PASS | All format specifiers produce correct output. |
-| p16.7 — Grade Calculator | BUGS | scanf values never shown in snapshots (score stays 0). |
+| p16.2 — puts and putchar | PASS | Steps now visible. |
+| p16.3 — getchar Loop | PASS | Steps visible. |
+| p16.4 — scanf + printf | PASS | scanf values now appear: x=10, y=20. |
+| p16.5 — scanf \n Residue | PASS | scanf values now visible. |
+| p16.6 — printf Format Specifiers | PASS | All format specifiers correct. |
+| p16.7 — Grade Calculator | PASS | scanf values tracked through loop: score=85,92,78,-1. avg=85. |
 | p13.2 — String Literal | PASS | Pointer values correct. |
-| p13.6 — Function Pointer | BUGS | Compile failure: `&(*fp)(int, int)` invalid. Declarator syntax not handled. |
-| p13.7 — 2D Array | BUGS | (see above) |
-| p13.8 — Array-to-Pointer Decay | PASS | Pointer arithmetic, dereference values correct. |
-| p14.1 — Use-After-Free | BUGS | `*p=42` doesn't update heap; use-after-free not detected. |
-| p14.2 — String Functions | BUGS | strcpy step collapsed (zero-op). |
+| p13.6 — Function Pointer | PASS | Compiles successfully. a=13, b=7. |
+| p13.8 — Array-to-Pointer Decay | PASS | Pointer arithmetic correct. |
+| p14.1 — Use-After-Free | PASS | *p=42 now visible in heap. Use-after-free detection still not implemented. |
+| p14.2 — String Functions | BUGS | strcpy step visible but 0 ops (buffer write not tracked). |
 | p14.3 — Math Functions | PASS | abs, sqrt, pow correct. |
-| p9.1 — sprintf Formats | BUGS | All 6 sprintf calls produce no visible steps (zero-op collapsed). |
+| p9.1 — sprintf Formats | BUGS | Steps now visible (SYS-12 fixed) but 0 ops — buffer contents not tracked. |
 
 ## Bug Summary
 
-### Fixed
+### Fixed (this round)
 
-| Bug ID | Description | Root Cause | Component |
-|--------|-------------|------------|-----------|
-| BUG-custom-1 | Line numbers off by 1 | onStep flushes ops at previous line | op-collector |
-| BUG-p5.1-1 | Arrow field corrupts pointer display | `__crow_set("p", p, ...)` reads heap not stack | transformer |
-| BUG-p5.1-2 | Nested field targets unregistered name | extractSetTarget doesn't walk to root var | transformer |
-| BUG-p15.1-5 | Pointer param type loses `*` | extractParamType ignores pointer_declarator | transformer |
+| Bug ID | Description | Fix |
+|--------|-------------|-----|
+| SYS-1 | Struct fields invisible | Added struct type registry from tree-sitter; buildChildren + updateChildValues handle structs |
+| SYS-2 | Heap dereference values invisible | onSet checks pointer type, finds heap block, emits setValue for heap entry |
+| SYS-3 | Recursive frames not stacked | instrumentReturn adds __crow_step before pop_scope |
+| SYS-4 | Return line not shown | instrumentReturn + instrumentFunction trailing return both emit step |
+| SYS-5 | For-loop exit increment not captured | Removed explicit loop update tracking; re-declaration path handles it |
+| SYS-6 | Condition/branch steps invisible | onStep always emits (removed empty-step filter) |
+| SYS-7 | Redundant setValue on loop increment | Removed explicit loop update tracking |
+| SYS-8 | Variable shadowing not modeled | compound_statement inside function body gets push/pop scope |
+| SYS-9 | Chained assignment only tracks outermost | collectChainedTargets walks RHS recursively |
+| SYS-10 | calloc shown as malloc | onCalloc patches last addEntry op with calloc label |
+| SYS-11 | scanf values not shown in snapshots | emitSetValueForAddr after each scanf memory write |
+| SYS-12 | sprintf/strcpy steps collapsed | Fixed by SYS-6 (always emit steps). Buffer content tracking is separate issue. |
+| SYS-13 | Function pointer declarator not handled | parseDeclName handles function_declarator + parenthesized_declarator |
+| SYS-14 | 2D array type/children wrong | parseDeclName accumulates array dimensions; buildChildren recurses |
 
-### Open — Systemic
+### Fixed (prior round)
 
-| Bug ID | Description | Root Cause | Component | Programs Affected |
-|--------|-------------|------------|-----------|-------------------|
-| SYS-1 | Struct fields invisible | buildChildren has no struct type registry | op-collector | p2.1, p2.2, p5.1, p5.3, p15.1 |
-| SYS-2 | Heap dereference values invisible | `*p=42` records setValue on pointer, not heap entry | op-collector | p4.1, p4.2, p4.4, p5.1, p5.3, p10.3, p11.2, p14.1, p15.1 |
-| SYS-3 | Recursive frames not stacked | `__crow_pop_scope()` before `return` destroys caller frame before callee enters | transformer | p6.4, p12.2, p12.5 |
-| SYS-4 | Return line not shown | pop_scope injected before return; no __crow_step for return line | transformer | All programs |
-| SYS-5 | For-loop exit increment not captured | `__crow_set` fires before C i++; exit increment never recorded | transformer | p3.1, p3.3, p7.3, p12.1 |
-| SYS-6 | Condition/branch steps invisible | Empty steps (no ops) silently omitted | op-collector | p7.1, p7.2, p7.4, p6.4, p12.2, p12.5 |
-| SYS-7 | Redundant setValue on loop increment | Explicit `__crow_set` + auto-detected re-decl both fire | transformer | p7.3, p7.4 |
-| SYS-8 | Variable shadowing not modeled | No push/pop scope for anonymous blocks | transformer | p8.2 |
-| SYS-9 | Chained assignment only tracks outermost | extractSetTarget only emits `__crow_set` for LHS | transformer | p13.5 |
-| SYS-10 | calloc shown as malloc | onCalloc delegates to onMalloc | op-collector | p4.2, p11.2 |
-| SYS-11 | scanf values not shown in snapshots | `__crow_scanf_*` writes to memory but emits no setValue op | op-collector | p16.4, p16.5, p16.7 |
-| SYS-12 | sprintf/strcpy steps collapsed | Zero-op steps silently omitted | op-collector | p9.1, p14.2 |
-| SYS-13 | Function pointer declarator not handled | Instrumenter emits `&(*fp)(int, int)` — invalid C | transformer | p13.6 |
-| SYS-14 | 2D array type/children wrong | Type shows `int[3]` not `int[3][3]`; flat children | op-collector | p13.7 |
-| SYS-15 | Use-after-free not detected | No runtime check after free | op-collector | p14.1 |
+| Bug ID | Description |
+|--------|-------------|
+| BUG-custom-1 | Line numbers off by 1 |
+| BUG-p5.1-1 | Arrow field corrupts pointer display |
+| BUS-p5.1-2 | Nested field targets unregistered name |
+| BUG-p15.1-5 | Pointer param type loses `*` |
 
-### Open — Minor / Informational
+### Open — Remaining
 
-| Bug ID | Description | Component | Programs |
-|--------|-------------|-----------|----------|
-| INFO-1 | Uninitialized vars show 0 (WASM zero-init) | Runtime | p13.4 |
-| INFO-2 | Base case branch decisions invisible in recursive functions | transformer | p6.4, p12.5 |
-| INFO-3 | putchar step line mismatch / missing step | transformer | p16.2 |
-| INFO-4 | getchar has no IO read event | op-collector | p16.3 |
+| Bug ID | Description | Root Cause | Programs |
+|--------|-------------|------------|----------|
+| REM-1 | Nested struct field updates stale | updateChildValues doesn't recurse into nested struct fields | p2.2 |
+| REM-2 | Heap struct children missing | Heap entries have no type info to look up struct fields | p5.1, p5.3, p15.1 |
+| REM-3 | Heap array element values not tracked | Pointer arithmetic indexing (p[i]) not resolved to heap block offset | p4.4 |
+| REM-4 | sprintf/strcpy buffer content not tracked | Library calls don't emit ops for destination buffer | p9.1, p14.2 |
+| REM-5 | Return/condition line overlap in compact if | `if (n<=1) { return 1; }` — return step shares line with condition | p6.4, p12.2, p12.5 |
+
+### Informational (Won't Fix)
+
+| Bug ID | Description | Reason |
+|--------|-------------|--------|
+| INFO-1 | Uninitialized vars show 0 | WASM zero-initializes stack — correct at runtime level |
+| SYS-15 | Use-after-free not detected | Would need runtime checking; deferred |
