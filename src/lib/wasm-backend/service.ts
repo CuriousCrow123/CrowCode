@@ -160,9 +160,9 @@ export async function runWasmProgramInteractive(source: string, onProgress?: Pro
 				async sendEof(): Promise<InteractiveSession> {
 					if (resumed || cancelled) throw new Error('Session already resumed or cancelled');
 					resumed = true;
-					// Re-run with EOF flag — no more input
+					// Re-run with stdinEof flag — fd_read returns 0 (EOF) instead of pausing
 					const result = await executeWasm(
-						wasm!, 'user_program', source, MAX_STEPS, accumulatedStdin, structRegistry, descriptionMap,
+						wasm!, 'user_program', source, MAX_STEPS, accumulatedStdin, structRegistry, descriptionMap, true,
 					);
 					const w: string[] = [];
 					if (result.program.steps.length >= MAX_STEPS) {

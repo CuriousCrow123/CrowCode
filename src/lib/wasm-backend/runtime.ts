@@ -32,6 +32,7 @@ export async function executeWasm(
 	stdin?: string,
 	structRegistry?: StructRegistry,
 	descriptionMap?: Map<number, StepDescription>,
+	stdinEof?: boolean,
 ): Promise<ExecuteResult> {
 	const collector = new OpCollector(maxSteps, structRegistry, descriptionMap);
 	if (stdin) collector.setStdin(stdin);
@@ -51,6 +52,7 @@ export async function executeWasm(
 		stderr: (text) => errors.push(text),
 		onExit: (code) => { throw new ProgramExit(code); },
 	});
+	if (stdinEof) wasi.signalStdinEof();
 
 	// Build the import object
 	const envImports: Record<string, (...args: number[]) => number | void> = {

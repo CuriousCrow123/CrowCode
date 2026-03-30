@@ -109,6 +109,7 @@ export class WasiShim {
 	private onExit: (code: number) => void;
 	private preopenDirs = ['/'];
 	private decoder = new TextDecoder();
+	private stdinEof = false;
 
 	constructor(options: WasiOptions) {
 		this.args = options.args ?? [];
@@ -125,6 +126,10 @@ export class WasiShim {
 		// Pre-open root directory as fd 3
 		this.fds.set(3, { path: '/', offset: 0, isDir: true });
 		this.nextFd = 4;
+	}
+
+	signalStdinEof(): void {
+		this.stdinEof = true;
 	}
 
 	setMemory(memory: WebAssembly.Memory): void {
@@ -257,8 +262,8 @@ export class WasiShim {
 
 		const file = this.fs.getFile(entry.path);
 		if (!file) {
-			// stdin (fd 0) with no data — signal stdin exhaustion for interactive mode
-			if (fd === 0) {
+			// stdin (fd 0) with no data — pause for interactive input or return EOF
+			if (fd === 0 && !this.stdinEof) {
 				throw new StdinExhausted();
 			}
 			view.setUint32(nreadPtr, 0, true);
@@ -279,8 +284,8 @@ export class WasiShim {
 			if (toRead < bufLen) break;
 		}
 
-		// stdin exhausted — signal for interactive mode
-		if (fd === 0 && totalRead === 0) {
+		// stdin exhausted — pause for interactive input or return EOF
+		if (fd === 0 && totalRead === 0 && !this.stdinEof) {
 			throw new StdinExhausted();
 		}
 
