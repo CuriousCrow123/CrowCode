@@ -556,7 +556,17 @@ export class OpCollector {
 				}
 			}
 
-			// "Set" evaluations come from __crow_eval_int at runtime (already attached in onStep)
+			// "Set" evaluations come from __crow_eval/__crow_eval_int at runtime (already attached in onStep)
+
+			// Convert boolean evaluations for conditions
+			if (step.evaluation && (
+				step.description?.startsWith('if (') ||
+				step.description?.startsWith('while (') ||
+				step.description?.startsWith('for (') ||
+				step.description?.startsWith('do...while (')
+			)) {
+				step.evaluation = step.evaluation === '→ 0' ? '→ false' : '→ true';
+			}
 
 			if (step.ioEvents?.length) {
 				const writes = step.ioEvents.filter(e => e.kind === 'write');

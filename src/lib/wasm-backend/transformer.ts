@@ -451,6 +451,9 @@ function instrumentFor(
 				}
 			}
 
+			if (condText && !hasSideEffects(condText)) {
+				text += `\n\t__crow_eval_int(${condText});`;
+			}
 			text += `\n\t__crow_step(${line});`;
 			insertions.push({ offset: openBrace.endIndex, text, priority: 8 });
 		}
@@ -487,12 +490,18 @@ function instrumentLoop(
 		descriptionMap.set(line, { description: `do...while (${condNode?.text ?? ''})` });
 	}
 
+	const condText = condNode?.text;
 	if (body.type === 'compound_statement') {
 		const openBrace = body.child(0);
 		if (openBrace && openBrace.text === '{') {
+			let text = '';
+			if (condText && !hasSideEffects(condText)) {
+				text += `\n\t__crow_eval_int(${condText});`;
+			}
+			text += `\n\t__crow_step(${line});`;
 			insertions.push({
 				offset: openBrace.endIndex,
-				text: `\n\t__crow_step(${line});`,
+				text,
 				priority: 8,
 			});
 		}
@@ -522,8 +531,9 @@ function instrumentIf(
 	descriptionMap.set(line, { description: `if (${condNode?.text ?? ''})` });
 
 	// Step for the condition evaluation
+	const condText = condNode?.text;
 	if (consequence) {
-		instrumentBlock(consequence, insertions, replacements, line, descriptionMap);
+		instrumentBlock(consequence, insertions, replacements, line, descriptionMap, condText);
 	}
 
 	if (alternative) {
@@ -592,13 +602,19 @@ function instrumentBlock(
 	replacements: Replacement[],
 	line: number,
 	descriptionMap: Map<number, StepDescription>,
+	conditionText?: string,
 ): void {
 	if (node.type === 'compound_statement') {
 		const openBrace = node.child(0);
 		if (openBrace && openBrace.text === '{') {
+			let text = '';
+			if (conditionText && !hasSideEffects(conditionText)) {
+				text += `\n\t__crow_eval_int(${conditionText});`;
+			}
+			text += `\n\t__crow_step(${line});`;
 			insertions.push({
 				offset: openBrace.endIndex,
-				text: `\n\t__crow_step(${line});`,
+				text,
 				priority: 8,
 			});
 		}
@@ -1237,6 +1253,10 @@ function resolveFieldType(node: SyntaxNode): string {
 	}
 
 	return 'int';
+}
+
+function hasSideEffects(exprText: string): boolean {
+	return /\+\+|--|[a-zA-Z_]\w*\s*\(/.test(exprText);
 }
 
 const ALLOC_FUNCTIONS = new Set(['malloc', 'calloc', 'realloc', 'free']);
