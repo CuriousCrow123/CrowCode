@@ -28,6 +28,9 @@ type Insertion = {
 	priority: number;
 };
 
+// Module-scoped struct registry for use during transformation
+let currentStructRegistry: StructRegistry = new Map();
+
 type Replacement = {
 	startOffset: number;
 	endOffset: number;
@@ -56,6 +59,7 @@ export function transformSource(parser: ParserType, source: string): TransformRe
 
 	// Extract struct definitions for the type registry
 	const structRegistry = extractStructDefinitions(tree.rootNode);
+	currentStructRegistry = structRegistry;
 
 	// Walk the CST and collect instrumentation points + descriptions
 	walkNode(tree.rootNode, insertions, replacements, descriptionMap);
@@ -304,9 +308,12 @@ function instrumentExpressionStatement(
 			for (const target of targets.reverse()) {
 				text += `\n\t__crow_set("${target.name}", ${target.addrExpr}, ${line});`;
 			}
-			// Skip eval for alloc assignments — pointer addresses as ints are meaningless
+			// Skip eval for alloc assignments and struct/void types
 			if (!containsAllocCall(expr)) {
-				text += `\n\t__crow_eval_int(${lhsText});`;
+				const evalType = resolveExprType(lhs);
+				if (evalType !== '' && !evalType.startsWith('struct ')) {
+					text += `\n\t__crow_eval(&(${lhsText}), sizeof(${lhsText}), "${evalType}");`;
+				}
 			}
 			text += `\n\t__crow_step(${line});`;
 			insertions.push({ offset: node.endIndex, text, priority: 5 });
@@ -393,7 +400,7 @@ function instrumentReturn(node: SyntaxNode, insertions: Insertion[], replacement
 			replacements.push({
 				startOffset: node.startIndex,
 				endOffset: node.endIndex,
-				text: `{ ${retType} __crow_ret = ${retText}; __crow_eval_int(__crow_ret); __crow_step(${line}); __crow_pop_scope(); return __crow_ret; }`,
+				text: `{ ${retType} __crow_ret = ${retText}; __crow_eval(&__crow_ret, sizeof(__crow_ret), "${retType}"); __crow_step(${line}); __crow_pop_scope(); return __crow_ret; }`,
 			});
 			return;
 		}
@@ -1157,6 +1164,79 @@ function extractFieldRoot(node: SyntaxNode): string | null {
 		return current.text;
 	}
 	return null;
+}
+
+/**
+ * Resolve the C type of an LHS expression for __crow_eval.
+ * Uses the struct registry for field accesses, falls back to "int".
+ */
+function resolveExprType(node: SyntaxNode | null): string {
+	if (!node) return 'int';
+
+	if (node.type === 'identifier') return 'int'; // fallback — we don't track local var types
+
+	if (node.type === 'pointer_expression') {
+		// *p — dereference, type depends on pointer's base type
+		return 'int'; // conservative fallback
+	}
+
+	if (node.type === 'subscript_expression') {
+		// arr[i] or p->scores[i] — element type of the array/pointer
+		const base = node.childForFieldName('argument') ?? node.child(0);
+		if (base?.type === 'field_expression') {
+			const fieldType = resolveFieldType(base);
+			// If field is a pointer (e.g., int*), element type is base type
+			if (fieldType.endsWith('*')) return fieldType.slice(0, -1).trim();
+			// If field is an array (e.g., int[5]), element type is base
+			const arrMatch = fieldType.match(/^(.+)\[\d+\]$/);
+			if (arrMatch) return arrMatch[1];
+		}
+		return 'int';
+	}
+
+	if (node.type === 'field_expression') {
+		return resolveFieldType(node);
+	}
+
+	return 'int';
+}
+
+/**
+ * Look up a struct field's type from the struct registry.
+ * Walks field_expression chains: player->pos.x → Vec2.x → int
+ */
+function resolveFieldType(node: SyntaxNode): string {
+	if (node.type !== 'field_expression') return 'int';
+
+	const obj = node.childForFieldName('argument') ?? node.child(0);
+	const fieldName = node.childForFieldName('field')?.text;
+	if (!obj || !fieldName) return 'int';
+
+	// Get the type of the object being accessed
+	let objType: string;
+	if (obj.type === 'field_expression') {
+		objType = resolveFieldType(obj);
+	} else {
+		// Base identifier — we don't know its type, but if it's a pointer to a struct,
+		// we need to find which struct. Try all structs for the field name.
+		for (const [structName, fields] of currentStructRegistry) {
+			const field = fields.find(f => f.name === fieldName);
+			if (field) return field.type;
+		}
+		return 'int';
+	}
+
+	// objType is e.g. "struct Vec2" — look up the field
+	if (objType.startsWith('struct ')) {
+		const structName = objType.slice(7).trim();
+		const fields = currentStructRegistry.get(structName);
+		if (fields) {
+			const field = fields.find(f => f.name === fieldName);
+			if (field) return field.type;
+		}
+	}
+
+	return 'int';
 }
 
 const ALLOC_FUNCTIONS = new Set(['malloc', 'calloc', 'realloc', 'free']);

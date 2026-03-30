@@ -378,6 +378,16 @@ export class OpCollector {
 		this.pendingEval = String(value);
 	}
 
+	onEval(addr: number, size: number, typePtr: number): void {
+		this.refreshMemory();
+		const typeStr = this.readCString(typePtr);
+		const value = this.readValue(addr, size, typeStr);
+		// Don't show struct/array values or empty values as evaluations
+		if (value !== '' && !value.startsWith('{')) {
+			this.pendingEval = value;
+		}
+	}
+
 	// === scanf callbacks ===
 
 	onScanfInt(ptr: number, _line: number): number {

@@ -18,6 +18,7 @@ void __crow_free(void *ptr, int line);
 
 // Evaluation capture
 void __crow_eval_int(int value);
+void __crow_eval(void *addr, int size, const char *type);
 
 // String functions
 char *__crow_strcpy(char *dest, const char *src, int line);
